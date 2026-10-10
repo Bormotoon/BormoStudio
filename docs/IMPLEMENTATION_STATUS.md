@@ -16,7 +16,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 | 1 — Contracts and pipeline | Versioned project/manifests, four time domains, planner/worker/events, recoverable publication, scan/prepare/transcribe/complex sync, CLI and Qt shell | Complete legacy golden coverage and real end-to-end GUI/CLI parity |
 | 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, overlapping and explicitly positioned disjoint sessions, reference-camera choice, selected-stream matching/rendering and detached camera PCM for NLE, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Full legacy source-selection workflow parity, NLE import and relinking |
 | 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, timeline cut overview, with-cut/original audition with or without master, markers, placement-aware CFR program/transcript with duration-preserving join crossfades | Real word-integrity/listening acceptance, end-to-end re-export check |
-| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade, project speaker-camera choices (GUI/CLI), retimed multicam FCPXML | Wide-shot policy, nonlinear warped mic attribution, cross-file identities, real pyannote and NLE acceptance |
+| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade, project speaker-camera choices (GUI/CLI), wide-shot policy, retimed multicam FCPXML | Nonlinear warped mic attribution, cross-file identities, real pyannote and NLE acceptance |
 | 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch with webhook/desktop notifications and mid-download cancellation, reports/night helper, owned llama lifecycle, settings migration, legacy comparison runner | Raw recorder warp replay, Studio sections for still-unmapped legacy keys, phase-wide reuse, full Forge golden migration |
 | 6 — Modules/distribution | Managed modules, pinned verified YuNet/Light-ASD/Whisper/GGUF downloads with resume, LLM rough-cut detectors, native setup/settings/GGUF picker and dirty guards, compute probe, Linux frozen/local installer | Real-model LLM edit acceptance, download step in first-run wizard, measured tuning, bundled dependencies, clean-machine/Python 3.12/platform qualification |
 | 7 — Follow-up | Source-video reel rendering and native editor foundations already available | Speaker-angle reels, vision auto-assignment, OTIO, MLX/VideoToolbox, LUFS/covers/audiograms/YouTube replay data |
@@ -117,6 +117,15 @@ that point in development, not today's backlog. Plan phase acceptance remains op
   This is a read-only overview, not full audiovisual timeline/simulator parity.
 - Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
   Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
+
+### Wide-shot policy — 2026-10-10
+
+- `@wide` in speaker cameras (Material page "Wide shot", `uvf cameras`, settings)
+  names the wide camera. `CameraPolicy` (from `program.*`) selects it for
+  overlaps and busy exchanges (`max_switches` within `switch_window_s`), inserts
+  it into shots longer than `max_shot_s`, and switches `cut_lead_s` ahead of
+  turns by shifting whole turns (no false overlaps). Program and multicam export
+  share it; manual camera choices still win. Real switching quality not judged.
 
 ### Rough-cut detectors and presets — 2026-10-10
 

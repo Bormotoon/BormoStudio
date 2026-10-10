@@ -345,6 +345,18 @@ uvf cameras SOURCE --speaker Anna --camera osmo
 uvf material SOURCE --asset cam-a --asset cam-b --group wide
 ```
 
+### Wide shot
+
+Assign the wide (establishing) camera like a speaker: on the Material page pick
+**Wide shot** in the speaker list, or `uvf cameras <folder> --speaker @wide --camera cam-c`
+(`program.speaker_cameras: {"@wide": cam-c}` works as a settings default). With a
+wide shot, the program and multicam selection go wide when speakers overlap and
+when `program.max_switches` speaker changes (default 3) fall inside
+`program.switch_window_s` (6 s); `program.max_shot_s` (0 = off) inserts
+`wide_insert_s` (3 s) of wide into longer single shots. Switches happen
+`program.cut_lead_s` (0.2 s) before the turn. Manual camera choices in the edit
+always win. Without a wide shot, overlaps keep the current camera as before.
+
 ## Settings migration and legacy comparison
 
 ```bash

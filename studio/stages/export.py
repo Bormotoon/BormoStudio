@@ -130,7 +130,7 @@ class ExportStage:
 def multicam_camera_plan(project: Project, settings: dict, use_edit: bool,
                         sequence: Sequence) -> EditMap | None:
     from studio.core.recorder_tracks import effective_speaker_cameras
-    from studio.stages.camera_selection import speaker_camera_edit
+    from studio.stages.camera_selection import CameraPolicy, speaker_camera_edit
     from studio.stages.program import load_edit_map
 
     conf = settings.get("program", {})
@@ -152,7 +152,7 @@ def multicam_camera_plan(project: Project, settings: dict, use_edit: bool,
             raise ValueError("multicam speaker selection requires speakers output")
         turns = json.loads(speakers[0].read_text(encoding="utf-8"))
     plan = speaker_camera_edit(project, edit, turns, mapping,
-                               min_shot_s=float(conf.get("min_shot_s", 1)))
+                               policy=CameraPolicy.from_settings(conf))
     # Keep all source angles; only project selection is mapped to edited time.
     ranges = []
     for item in plan.keep:

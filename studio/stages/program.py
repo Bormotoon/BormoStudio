@@ -92,7 +92,7 @@ class ProgramStage:
 
         mapping = effective_speaker_cameras(context.project, conf.get("speaker_cameras", {}))
         if mapping:
-            from studio.stages.camera_selection import speaker_camera_edit
+            from studio.stages.camera_selection import CameraPolicy, speaker_camera_edit
 
             paths = context.project.outputs.get("speakers", [])
             if not paths or not paths[0].is_file():
@@ -102,7 +102,7 @@ class ProgramStage:
                 edit,
                 json.loads(paths[0].read_text(encoding="utf-8")),
                 mapping,
-                min_shot_s=float(conf.get("min_shot_s", 1.0)),
+                policy=CameraPolicy.from_settings(conf),
             )
         render_report = render_project_program(
             context.project,

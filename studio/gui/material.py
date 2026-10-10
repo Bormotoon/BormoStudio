@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from studio.core.project import AssetRole, Project
 from studio.core.recorder_tracks import channel_count, project_speakers
+from studio.stages.camera_selection import WIDE_SHOT
 
 ASSET_ROLE = Qt.ItemDataRole.UserRole
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -181,9 +182,14 @@ class MaterialPage(QWidget):
             item.setData(0, ASSET_ROLE, track.asset_id)
         self.cameras.clear()
         for speaker, camera in sorted(project.speaker_cameras.items()):
-            QTreeWidgetItem(self.cameras, [speaker, camera])
+            label = "Wide shot" if speaker == WIDE_SHOT else speaker
+            QTreeWidgetItem(self.cameras, [label, camera])
         self.camera_speaker.clear()
-        self.camera_speaker.addItems(project_speakers(project))
+        self.camera_speaker.addItems(
+            [name for name in project_speakers(project) if name != WIDE_SHOT]
+        )
+        # The reserved entry assigns the wide shot used for overlaps and inserts.
+        self.camera_speaker.addItem("Wide shot (overlaps, rapid exchanges)", WIDE_SHOT)
         self.camera_choice.clear()
         choices: list[str] = []
         for asset in project.assets:
@@ -248,8 +254,14 @@ class MaterialPage(QWidget):
             "--enable" if self.track_enabled.isChecked() else "--disable",
         ])
 
+    def _speaker_key(self) -> str:
+        text = self.camera_speaker.currentText().strip()
+        index = self.camera_speaker.findText(text)
+        data = self.camera_speaker.itemData(index) if index >= 0 else None
+        return str(data) if data else text
+
     def _assign_camera(self) -> None:
-        speaker = self.camera_speaker.currentText().strip()
+        speaker = self._speaker_key()
         camera = self.camera_choice.currentText()
         if not speaker or not camera:
             self.status.setText("Choose a speaker and a camera.")
@@ -257,6 +269,6 @@ class MaterialPage(QWidget):
         self.command_requested.emit("cameras", ["--speaker", speaker, "--camera", camera])
 
     def _clear_camera(self) -> None:
-        speaker = self.camera_speaker.currentText().strip()
+        speaker = self._speaker_key()
         if speaker:
             self.command_requested.emit("cameras", ["--speaker", speaker, "--clear"])

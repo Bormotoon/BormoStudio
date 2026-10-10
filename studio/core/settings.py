@@ -108,6 +108,11 @@ class ProgramSettings:
     fps: str = "auto"
     speaker_cameras: dict[str, str] = field(default_factory=dict)
     min_shot_s: float = 1.0
+    cut_lead_s: float = 0.2
+    max_switches: int = 3
+    switch_window_s: float = 6.0
+    max_shot_s: float = 0.0
+    wide_insert_s: float = 3.0
     crossfade_ms: float = 10.0
 
 
@@ -303,6 +308,13 @@ def validate_settings(settings: Settings) -> None:
     _one_of("program.encoder", settings.program.encoder, {"auto", "nvenc", "libx264", "cpu"})
     _non_negative("program.min_shot_s", settings.program.min_shot_s)
     _non_negative("program.crossfade_ms", settings.program.crossfade_ms)
+    for name in ("cut_lead_s", "max_switches", "switch_window_s", "max_shot_s"):
+        _non_negative(f"program.{name}", getattr(settings.program, name))
+    _positive("program.wide_insert_s", settings.program.wide_insert_s)
+    if settings.program.cut_lead_s > 2:
+        raise SettingsError("program.cut_lead_s must not exceed 2")
+    if 0 < settings.program.max_shot_s <= settings.program.wide_insert_s:
+        raise SettingsError("program.max_shot_s must exceed wide_insert_s when enabled")
     if settings.program.crossfade_ms > 200:
         raise SettingsError("program.crossfade_ms must not exceed 200")
     if any(

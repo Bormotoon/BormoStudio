@@ -50,4 +50,7 @@ def test_material_page_groups_assets_and_emits_cli_commands(tmp_path: Path) -> N
     page.camera_choice.setCurrentText("cam-b")
     page._assign_camera()
     assert requests[-1] == ("cameras", ["--speaker", "Аня", "--camera", "cam-b"])
+    page.camera_speaker.setCurrentIndex(page.camera_speaker.count() - 1)
+    page._assign_camera()
+    assert requests[-1] == ("cameras", ["--speaker", "@wide", "--camera", "cam-b"])
     assert app is not None
