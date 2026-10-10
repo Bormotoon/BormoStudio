@@ -3,17 +3,21 @@
 import json
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from studio.core.workspace import project_lock, published
-from studio.modules.cancellation import check_cancelled
+from studio.modules.cancellation import InstallationCancelled, check_cancelled, run_cancellable
 from studio.stages.fetch import _yt_dlp_command
 
 
-def discover_channel(url: str, limit: int) -> list[str]:
+def discover_channel(
+    url: str, limit: int, cancelled: Callable[[], bool] = lambda: False
+) -> list[str]:
     if not 1 <= limit <= 1000:
         raise ValueError("channel limit must be between 1 and 1000")
-    result = subprocess.run(
+    result = run_cancellable(
         [
             *_yt_dlp_command(),
             "--flat-playlist",
@@ -23,11 +27,12 @@ def discover_channel(url: str, limit: int) -> list[str]:
             "--",
             url,
         ],
-        capture_output=True,
-        text=True,
-        check=True,
+        cancelled,
         timeout=120,
     )
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout,
+                                            result.stderr)
     payload = json.loads(result.stdout)
     ids = []
     for entry in payload.get("entries", []):
@@ -37,11 +42,18 @@ def discover_channel(url: str, limit: int) -> list[str]:
     return ids[:limit]
 
 
-def acquire_channel(url, destination, limit, fetch, cancelled=lambda: False):
+def acquire_channel(
+    url: str,
+    destination: Path,
+    limit: int,
+    fetch: Callable[[str, Path, Callable[[], bool]], Any],
+    cancelled: Callable[[], bool] = lambda: False,
+) -> tuple[list[Path], list[dict[str, str]]]:
     destination.mkdir(parents=True, exist_ok=True)
-    results, sources = [], []
+    results: list[dict[str, str]] = []
+    sources: list[Path] = []
     with project_lock(destination):
-        for video_id in discover_channel(url, limit):
+        for video_id in discover_channel(url, limit, cancelled):
             check_cancelled(cancelled)
             folder = destination / video_id
             try:
@@ -54,10 +66,15 @@ def acquire_channel(url, destination, limit, fetch, cancelled=lambda: False):
                     status = "reused"
                 else:
                     # Incomplete downloads remain intact for inspection; never overwrite.
-                    fetch(f"https://www.youtube.com/watch?v={video_id}", folder)
+                    fetch(f"https://www.youtube.com/watch?v={video_id}", folder, cancelled)
                     status = "fetched"
                 sources.append(folder)
                 results.append({"id": video_id, "status": status, "source": str(folder)})
+            except InstallationCancelled:
+                results.append({"id": video_id, "status": "cancelled", "source": str(folder)})
+                write_report(destination / "channel-acquisition.json",
+                             {"schema_version": 1, "videos": results})
+                raise
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
                 results.append({"id": video_id, "status": "failed", "error": str(exc)})
             write_report(
@@ -66,7 +83,7 @@ def acquire_channel(url, destination, limit, fetch, cancelled=lambda: False):
     return sources, results
 
 
-def write_report(path: Path, report: dict):
+def write_report(path: Path, report: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with published(path) as temporary:
         temporary.write_text(

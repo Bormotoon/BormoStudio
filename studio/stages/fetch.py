@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from studio.core.project import Project, stable_fingerprint
+from studio.modules.cancellation import run_cancellable
 from studio.modules.manager import ModuleManager
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 
@@ -36,30 +37,57 @@ class FetchStage:
         return StageOutput((media, info))
 
 
-def fetch_to_directory(url: str, destination: Path) -> tuple[Path, Path]:
-    """Download one URL without executing a shell or overwriting local media."""
+INCOMPLETE = ".fetch-incomplete"
+
+
+def fetch_to_directory(
+    url: str, destination: Path, cancelled: Callable[[], bool] = lambda: False
+) -> tuple[Path, Path]:
+    """Download one URL without executing a shell or overwriting local media.
+
+    Cancellation stops yt-dlp mid-download and keeps its partial file; the
+    marker records the URL so a later call for the same URL resumes it.
+    """
     destination.mkdir(parents=True, exist_ok=True)
+    (destination / INCOMPLETE).write_text(url + "\n", encoding="utf-8")
     output = destination / "source.%(ext)s"
     command = [
         *_yt_dlp_command(),
         "--no-playlist",
         "--no-overwrites",
+        "--continue",
         "--write-info-json",
         "--output",
         str(output),
         url,
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    result = run_cancellable(command, cancelled)
     if result.returncode:
         raise RuntimeError(f"yt-dlp failed: {result.stderr.strip()}")
     media = [
         path for path in destination.iterdir()
-        if path.is_file() and not path.name.endswith(".info.json")
+        if path.is_file() and not path.name.endswith((".info.json", ".part", ".ytdl"))
+        and path.name != INCOMPLETE
     ]
     info = list(destination.glob("*.info.json"))
     if len(media) != 1 or len(info) != 1:
         raise RuntimeError("yt-dlp did not publish exactly one media and info file")
+    (destination / INCOMPLETE).unlink()
     return media[0], info[0]
+
+
+def resumable_fetch(destination: Path, url: str) -> bool:
+    """Whether ``destination`` only holds an interrupted fetch of ``url``."""
+    marker = destination / INCOMPLETE
+    try:
+        if marker.read_text(encoding="utf-8").strip() != url:
+            return False
+    except OSError:
+        return False
+    return all(
+        path.is_file() and (path.name == INCOMPLETE or path.name.startswith("source."))
+        for path in destination.iterdir()
+    )
 
 
 def _yt_dlp_command() -> list[str]:

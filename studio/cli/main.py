@@ -7,7 +7,7 @@ import json
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -337,12 +337,20 @@ def _run_batch(
         owner.close()
 
 
-def _fetch_project(url: str, destination: Path) -> tuple[Project, dict[str, str]]:
+def _fetch_project(
+    url: str, destination: Path, cancelled: Callable[[], bool] = lambda: False
+) -> tuple[Project, dict[str, str]]:
+    from studio.stages.fetch import resumable_fetch
+
     destination = destination.resolve()
-    if destination.exists() and any(destination.iterdir()):
-        raise ValueError("fetch destination must be a new or empty directory")
+    if (destination.exists() and any(destination.iterdir())
+            and not resumable_fetch(destination, url)):
+        raise ValueError(
+            "fetch destination must be a new or empty directory, "
+            "or an interrupted download of the same URL"
+        )
     destination.mkdir(parents=True, exist_ok=True)
-    media, info = fetch_to_directory(url, destination)
+    media, info = fetch_to_directory(url, destination, cancelled)
     project = _run_discovery(destination, include_prepare=False)
     report_path = project.work_dir / "stages" / "fetch" / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -427,6 +435,12 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--events", action="store_true")
     batch.add_argument("--cancel-file", type=Path)
     batch.add_argument("--report", type=Path)
+    batch.add_argument("--notify-when", choices=("always", "failure", "never"),
+                        default="failure")
+    batch.add_argument("--notify-webhook", default="", metavar="URL",
+                        help="POST the JSON run summary here (Slack/Discord/ntfy compatible)")
+    batch.add_argument("--notify-desktop", action="store_true",
+                        help="show a desktop notification when the run ends")
     channel = commands.add_parser("channel")
     channel.add_argument("url")
     channel.add_argument("destination", type=Path)
@@ -437,10 +451,17 @@ def build_parser() -> argparse.ArgumentParser:
     channel.add_argument("--events", action="store_true")
     channel.add_argument("--cancel-file", type=Path)
     channel.add_argument("--report", type=Path)
+    channel.add_argument("--notify-when", choices=("always", "failure", "never"),
+                        default="failure")
+    channel.add_argument("--notify-webhook", default="", metavar="URL",
+                        help="POST the JSON run summary here (Slack/Discord/ntfy compatible)")
+    channel.add_argument("--notify-desktop", action="store_true",
+                        help="show a desktop notification when the run ends")
     fetch = commands.add_parser("fetch")
     fetch.add_argument("url")
     fetch.add_argument("destination", type=Path)
     fetch.add_argument("--json", action="store_true")
+    fetch.add_argument("--cancel-file", type=Path)
     return parser
 
 
@@ -558,25 +579,36 @@ def _main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command in {"batch", "channel"}:
         from studio.cli.channel import acquire_channel, write_report
+        from studio.cli.notify import NotifyOptions, send
 
-        acquisition = []
+        notify = NotifyOptions(args.notify_when, args.notify_webhook, args.notify_desktop)
+        acquisition: list[dict[str, Any]] = []
         sources = args.sources if args.command == "batch" else []
+        status = 0
+        results: list[dict[str, str]] = []
         if args.command == "channel":
-            sources, acquisition = acquire_channel(
-                args.url,
-                args.destination,
-                args.limit,
-                _fetch_project,
-                lambda: args.cancel_file is not None and args.cancel_file.exists(),
+            try:
+                sources, acquisition = acquire_channel(
+                    args.url,
+                    args.destination,
+                    args.limit,
+                    lambda url, folder, cancelled: _fetch_project(url, folder, cancelled),
+                    lambda: args.cancel_file is not None and args.cancel_file.exists(),
+                )
+            except InstallationCancelled:
+                status = 130
+                report_path = args.destination / "channel-acquisition.json"
+                if report_path.is_file():
+                    acquisition = json.loads(report_path.read_text(encoding="utf-8"))["videos"]
+        if status != 130:
+            status, results = _run_batch(
+                sources,
+                args.set,
+                only=set(args.only or []),
+                skip=set(args.skip or []),
+                stream=args.events,
+                cancel_file=args.cancel_file,
             )
-        status, results = _run_batch(
-            sources,
-            args.set,
-            only=set(args.only or []),
-            skip=set(args.skip or []),
-            stream=args.events,
-            cancel_file=args.cancel_file,
-        )
         data = {
             "schema_version": 1,
             "status": "cancelled" if status == 130 else "failed" if status else "ok",
@@ -586,6 +618,9 @@ def _main(argv: Sequence[str] | None = None) -> int:
         if status != 130 and any(item["status"] == "failed" for item in acquisition):
             status = 1
             data["status"] = "failed"
+        notifications = send(notify, data, str(args.report) if args.report else None)
+        if notifications:
+            data["notifications"] = notifications
         if args.report:
             write_report(args.report, data)
         print(json.dumps(data, ensure_ascii=False, indent=2))
@@ -602,7 +637,10 @@ def _main(argv: Sequence[str] | None = None) -> int:
             )
         return status
     if args.command == "fetch":
-        _, report = _fetch_project(args.url, args.destination)
+        _, report = _fetch_project(
+            args.url, args.destination,
+            lambda: args.cancel_file is not None and args.cancel_file.exists(),
+        )
         print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else report)
         return 0
     if args.command == "doctor":

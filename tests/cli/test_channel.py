@@ -6,9 +6,10 @@ import studio.cli.channel as channel
 
 def test_channel_discovery_is_bounded_and_deduplicated(monkeypatch):
     monkeypatch.setattr(
-        channel.subprocess,
-        "run",
+        channel,
+        "run_cancellable",
         lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
             stdout=json.dumps(
                 {"entries": [{"id": "abcdefghijk"}, {"id": "abcdefghijk"}, {"id": "../bad"}]}
             )
