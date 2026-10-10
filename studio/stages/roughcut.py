@@ -10,7 +10,7 @@ from typing import Any
 from studio.core.audio_spans import Span, detect_silence, unknown_sound_spans, word_gaps
 from studio.core.project import Project, stable_fingerprint
 from studio.core.timeline import file_to_timeline
-from studio.core.transcript import Transcript
+from studio.core.transcript import Transcript, Word
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 from studio.stages.retake_models import RetakeGroup, RetakeSettings
 from studio.stages.retakes import detect_retakes
@@ -163,6 +163,7 @@ class RoughcutStage:
             audio_coverage=(Span(placement.offset_s,
                                  placement.offset_s + placement.duration_s * placement.k)
                             if placement else None),
+            head_tail_sound=str(conf.get("head_tail_sound", "cut")),
         )
         overrides = context.project.work_dir / "edit-overrides.json"
         if overrides.is_file():
@@ -280,6 +281,7 @@ def build_edit_list(
     llm_apply: str = "suggest",
     unknown_sound_min_s: float = 0.3,
     audio_coverage: Span | None = None,
+    head_tail_sound: str = "cut",
 ) -> EditList:
     if mode not in {"cut", "markers"}:
         raise ValueError("roughcut mode must be cut or markers")
@@ -299,14 +301,10 @@ def build_edit_list(
             span.start_s <= start and span.end_s >= end for span in silence
         )
 
-    first = min(word.start for word in words)
-    last = max(word.end for word in words)
-    if first > edge_pad_s and quiet(0.0, first - edge_pad_s):
-        cuts.append(Cut(0.0, first - edge_pad_s, "head", 1.0, "before first word"))
-    if transcript.duration > last + edge_pad_s and quiet(last + edge_pad_s, transcript.duration):
-        cuts.append(
-            Cut(last + edge_pad_s, transcript.duration, "tail", 1.0, "after last word")
-        )
+    cuts.extend(_head_tail_cuts(
+        transcript, words, silence, edge_pad_s=edge_pad_s, coverage=audio_coverage,
+        sound=head_tail_sound, unknown_sound_min_s=unknown_sound_min_s, quiet=quiet,
+    ))
     for gap in word_gaps(words, minimum_s=minimum_pause_s):
         trim = max(0.0, gap.duration_s - keep_pause_s)
         start = gap.start_s + keep_pause_s / 2
@@ -393,6 +391,71 @@ def build_edit_list(
         else ((0.0, transcript.duration),)
     )
     return EditList(mode, keep, tuple(cuts), markers)
+
+
+# Words below this probability (or marked suspect by the transcript check) do not
+# start or end the speech: a head cut must not stop at a stray misplaced word.
+RELIABLE_WORD_PROBABILITY = 0.3
+# The head cut ends at the start of a silence that ends this close before the first word.
+SILENCE_SNAP_S = 1.0
+
+
+def _head_tail_cuts(
+    transcript: Transcript, words: list[Word], silence: list[Span] | None, *,
+    edge_pad_s: float, coverage: Span | None, sound: str, unknown_sound_min_s: float,
+    quiet: Any,
+) -> list[Cut]:
+    """Cuts before the first and after the last reliable word.
+
+    A silent head or tail is cut as before (confidence 1.0). One with
+    untranscribed sound — preparation, steps, handling noise — is cut with
+    confidence 0.7 and its sounds kept as markers (``roughcut.head_tail_sound``
+    =cut), only suggested (suggest) or left alone (keep).
+    """
+    reliable = [word for word in words if word.probability >= RELIABLE_WORD_PROBABILITY]
+    if not reliable:
+        return []
+    start = max(0.0, coverage.start_s) if coverage is not None else 0.0
+    end = min(transcript.duration, coverage.end_s) if coverage is not None else (
+        transcript.duration)
+    first = min(word.start for word in reliable)
+    last = max(word.end for word in reliable)
+    cuts: list[Cut] = []
+    for reason, left, right, edge in (("head", start, first - edge_pad_s, first),
+                                      ("tail", last + edge_pad_s, end, last)):
+        if right - left <= 0 or (reason == "head" and first <= edge_pad_s):
+            continue
+        if quiet(left, right):
+            note = "before first word" if reason == "head" else "after last word"
+            cuts.append(Cut(left, right, reason, 1.0, note))
+            continue
+        if sound == "keep":
+            continue
+        # Keep the silence that leads into (out of) the speech: the cut stops
+        # at a silence ending at most 1 s before the first word.
+        if reason == "head":
+            near = [span.start_s for span in silence or []
+                    if span.end_s <= edge + 1e-6 and span.start_s >= edge - SILENCE_SNAP_S]
+            right = min([right, *near]) if near else right
+        else:
+            near = [span.end_s for span in silence or []
+                    if span.start_s >= edge - 1e-6 and span.end_s <= edge + SILENCE_SNAP_S]
+            left = max([left, *near]) if near else left
+        if right - left <= 0:
+            continue
+        sounds = unknown_sound_spans(
+            [word for word in words if left <= word.start < right], silence or [],
+            duration_s=transcript.duration, minimum_s=unknown_sound_min_s,
+            coverage=Span(left, right),
+        ) if silence is not None else []
+        where = "before the first word" if reason == "head" else "after the last word"
+        cuts.append(Cut(
+            left, right, reason, 0.7,
+            f"{where} at {edge:.1f} s; untranscribed sound: {len(sounds)} fragment(s), "
+            f"{sum(span.duration_s for span in sounds):.1f} s",
+            accepted=sound == "cut",
+        ))
+    return cuts
 
 
 def _complement(duration: float, cuts: list[Cut]) -> tuple[tuple[float, float], ...]:

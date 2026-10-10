@@ -2,6 +2,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from studio.core.audio_spans import Span, detect_silence, unknown_sound_spans, word_gaps
 from studio.core.project import ArtifactStatus, Project, StageManifest, describe_artifact
 from studio.core.transcript import Segment, Transcript, Word
@@ -121,6 +123,7 @@ def test_unknown_sounds_exclude_silence_words_and_absent_source() -> None:
     edit = build_edit_list(
         transcript, mode="cut", minimum_pause_s=1, keep_pause_s=0.4,
         edge_pad_s=0.2, silence=[Span(1, 1.5), Span(3, 4)], audio_coverage=Span(1, 5),
+        head_tail_sound="keep",
     )
     assert [marker.at for marker in edit.markers] == [1.5, 4]
     assert not edit.cuts
@@ -133,3 +136,55 @@ def test_empty_transcript_preserves_unrecognized_audio() -> None:
     )
     assert edit.keep == ((0, 5),)
     assert edit.markers[0].kind == "unknown-sound"
+
+
+def _noisy_head(sound: str = "cut"):
+    words = [Word("Здравствуйте,", 186.3, 186.9), Word("коллеги.", 187.0, 187.6),
+             Word("Начнём.", 190.0, 190.5)]
+    transcript = Transcript(Path("audio.wav"), "ru", 200, [Segment(186.3, 190.5, tuple(words))])
+    # Preparation: steps and handling noise louder than -40 dB among silences.
+    silence = [Span(0, 20), Span(22, 60), Span(61, 120), Span(121.5, 179), Span(187.6, 190)]
+    return build_edit_list(
+        transcript, mode="cut", minimum_pause_s=1, keep_pause_s=0.4, edge_pad_s=0.2,
+        silence=silence, head_tail_sound=sound,
+    )
+
+
+def test_noisy_head_before_first_word_is_cut_with_lower_confidence() -> None:
+    edit = _noisy_head()
+    head = next(cut for cut in edit.cuts if cut.reason == "head")
+    assert head.start == 0.0 and head.end == pytest.approx(186.1)
+    assert head.confidence == 0.7 and head.accepted
+    assert "186.3 s" in head.note and "fragment" in head.note
+    sounds = [marker.at for marker in edit.markers if marker.kind == "unknown-sound"]
+    assert sounds and all(at < 186.3 for at in sounds[:3])  # markers stay for listening
+    assert edit.keep[0][0] == pytest.approx(186.1)
+
+
+def test_suggested_head_is_not_applied() -> None:
+    head = next(cut for cut in _noisy_head("suggest").cuts if cut.reason == "head")
+    assert not head.accepted
+    assert not any(cut.reason == "head" for cut in _noisy_head("keep").cuts)
+
+
+def test_inner_unknown_sound_pause_is_not_cut() -> None:
+    edit = _noisy_head()
+    assert not any(cut.reason == "pause" and cut.start < 190 < cut.end for cut in edit.cuts)
+
+
+def test_quiet_head_keeps_full_confidence() -> None:
+    transcript = Transcript(Path("audio.wav"), "ru", 20, [
+        Segment(5, 6, (Word("Привет.", 5, 6),))])
+    edit = build_edit_list(transcript, mode="cut", minimum_pause_s=1, keep_pause_s=0.4,
+                           edge_pad_s=0.2, silence=[Span(0, 5), Span(6, 20)])
+    head = next(cut for cut in edit.cuts if cut.reason == "head")
+    assert head.confidence == 1.0 and head.end == pytest.approx(4.8)
+
+
+def test_suspect_word_does_not_end_the_head() -> None:
+    words = [Word("По", 14.8, 15.0, 0.1), Word("новой,", 141.7, 142.0)]
+    transcript = Transcript(Path("audio.wav"), "ru", 150, [Segment(14.8, 142, tuple(words))])
+    edit = build_edit_list(transcript, mode="cut", minimum_pause_s=1, keep_pause_s=0.4,
+                           edge_pad_s=0.2, silence=[Span(0, 14), Span(16, 140)])
+    head = next(cut for cut in edit.cuts if cut.reason == "head")
+    assert head.end == pytest.approx(141.5)

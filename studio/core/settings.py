@@ -87,6 +87,9 @@ class RoughcutSettings:
     silence_threshold_db: float = -40.0
     unknown_sound_min_s: float = 0.3
     head_tail_pad_s: float = 0.2
+    # Head/tail before the first and after the last word that hold untranscribed
+    # sound: "cut" (applied, confidence 0.7), "suggest" (not applied) or "keep".
+    head_tail_sound: str = "cut"
     detect_retakes: bool = True
     retake_min_words: int = 4
     retake_max_gap_s: float = 6.0
@@ -409,6 +412,8 @@ def validate_settings(settings: Settings) -> None:
     ):
         raise SettingsError("transcribe.glossary must be a list of strings")
     _one_of("roughcut.mode", settings.roughcut.mode, {"cut", "markers"})
+    _one_of("roughcut.head_tail_sound", settings.roughcut.head_tail_sound,
+            {"cut", "suggest", "keep"})
     _validate_roughcut_llm(settings.roughcut)
     _one_of("speakers.method", settings.speakers.method, {"auto", "mics", "pyannote", "off"})
     _one_of("speakers.device", settings.speakers.device, {"cpu", "cuda"})

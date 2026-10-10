@@ -528,6 +528,12 @@ class MainWindow(QMainWindow):
                 ],
             )
             item.setData(0, Qt.ItemDataRole.UserRole, str(cut.get("id", "")))
+            confidence = float(cut.get("confidence", 1.0))
+            note = str(cut.get("note", ""))
+            for column in range(item.columnCount()):
+                item.setToolTip(column, f"{note} (confidence {confidence:.2f})")
+            if confidence < 0.8:
+                item.setText(1, f"{cut.get('reason', '')} · proposal")
         kept = self.cut_timeline.kept_duration()
         self.review_status.setText(
             f"{self.review.topLevelItemCount()} edit decisions; "
