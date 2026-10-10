@@ -146,3 +146,24 @@ def test_digital_silence_and_an_impulse_do_not_capture_the_search(tmp_path: Path
     rec_path, cam_path = _wav(tmp_path / "rec.wav", recorder), _wav(tmp_path / "cam.wav", camera)
     found = locate_camera(cam_path, rec_path, None, 900.0, 300.0, None, 120.0)
     assert found is not None and found.position_s == pytest.approx(500.0, abs=0.01)
+
+
+def test_parallel_search_matches_the_serial_one(material) -> None:
+    recorder, camera = material
+    serial = locate_camera(camera, recorder, None, 1800.0, 120.0, None, 120.0, workers=1)
+    parallel = locate_camera(camera, recorder, None, 1800.0, 120.0, None, 120.0, workers=3)
+    assert serial is not None and parallel is not None
+    assert parallel.position_s == pytest.approx(serial.position_s, abs=1e-6)
+    assert parallel.position_s == pytest.approx(900.0, abs=0.01)
+
+
+def test_cpu_workers_default_leaves_a_core_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    from studio.core.parallel import cpu_workers
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    assert cpu_workers({}) == 7
+    assert cpu_workers({"compute": {"cpu_workers": 2}}) == 2
+    monkeypatch.setattr(os, "cpu_count", lambda: 1)
+    assert cpu_workers({"compute": {"cpu_workers": 0}}) == 1

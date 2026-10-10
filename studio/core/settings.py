@@ -149,6 +149,8 @@ class ProgramSettings:
 @dataclass(slots=True)
 class ComputeSettings:
     allow_cpu: bool = False
+    # Processes for CPU-heavy steps (locating cameras); 0 = all cores but one.
+    cpu_workers: int = 0
 
 
 @dataclass(slots=True)
@@ -377,6 +379,8 @@ def validate_settings(settings: Settings) -> None:
     ):
         raise SettingsError("managed llama requires executable and model_path")
     _one_of("scan.grouping", settings.scan.grouping, {"auto", "folders", "names"})
+    if settings.compute.cpu_workers < 0:
+        raise SettingsError("compute.cpu_workers must be 0 (auto) or a positive count")
     _positive("scan.probe_timeout_s", settings.scan.probe_timeout_s)
     _one_of("scan.verify_digests", settings.scan.verify_digests, {"cached", "always"})
     _one_of("scan.channel_analysis", settings.scan.channel_analysis, {"auto", "off"})

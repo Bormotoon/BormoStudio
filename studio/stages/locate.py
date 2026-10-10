@@ -24,6 +24,7 @@ import numpy as np
 
 from studio.core.channels import effective_audio
 from studio.core.digest import file_digest
+from studio.core.parallel import cpu_workers
 from studio.core.project import Asset, AssetRole, Project, stable_fingerprint
 from studio.core.recorded_at import epoch
 from studio.stages.base import (
@@ -66,6 +67,7 @@ class LocateStage:
     # Settings that can change this stage's result; they alone enter its fingerprint.
     settings_keys: tuple[str, ...] = (
         "sync.mode", "sync.locate_search_s", "transcribe.recorder_scope")
+    # compute.cpu_workers changes speed, not the result: it stays out of the fingerprint.
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
@@ -111,6 +113,7 @@ def locate_project(
         return data
     search_s = float(sync.get("locate_search_s", 120.0))
     hints = (previous or {}).get("deltas", {})
+    workers = cpu_workers(settings)
     windows = {
         camera.id: camera_windows(project.source_dir / camera.path, _duration(camera))
         for camera in cameras if _has_audio(camera)
@@ -142,7 +145,7 @@ def locate_project(
                 if span[1] <= span[0]:
                     continue
                 result = search_many(source, {camera.id: windows[camera.id]}, span,
-                                     pan=pan, stream=stream).get(camera.id)
+                                     pan=pan, stream=stream, workers=workers).get(camera.id)
                 if result is not None:
                     found[camera.id] = Located(result[0], result[1], name)
                     break
@@ -158,7 +161,7 @@ def locate_project(
 
             for camera_id, (position, sharpness) in search_many(
                     source, rest, None, pan=pan, stream=stream, progress=report,
-                    duration_s=duration).items():
+                    duration_s=duration, workers=workers).items():
                 found[camera_id] = Located(position, sharpness, "full")
         for camera in cameras:
             if camera.id not in windows or not windows[camera.id]:
@@ -184,7 +187,7 @@ def locate_project(
 
 def locate_camera(
     camera: Path, recorder: Path, recorder_asset: Asset | None, recorder_duration_s: float,
-    camera_duration_s: float, predicted_s: float | None, search_s: float,
+    camera_duration_s: float, predicted_s: float | None, search_s: float, workers: int = 1,
 ) -> Located | None:
     """Recorder time of ``camera``'s start: around ``predicted_s`` first, then wider."""
     windows = camera_windows(camera, camera_duration_s)
@@ -202,8 +205,8 @@ def locate_camera(
     stream = (recorder_asset.manual.get("media_info", {}).get("audio_stream_index")
               if recorder_asset is not None else None)
     for method, span in attempts:
-        found = search_many(recorder, {"camera": windows}, span, pan=pan,
-                            stream=stream).get("camera")
+        found = search_many(recorder, {"camera": windows}, span, pan=pan, stream=stream,
+                            duration_s=recorder_duration_s, workers=workers).get("camera")
         if found is not None:
             return Located(found[0], found[1], method)
     return None
@@ -234,6 +237,7 @@ def search_many(
     recorder: Path, cameras: dict[str, list[tuple[float, np.ndarray]]],
     span: tuple[float, float] | None, *, pan: str | None = None, stream: int | None = None,
     progress: Callable[[float], None] | None = None, duration_s: float | None = None,
+    workers: int = 1,
 ) -> dict[str, tuple[float, float]]:
     """Start of each camera in recorder time, decided by windows that agree.
 
@@ -250,20 +254,58 @@ def search_many(
                for t, samples in items]
     if not windows:
         return {}
-    candidates: list[list[tuple[float, float]]] = []
-    batches = max(1, -(-len(windows) // BATCH_WINDOWS))
     # Window spectra are block-sized: a bounded batch keeps memory flat however
-    # many cameras there are, at the cost of one more decode of the recorder.
-    for first in range(0, len(windows), BATCH_WINDOWS):
-        batch = first // BATCH_WINDOWS
+    # many cameras there are. Every (batch, stretch of the recorder) pair is an
+    # independent task; with several workers the stretches overlap by one
+    # window so no alignment position falls between two of them.
+    batches = [windows[first:first + BATCH_WINDOWS]
+               for first in range(0, len(windows), BATCH_WINDOWS)]
+    start = span[0] if span else 0.0
+    length = (span[1] - span[0]) if span else duration_s
+    workers = max(1, int(workers))
+    if workers > 1 and length:
+        pieces = max(1, min(workers * 2, int(length // (4 * BLOCK_S))))
+        overlap = max(len(samples) for _c, _t, samples in windows) / SR
+        step = length / pieces
+        spans: list[tuple[float, float] | None] = [
+            (start + index * step, min(start + length, start + (index + 1) * step + overlap))
+            for index in range(pieces)]
+    else:
+        spans = [span]
+    tasks = [(batch_index, piece) for batch_index in range(len(batches)) for piece in spans]
+    collected: list[list[tuple[float, float]]] = [[] for _ in windows]
+    offsets = [sum(len(batch) for batch in batches[:index]) for index in range(len(batches))]
 
-        def report(fraction: float, batch: int = batch) -> None:
-            if progress is not None:
-                progress((batch + fraction) / batches)
+    def merge(batch_index: int, found: list[list[tuple[float, float]]]) -> None:
+        for local, items in enumerate(found):
+            target = collected[offsets[batch_index] + local]
+            target.extend(items)
+            if len(target) > 4 * KEEP_CANDIDATES:
+                target[:] = sorted(target, reverse=True)[:KEEP_CANDIDATES]
 
-        candidates += _collect(recorder, windows[first:first + BATCH_WINDOWS], span,
-                               pan=pan, stream=stream, progress=report,
-                               duration_s=duration_s)
+    if len(tasks) == 1 or workers == 1:
+        for number, (batch_index, piece) in enumerate(tasks):
+            def report(fraction: float, number: int = number) -> None:
+                if progress is not None:
+                    progress((number + fraction) / len(tasks))
+
+            merge(batch_index, _collect(recorder, batches[batch_index], piece, pan=pan,
+                                        stream=stream, progress=report,
+                                        duration_s=duration_s))
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        with ProcessPoolExecutor(max_workers=min(workers, len(tasks))) as pool:
+            futures = {
+                pool.submit(_collect, recorder, batches[batch_index], piece, pan=pan,
+                            stream=stream): batch_index
+                for batch_index, piece in tasks
+            }
+            for done, future in enumerate(as_completed(futures), start=1):
+                merge(futures[future], future.result())
+                if progress is not None:
+                    progress(done / len(tasks))
+    candidates = collected
     result: dict[str, tuple[float, float]] = {}
     for camera_id in cameras:
         votes = [(start, index, sharpness)
