@@ -36,6 +36,8 @@ class CutTimeline(QWidget):
     """
 
     cut_selected = pyqtSignal(str)
+    # Timeline seconds clicked outside any cut (seek a loaded preview there).
+    position_requested = pyqtSignal(float)
 
     def __init__(self) -> None:
         super().__init__()
@@ -124,6 +126,10 @@ class CutTimeline(QWidget):
         if cut is not None:
             self.select(cut.id)
             self.cut_selected.emit(cut.id)
+        elif self.duration > 0 and self.width() > 0:
+            self.position_requested.emit(
+                max(0.0, min(self.duration, event.position().x() / self.width() * self.duration))
+            )
 
     def mouseMoveEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802
         if event is None:

@@ -76,34 +76,11 @@ class ProgramStage:
 
     def run(self, context: StageContext) -> StageOutput:
         timeline = Transcript.load(context.project.transcripts["timeline"])
-        edit_path = _edit_path(context.project)
-        roughcut = context.settings.get("roughcut", {})
-        use_edit = roughcut.get("enabled", True) if isinstance(roughcut, dict) else True
-        edit = (
-            load_edit_map(edit_path)
-            if edit_path.is_file() and use_edit
-            else EditMap("uncut", (KeepRange(0.0, timeline.duration),))
-        )
         output = context.work_dir / "program" / "program.mp4"
         output.parent.mkdir(parents=True, exist_ok=True)
         conf = context.settings.get("program", {})
         conf = conf if isinstance(conf, dict) else {}
-        from studio.core.recorder_tracks import effective_speaker_cameras
-
-        mapping = effective_speaker_cameras(context.project, conf.get("speaker_cameras", {}))
-        if mapping:
-            from studio.stages.camera_selection import CameraPolicy, speaker_camera_edit
-
-            paths = context.project.outputs.get("speakers", [])
-            if not paths or not paths[0].is_file():
-                raise ValueError("speaker camera selection requires speakers output; run speakers")
-            edit = speaker_camera_edit(
-                context.project,
-                edit,
-                json.loads(paths[0].read_text(encoding="utf-8")),
-                mapping,
-                policy=CameraPolicy.from_settings(conf),
-            )
+        edit = program_edit(context.project, context.settings, timeline.duration)
         render_report = render_project_program(
             context.project,
             edit,
@@ -137,6 +114,34 @@ class ProgramStage:
         return StageOutput(
             (output, edited_path, report_path), {"transcripts": transcripts, "outputs": outputs}
         )
+
+
+def program_edit(project: Project, settings: dict[str, Any], duration: float) -> EditMap:
+    """The program's edit: kept rough-cut ranges, cut between speaker cameras."""
+    edit_path = _edit_path(project)
+    roughcut = settings.get("roughcut", {})
+    use_edit = roughcut.get("enabled", True) if isinstance(roughcut, dict) else True
+    edit = (
+        load_edit_map(edit_path)
+        if edit_path.is_file() and use_edit
+        else EditMap("uncut", (KeepRange(0.0, duration),))
+    )
+    conf = settings.get("program", {})
+    conf = conf if isinstance(conf, dict) else {}
+    from studio.core.recorder_tracks import effective_speaker_cameras
+
+    mapping = effective_speaker_cameras(project, conf.get("speaker_cameras", {}))
+    if not mapping:
+        return edit
+    from studio.stages.camera_selection import CameraPolicy, speaker_camera_edit
+
+    paths = project.outputs.get("speakers", [])
+    if not paths or not paths[0].is_file():
+        raise ValueError("speaker camera selection requires speakers output; run speakers")
+    return speaker_camera_edit(
+        project, edit, json.loads(paths[0].read_text(encoding="utf-8")), mapping,
+        policy=CameraPolicy.from_settings(conf),
+    )
 
 
 def load_edit_map(path: Path) -> EditMap:
@@ -226,13 +231,17 @@ def render_project_program(
     encoder: str = "auto",
     fps: str = "auto",
     crossfade_ms: float = 0.0,
+    max_height: int | None = None,
 ) -> dict[str, object]:
+    """Render ``edit``; ``max_height`` makes a fast low-resolution proxy."""
     pieces = program_pieces(project, edit)
     first = next(
         asset for asset in project.assets if project.source_dir / asset.path == pieces[0].video
     )
     info = first.manual.get("media_info", {})
     width, height = int(info.get("width") or 1920), int(info.get("height") or 1080)
+    if max_height is not None and height > max_height:
+        width, height = max(2, round(width * max_height / height / 2) * 2), max_height
     requested_fps = fps
     rate = Fraction(str(info.get("fps") or 25) if fps == "auto" else fps)
     if not 1 <= rate <= 240:
@@ -291,6 +300,8 @@ def render_project_program(
                     "[a]",
                     "-c:v",
                     codec,
+                    *(["-preset", "ultrafast", "-crf", "30"]
+                      if max_height is not None and codec == "libx264" else []),
                     "-pix_fmt",
                     "yuv420p",
                     "-c:a",
@@ -309,7 +320,7 @@ def render_project_program(
                 # parameter sets when hardware fails halfway through a job.
                 retry = render_project_program(
                     project, edit, output, encoder="cpu", fps=requested_fps,
-                    crossfade_ms=crossfade_ms,
+                    crossfade_ms=crossfade_ms, max_height=max_height,
                 )
                 retry.update(
                     {

@@ -7,9 +7,10 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import QProcess, Qt, QTimer, QUrl
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -25,6 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from studio.core.launch import python_command
 from studio.core.project import Project
 from studio.gui.bridge import RunnerBridge
 from studio.gui.cut_timeline import CutTimeline, TimelineCut
@@ -34,6 +36,7 @@ from studio.gui.settings_page import SettingsPage
 from studio.gui.setup_wizard import SetupWizard
 from studio.gui.source_timeline import SourceTimeline
 from studio.gui.subtitles import SubtitleEditor
+from studio.stages.timeline_preview import TimelinePreview
 
 
 class MainWindow(QMainWindow):
@@ -73,6 +76,22 @@ class MainWindow(QMainWindow):
         self.cut_timeline = CutTimeline()
         self.source_timeline = SourceTimeline()
         self.cut_timeline.cut_selected.connect(self._select_cut_from_timeline)
+        # Whole-edit proxy: rendered by `uvf preview` in the background.
+        self.timeline_preview: TimelinePreview | None = None
+        self.timeline_video = QVideoWidget()
+        self.timeline_video.setMinimumHeight(180)
+        self.timeline_video.setAccessibleName("Whole timeline preview")
+        self.timeline_video.hide()
+        self.timeline_player = QMediaPlayer(self)
+        self.timeline_audio = QAudioOutput(self)
+        self.timeline_player.setAudioOutput(self.timeline_audio)
+        self.timeline_player.setVideoOutput(self.timeline_video)
+        self.timeline_player.positionChanged.connect(self._timeline_position)
+        self.preview_process = QProcess(self)
+        self.preview_process.finished.connect(self._timeline_preview_finished)
+        self.preview_process.errorOccurred.connect(
+            lambda _error: self._timeline_preview_failed(self.preview_process.errorString()))
+        self.cut_timeline.position_requested.connect(self._seek_timeline_preview)
         self.review.currentItemChanged.connect(self._select_cut_from_list)
         self.plan_label = QLabel("Scan a folder to build the plan.")
         self.log = QLabel("")
@@ -156,7 +175,18 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(self.source_timeline)
+        layout.addWidget(self.timeline_video, 2)
         layout.addWidget(self.cut_timeline)
+        whole = QHBoxLayout()
+        self.preview_button = QPushButton("Preview whole edit")
+        self.preview_button.setToolTip("Renders a quick low-resolution copy of the edit with "
+                                       "accepted cuts and camera switches")
+        self.preview_button.clicked.connect(self._start_timeline_preview)
+        play = QPushButton("Play / pause edit")
+        play.clicked.connect(self._toggle_timeline_preview)
+        whole.addWidget(self.preview_button)
+        whole.addWidget(play)
+        layout.addLayout(whole)
         layout.addWidget(self.review)
         layout.addWidget(self.review_status)
         actions = QHBoxLayout()
@@ -177,6 +207,55 @@ class MainWindow(QMainWindow):
         actions.addWidget(stop)
         layout.addLayout(actions)
         return page
+
+    def _start_timeline_preview(self) -> None:
+        if self.source is None or self.preview_process.state() != QProcess.ProcessState.NotRunning:
+            return
+        self.timeline_player.stop()
+        self.preview_button.setEnabled(False)
+        self.review_status.setText("Rendering a preview of the whole edit...")
+        executable, *arguments = python_command("studio.cli.main", ["preview", str(self.source)])
+        self.preview_process.start(executable, arguments)
+
+    def _timeline_preview_failed(self, message: str) -> None:
+        self.preview_button.setEnabled(True)
+        self.review_status.setText(f"Preview unavailable: {message.strip()[-500:]}")
+
+    def _timeline_preview_finished(self, code: int, _status: QProcess.ExitStatus) -> None:
+        self.preview_button.setEnabled(True)
+        if code:
+            self._timeline_preview_failed(
+                self.preview_process.readAllStandardError().data().decode(errors="replace"))
+            return
+        try:
+            data = json.loads(self.preview_process.readAllStandardOutput().data())
+            self.timeline_preview = TimelinePreview(
+                Path(data["video"]), tuple(data["spans"]), bool(data["reused"]))
+        except (ValueError, KeyError, TypeError) as exc:
+            self._timeline_preview_failed(str(exc))
+            return
+        self.timeline_video.show()
+        self.timeline_player.setSource(QUrl.fromLocalFile(str(self.timeline_preview.video)))
+        self.review_status.setText(
+            "Whole edit ready: play it, or click the cut overview to jump.")
+
+    def _toggle_timeline_preview(self) -> None:
+        if self.timeline_preview is None:
+            self._start_timeline_preview()
+        elif self.timeline_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.timeline_player.pause()
+        else:
+            self.review_player.stop()
+            self.timeline_player.play()
+
+    def _timeline_position(self, position: int) -> None:
+        if self.timeline_preview is not None:
+            self.cut_timeline.set_playhead(self.timeline_preview.to_timeline(position / 1000))
+
+    def _seek_timeline_preview(self, timeline_s: float) -> None:
+        if self.timeline_preview is not None:
+            self.timeline_player.setPosition(
+                round(self.timeline_preview.to_edited(timeline_s) * 1000))
 
     def _select_cut_from_timeline(self, cut_id: str) -> None:
         for index in range(self.review.topLevelItemCount()):
@@ -405,6 +484,11 @@ class MainWindow(QMainWindow):
             self.material.status.setText(str(exc))
 
     def _show_review(self, project: Project) -> None:
+        # Decisions may have changed: the next preview request re-renders (or reuses) it.
+        self.timeline_preview = None
+        self.timeline_player.stop()
+        self.timeline_player.setSource(QUrl())
+        self.timeline_video.hide()
         self.source_timeline.load(project)
         self.review.clear()
         paths = project.outputs.get("roughcut", [])

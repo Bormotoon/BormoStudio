@@ -533,6 +533,10 @@ def build_parser() -> argparse.ArgumentParser:
     cameras.add_argument("--apply", action="store_true",
                          help="with --suggest: save suggestions for speakers without a choice")
     cameras.add_argument("--json", action="store_true")
+    preview = commands.add_parser("preview", help="render a low-resolution proxy of the edit")
+    preview.add_argument("source", type=Path)
+    preview.add_argument("--height", type=int, default=360)
+    preview.add_argument("--set", action="append", default=[])
     reel = commands.add_parser("reel", help="list or edit per-reel framing and titles")
     reel.add_argument("source", type=Path)
     reel.add_argument("--reel", help="candidate_id or reel-NNN stem")
@@ -699,6 +703,17 @@ def _main(argv: Sequence[str] | None = None) -> int:
         ]
         material: object = documents[0] if len(documents) == 1 else {"assets": documents}
         print(json.dumps(material, ensure_ascii=False, indent=2) if args.json else material)
+        return 0
+    if args.command == "preview":
+        from studio.stages.timeline_preview import render_timeline_preview
+
+        if not 64 <= args.height <= 2160:
+            raise ValueError("preview --height must be between 64 and 2160")
+        project, _project_path, settings_path = _project(args.source)
+        result = render_timeline_preview(project, _settings(settings_path, args.set),
+                                         height=args.height)
+        print(json.dumps({"video": str(result.video), "spans": list(result.spans),
+                          "reused": result.reused}, indent=2))
         return 0
     if args.command == "reel":
         print(json.dumps(_update_reel(args.source, args), ensure_ascii=False, indent=2))
