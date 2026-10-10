@@ -332,7 +332,9 @@ def _peaks(values: np.ndarray, count: int, separation: int) -> list[int]:
 
 
 def _dithered(samples: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    return samples + rng.standard_normal(samples.size).astype(np.float32) * DITHER
+    noise: np.ndarray = rng.standard_normal(samples.size).astype(np.float32) * DITHER
+    result: np.ndarray = samples + noise
+    return result
 
 
 def _group(asset: Asset) -> str:
