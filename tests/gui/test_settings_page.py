@@ -93,3 +93,16 @@ def test_downloaded_models_fill_settings_and_modules_list_catalog(tmp_path):
         "x: download 1.00 of 4.00 GB"
     )
     assert app is not None
+
+
+def test_settings_page_applies_preset(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    page = SettingsPage()
+    page.load_project(tmp_path)
+    page.preset_combo.setCurrentText("roughcut-tight")
+    page.preset_button.click()
+    assert load_settings([tmp_path / "settings.yaml"]).roughcut.pause_min_s == 0.7
+    assert not page.dirty
+    assert "roughcut-tight" in page.status.text()
+    page.close()
+    app.processEvents()

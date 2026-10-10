@@ -1,9 +1,13 @@
 """Owned local llama session shared across adjacent LLM workers."""
 
+from __future__ import annotations
+
 import shutil
 import socket
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from urllib.request import urlopen
 
 from studio.llm.server import LlamaServer
@@ -11,16 +15,22 @@ from studio.modules.cancellation import check_cancelled
 
 
 class ManagedLlamaSession:
-    def __init__(self, settings: dict, work_dir: Path, cancelled=lambda: False) -> None:
+    def __init__(
+        self,
+        settings: dict[str, Any],
+        work_dir: Path,
+        cancelled: Callable[[], bool] = lambda: False,
+    ) -> None:
         self.settings = settings
         self.work_dir = work_dir
         self.cancelled = cancelled
-        self.server = None
+        self.server: LlamaServer | None = None
 
     def ensure(self) -> None:
         if not self.settings.get("managed", False):
             return
-        if self.server is not None and self.server.process.poll() is None:
+        if (self.server is not None and self.server.process is not None
+                and self.server.process.poll() is None):
             return
         model = Path(self.settings["model_path"]).expanduser()
         if not model.is_file():
@@ -34,13 +44,14 @@ class ManagedLlamaSession:
                 probe.bind(("127.0.0.1", port))
             except OSError as exc:
                 raise RuntimeError("managed llama port is occupied; choose another port") from exc
-        self.server = LlamaServer(Path(executable), model, self.work_dir / "llama", port)
+        server = LlamaServer(Path(executable), model, self.work_dir / "llama", port)
+        self.server = server
         try:
-            self.server.start()
+            server.start()
             deadline = time.monotonic() + float(self.settings["startup_timeout_s"])
             while time.monotonic() < deadline:
                 check_cancelled(self.cancelled)
-                if self.server.process.poll() is not None:
+                if server.process is None or server.process.poll() is not None:
                     raise RuntimeError("llama-server exited before readiness")
                 try:
                     with urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
@@ -60,7 +71,7 @@ class ManagedLlamaSession:
             self.server = None
 
 
-def effective_llm_settings(settings: dict) -> dict:
+def effective_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
     from copy import deepcopy
 
     settings = deepcopy(settings)
@@ -72,7 +83,7 @@ def effective_llm_settings(settings: dict) -> dict:
     return settings
 
 
-def model_identity(settings: dict) -> str:
+def model_identity(settings: dict[str, Any]) -> str:
     from studio.modules.models import digest
 
     config = settings.get("llm", {})
@@ -85,12 +96,12 @@ def model_identity(settings: dict) -> str:
 class BatchLlamaSession:
     """One owner across project boundaries; non-LLM work still releases resources."""
 
-    def __init__(self, cancelled=lambda: False) -> None:
+    def __init__(self, cancelled: Callable[[], bool] = lambda: False) -> None:
         self.cancelled = cancelled
-        self.session = None
-        self.identity = None
+        self.session: ManagedLlamaSession | None = None
+        self.identity: str | None = None
 
-    def select(self, settings: dict, work_dir: Path) -> ManagedLlamaSession:
+    def select(self, settings: dict[str, Any], work_dir: Path) -> ManagedLlamaSession:
         from studio.core.project import stable_fingerprint
 
         identity = stable_fingerprint(settings.get("llm", {}), model_identity(settings))

@@ -278,6 +278,26 @@ voice or the transcript source through its placement, so no master is required.
 crossfades that keep the exact program length: constant-power on edit joins,
 linear where only the camera changes. `0` restores hard joins.
 
+## Rough-cut presets and word check
+
+Pause thresholds come in packaged presets: `roughcut-gentle`, `roughcut-balanced`
+(the defaults) and `roughcut-tight`. `uvf preset` lists them,
+`uvf preset <folder> --apply roughcut-tight` merges one into the project
+settings (other keys stay as they are); the Settings page has the same choice
+under **Apply preset**.
+
+Audio that is neither silence nor a recognized word (laughter, music, coughs,
+speech Whisper skipped) longer than `roughcut.unknown_sound_min_s` becomes an
+`unknown-sound` marker and is never cut automatically. "как бы" is marked as a
+filler when spoken together; an LLM filler marker at the same word replaces it.
+Every cut, including retakes and LLM findings, is dropped if either edge would
+fall inside a word.
+
+`python -m tools.check_program <folder>` re-transcribes the rendered master and
+compares its words with the edited transcript in edited time, writing missing,
+extra or shifted words. Disagreements need listening: Whisper can mishear the
+master, and a clean result is evidence, not proof, of clean joins.
+
 ## LLM rough-cut suggestions
 
 `roughcut.llm: true` runs four detectors through the local LLM (role `roughcut`):
@@ -292,6 +312,22 @@ LLM cuts appear unaccepted in the Edit list and delivery choices as markers;
 `cut` applies them. Fillers are always markers.
 
 ## Recorder tracks and speaker cameras
+
+Synchronization uses the probed default audio stream by its absolute ffprobe
+index. Override it with `--set transcribe.audio_streams.<asset_id>=N`; the same
+stream is used for Whisper and synchronization matching/rendering. Camera-only
+NLE export writes that stream to `export/camera-audio` as lossless PCM and mutes
+embedded camera audio, so Final Cut/Premiere receive an unambiguous audio asset.
+Actual import/playback acceptance still requires those applications.
+
+Choose the synchronization reference with
+`--set sync.reference_camera=<asset_id_or_group>` (default: `auto`). Recordings
+connected through overlapping cameras/recorders share a timeline automatically.
+For disconnected sessions, set `sync.session_offsets` for one camera or recorder
+in each session, in seconds relative to the reference camera clock. For example,
+`--set sync.session_offsets.cam-session-2=120` places that camera at 120 seconds
+before global origin normalization. A disconnected session without this choice
+produces an actionable error instead of an invented placement.
 
 The Material page lists assets under their groups; drag assets onto another group
 to regroup them (several at once with multi-select). Scan proposes one lane per

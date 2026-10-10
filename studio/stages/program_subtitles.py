@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from studio.core.project import Project, stable_fingerprint
 from studio.core.subtitles import edit_path, load_edits, to_ass
@@ -14,13 +15,13 @@ from studio.stages.reel_render import _digest, burn_subtitles
 class ProgramSubtitlesStage:
     id = "program_subtitles"
     title = "Review master captions"
-    after = ("program",)
+    after: tuple[str, ...] = ("program",)
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return []
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         if not settings.get("program", {}).get("burn_subtitles", False):
             return Decision.skip("program captions are disabled")
         if not project.outputs.get("program") or not project.transcripts.get("edited"):
@@ -29,7 +30,7 @@ class ProgramSubtitlesStage:
             )
         return Decision.run()
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         paths = [*project.outputs.get("program", []), edit_path(project.work_dir, "program")]
         if project.transcripts.get("edited"):
             paths.append(project.transcripts["edited"])

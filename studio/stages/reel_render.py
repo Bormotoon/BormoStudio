@@ -10,7 +10,9 @@ import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
+from studio.core.launch import frozen_root
 from studio.core.proc import run_logged
 from studio.core.project import Project, stable_fingerprint
 from studio.core.subtitles import load_edits, to_ass
@@ -24,14 +26,14 @@ from studio.stages.reels import _settings, _transcript_path
 class ReelRenderStage:
     id = "reel_render"
     title = "Render reels"
-    after = ("reels", "program")
+    after: tuple[str, ...] = ("reels", "program")
     optional_after = ("program",)
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return []
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         if not _settings(settings).get("render", False):
             return Decision.skip("reels rendering is disabled")
         if not project.outputs.get("reels"):
@@ -45,7 +47,7 @@ class ReelRenderStage:
             return Decision.blocked("edited moments need the review program", "enable program")
         return Decision.run({})
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         inputs = [*project.outputs.get("reels", []), *project.outputs.get("program", [])]
         inputs.extend(project.source_dir / asset.path for asset in project.assets)
         inputs.extend(
@@ -309,7 +311,7 @@ def burn_subtitles(video: Path, subtitles: Path, output: Path) -> None:
             raise RuntimeError(result.stderr)
 
 
-def reframe_video(video: Path, output: Path, settings: dict[str, object]) -> dict[str, object]:
+def reframe_video(video: Path, output: Path, settings: dict[str, Any]) -> dict[str, object]:
     width, height = int(settings.get("width", 1080)), int(settings.get("height", 1920))
     if settings.get("framing") == "crop":
         x = float(settings.get("crop_x", 0.5))
@@ -362,7 +364,7 @@ def reframe_video(video: Path, output: Path, settings: dict[str, object]) -> dic
 
 
 def tracking_filter(
-    video: Path, width: int, height: int, settings: dict[str, object]
+    video: Path, width: int, height: int, settings: dict[str, Any]
 ) -> str | None:
     import logging
 
@@ -391,7 +393,7 @@ def tracking_filter(
             environment = os.environ.copy()
             environment["PYTHONPATH"] = (
                 str(
-                    Path(sys._MEIPASS) / "managed"
+                    frozen_root() / "managed"
                     if getattr(sys, "frozen", False)
                     else Path(__file__).resolve().parents[2]
                 )
@@ -413,7 +415,8 @@ def tracking_filter(
                 raise RuntimeError(result.stderr[-4096:])
             value = json.loads(output.read_text(encoding="utf-8"))
             if value["filter"]:
-                return value["filter"] + ",setsar=1"
+                filter_expression: str = value["filter"]
+                return filter_expression + ",setsar=1"
     except Exception as exc:
         logging.getLogger(__name__).warning("tracking unavailable: %s", exc)
     logging.getLogger(__name__).warning("tracking unavailable; using configured static crop")

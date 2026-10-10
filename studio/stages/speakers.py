@@ -7,6 +7,7 @@ import math
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -30,10 +31,10 @@ class SpeakersStage:
     after: tuple[str, ...] = ("timeline",)
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return [Requirement("binary", "ffmpeg", "decode microphone channels")]
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         speakers = settings.get("speakers", {})
         conf = speakers if isinstance(speakers, dict) else {}
         method = str(conf.get("method", "auto"))
@@ -63,7 +64,7 @@ class SpeakersStage:
                                     "align recorder tracks before speaker attribution")
         return Decision.run({"method": "mics", "tracks": tracks})
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         transcript = project.transcripts.get("timeline")
         content = (
             transcript.read_text(encoding="utf-8")
@@ -77,9 +78,10 @@ class SpeakersStage:
         if conf.get("method") == "pyannote":
             from studio.stages.timeline import _primary_source_id
 
-            selected = ({Transcript.load(transcript).metadata.get("source_asset_id")
-                         or _primary_source_id(project)} if transcript and transcript.is_file()
-                        else {_primary_source_id(project)})
+            source_id = (Transcript.load(transcript).metadata.get("source_asset_id")
+                         or _primary_source_id(project) if transcript and transcript.is_file()
+                         else _primary_source_id(project))
+            selected = {source_id} if source_id is not None else set()
         identities = [describe_artifact(project.source_dir, project.source_dir / asset.path)
                       for asset in project.assets if asset.id in selected]
         return stable_fingerprint(
@@ -169,8 +171,8 @@ def microphone_tracks(project: Project, conf: dict[str, object]) -> dict[str, st
         if not isinstance(key, str) or not isinstance(speaker, str) or not speaker.strip():
             raise ValueError("speaker tracks require nonempty string names")
         try:
-            asset_id, channel = key.rsplit(":", 1)
-            number = int(channel)
+            asset_id, channel_text = key.rsplit(":", 1)
+            number = int(channel_text)
         except ValueError as exc:
             raise ValueError(f"invalid microphone track: {key}; use asset_id:channel") from exc
         if asset_id not in assets:
@@ -260,7 +262,7 @@ def timeline_envelope(
     positions = np.clip(np.round(source_times * sample_rate).astype(np.int64), 0, len(samples))
     lengths = np.diff(positions)
     energies = np.diff(cumulative[positions]) / np.maximum(lengths, 1)
-    return np.sqrt(np.maximum(energies, 0))
+    return cast(np.ndarray, np.sqrt(np.maximum(energies, 0)))
 
 
 def assign_words_to_mics(

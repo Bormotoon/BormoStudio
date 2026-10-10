@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from studio.core.project import AssetRole, Project, stable_fingerprint
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
@@ -14,15 +15,15 @@ class PrepareStage:
     after: tuple[str, ...] = ("scan",)
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return []
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         return Decision.run() if project.assets else Decision.blocked(
             "scan found no media", "choose a folder containing supported media"
         )
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         inputs = [(asset.id, asset.role.value, asset.manual) for asset in project.assets]
         return stable_fingerprint("prepare-v1", inputs, settings)
 
@@ -34,11 +35,11 @@ class PrepareStage:
         ]
         cameras = [asset.id for asset in context.project.assets if asset.role is AssetRole.CAMERA]
         mode = str(context.settings.get("sync", {}).get("mode", "auto"))
-        transcripts = list(recorders)
+        transcripts = [] if mode == "camera" else list(recorders)
         reasons: dict[str, str] = {
             asset_id: "primary recorder transcript" for asset_id in recorders
         }
-        if not recorders or mode in {"auto", "complex"}:
+        if not recorders or mode in {"camera", "auto", "simple", "complex"}:
             transcripts.extend(cameras)
             reasons.update(
                 {asset_id: "camera transcript required for placement" for asset_id in cameras}
@@ -49,7 +50,9 @@ class PrepareStage:
             "assets": cameras + recorders,
             "transcripts": list(dict.fromkeys(transcripts)),
             "audio_streams": {
-                asset.id: asset.manual.get("media_info", {}).get("audio_stream_index")
+                asset.id: context.settings.get("transcribe", {}).get("audio_streams", {}).get(
+                    asset.id, asset.manual.get("media_info", {}).get("audio_stream_index")
+                )
                 for asset in context.project.assets
                 if asset.role in {AssetRole.CAMERA, AssetRole.RECORDER}
             },

@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import yaml
 from PyQt6.QtCore import QProcess
@@ -24,20 +25,24 @@ from PyQt6.QtWidgets import (
 )
 
 from studio.core.launch import python_command
+from studio.core.presets import apply_preset, list_presets
 from studio.core.settings import load_settings
 from studio.core.settings_store import save_settings
+
+Control = QCheckBox | QComboBox | QSpinBox | QLineEdit
+State = tuple[str, tuple[object, ...]]
 
 
 class SettingsPage(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.work_dir: Path | None = None
-        self.controls = {}
-        self._snapshot = None
+        self.controls: dict[tuple[str, str], Control] = {}
+        self._snapshot: State | None = None
         self.probe = QProcess(self)
         self.probe.finished.connect(self._compute_finished)
         self.probe.errorOccurred.connect(self._compute_error)
-        self.recommendations = None
+        self.recommendations: dict[str, Any] | None = None
         form = QFormLayout()
         for section, key, label, choices in (
             ("sync", "mode", "Synchronization", ["auto", "camera", "simple", "complex"]),
@@ -45,11 +50,11 @@ class SettingsPage(QWidget):
             ("speakers", "method", "Speakers", ["auto", "mics", "pyannote", "off"]),
             ("program", "encoder", "Video encoder", ["auto", "cpu", "nvenc"]),
         ):
-            field = QComboBox()
-            field.addItems(choices)
-            self.controls[(section, key)] = field
-            form.addRow(label, field)
-            field.setAccessibleName(label)
+            combo = QComboBox()
+            combo.addItems(choices)
+            self.controls[(section, key)] = combo
+            form.addRow(label, combo)
+            combo.setAccessibleName(label)
         for section, key, label in (
             ("transcribe", "model", "Whisper model"),
             ("text", "base_url", "Local LLM endpoint"),
@@ -69,9 +74,9 @@ class SettingsPage(QWidget):
             ("reels", "render", "Render reels"),
             ("reels", "burn_subtitles", "Burn reel captions"),
         ):
-            field = QCheckBox(label)
-            self.controls[(section, key)] = field
-            form.addRow(field)
+            check = QCheckBox(label)
+            self.controls[(section, key)] = check
+            form.addRow(check)
         managed = QCheckBox("Launch owned llama-server for LLM processing")
         self.controls[("llm", "managed")] = managed
         form.addRow(managed)
@@ -131,6 +136,15 @@ class SettingsPage(QWidget):
         self.apply_button.clicked.connect(self._apply_compute)
         layout.addWidget(self.detect_button)
         layout.addWidget(self.apply_button)
+        preset_row = QHBoxLayout()
+        self.preset_combo = QComboBox()
+        self.preset_combo.setAccessibleName("Settings preset")
+        self.preset_combo.addItems(list_presets())
+        self.preset_button = QPushButton("Apply preset")
+        self.preset_button.clicked.connect(self._apply_preset)
+        preset_row.addWidget(self.preset_combo)
+        preset_row.addWidget(self.preset_button)
+        layout.addLayout(preset_row)
         layout.addStretch()
 
     def load_project(self, work_dir: Path) -> None:
@@ -158,7 +172,7 @@ class SettingsPage(QWidget):
         self.status.setText("Settings apply to this project. Save before building the plan.")
         self._snapshot = self._state()
 
-    def _state(self):
+    def _state(self) -> State:
         return (
             self.yaml_editor.toPlainText(),
             tuple(
@@ -174,10 +188,10 @@ class SettingsPage(QWidget):
         )
 
     @property
-    def dirty(self):
+    def dirty(self) -> bool:
         return self._snapshot is not None and self._state() != self._snapshot
 
-    def confirm_discard(self):
+    def confirm_discard(self) -> bool:
         if not self.dirty:
             return True
         answer = QMessageBox.question(
@@ -200,7 +214,7 @@ class SettingsPage(QWidget):
                 "Save Advanced YAML first; processing save would replace YAML edits."
             )
             return False
-        changes = {}
+        changes: dict[str, dict[str, object]] = {}
         for (section, key), field in self.controls.items():
             value = (
                 field.isChecked()
@@ -268,13 +282,28 @@ class SettingsPage(QWidget):
         self.detect_button.setEnabled(True)
         try:
             if code:
-                raise ValueError(bytes(self.probe.readAllStandardError()).decode(errors="replace"))
-            report = json.loads(bytes(self.probe.readAllStandardOutput()))
+                raise ValueError(
+                    self.probe.readAllStandardError().data().decode(errors="replace")
+                )
+            report = json.loads(self.probe.readAllStandardOutput().data())
             self.recommendations = report["recommendations"]
             self.status.setText(json.dumps(report, indent=2))
             self.apply_button.setEnabled(self.work_dir is not None)
         except (ValueError, KeyError) as exc:
             self.status.setText(str(exc))
+
+    def _apply_preset(self) -> None:
+        if self.work_dir is None or not self.confirm_discard():
+            return
+        name = self.preset_combo.currentText()
+        try:
+            apply_preset(self.work_dir, name)
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.status.setText(str(exc))
+            return
+        self._snapshot = None
+        self.load_project(self.work_dir)
+        self.status.setText(f"Preset {name} saved; other settings are unchanged.")
 
     def _apply_compute(self) -> None:
         if self.work_dir is None or self.recommendations is None:

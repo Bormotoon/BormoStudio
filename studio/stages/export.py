@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 from studio.core.project import AssetRole, Project, describe_artifact, stable_fingerprint
@@ -59,36 +61,47 @@ class ExportStage:
     optional_after = ("roughcut", "speakers")
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return []
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         return Decision.run() if any(
             asset.role is AssetRole.CAMERA for asset in project.assets
         ) else Decision.skip("no camera assets")
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         inputs = [
             describe_artifact(project.work_dir, path)
             for key, paths in project.outputs.items()
-             if key.startswith(("sync:", "ambience:")) or key in {"roughcut", "speakers"}
+             if key.startswith(("sync:", "sync-tracks:", "ambience:"))
+             or key in {"roughcut", "speakers"}
             for path in paths if path.is_file()
         ]
         return stable_fingerprint(
-            "export-v13", project.assets, project.placements, project.audio_warp_maps,
+            "export-v14", project.assets, project.placements, project.audio_warp_maps,
             inputs, settings.get("export", {}), settings.get("roughcut", {}),
             settings.get("program", {}), project.speaker_cameras,
+            settings.get("transcribe", {}).get("audio_streams", {}),
+            [describe_artifact(project.source_dir, project.source_dir / asset.path)
+             for asset in project.assets if asset.role is AssetRole.CAMERA
+             and (project.source_dir / asset.path).is_file()],
         )
 
     def run(self, context: StageContext) -> StageOutput:
         roughcut = context.settings.get("roughcut", {})
         use_edit = roughcut.get("enabled", True) if isinstance(roughcut, dict) else True
-        sequence = build_sequence(context.project, use_edit=bool(use_edit), retimed=True)
+        camera_audio = export_camera_audio(context)
+        sequence = build_sequence(context.project, use_edit=bool(use_edit), retimed=True,
+                                  camera_audio=camera_audio)
+        sequence = replace(sequence, clips=tuple(
+            replace(clip, path=context.project.work_dir / clip.path.relative_to(context.work_dir))
+            if clip.path in camera_audio.values() else clip for clip in sequence.clips
+        ))
         fcpxml = context.work_dir / "export" / f"{sequence.name}.fcpxml"
         xmeml = context.work_dir / "export" / f"{sequence.name}.xml"
         conf = context.settings.get("export", {})
         conf = conf if isinstance(conf, dict) else {}
-        artifacts = []
+        artifacts = list(camera_audio.values())
         targets = conf.get("targets", ["fcpxml", "xmeml"])
         if "multicam" in targets:
             from studio.stages.multicam import write_multicam
@@ -150,7 +163,8 @@ def multicam_camera_plan(project: Project, settings: dict, use_edit: bool,
 
 
 def build_sequence(project: Project, name: str = "Studio", *, use_edit: bool = True,
-                   retimed: bool = False) -> Sequence:
+                    retimed: bool = False,
+                    camera_audio: dict[str, Path] | None = None) -> Sequence:
     assets = {asset.id: asset for asset in project.assets}
     clips: list[SequenceClip] = []
     camera_index = 0
@@ -172,7 +186,7 @@ def build_sequence(project: Project, name: str = "Studio", *, use_edit: bool = T
                 placement.offset_s,
                 camera_index,
                 bool(media.get("audio_codec")),
-                audio_enabled=voice is None,
+                audio_enabled=voice is None and asset.id not in (camera_audio or {}),
                 audio_channels=int(media.get("audio_channels") or 2),
                 rate=rate,
                 source_fps=Fraction(str(media.get("fps") or "25")),
@@ -190,6 +204,21 @@ def build_sequence(project: Project, name: str = "Studio", *, use_edit: bool = T
                 rate=rate,
             ))
             clips[-1] = audio_metadata(clips[-1])
+            lanes = project.outputs.get(f"sync-tracks:{asset.id}", [])
+            for index, lane in enumerate(lanes):
+                if lane == voice or not lane.is_file():
+                    continue
+                clips.append(audio_metadata(SequenceClip(
+                    f"voice-{asset.id}-track-{index + 1}", lane, placement.in_s, duration,
+                    placement.offset_s, -100 - camera_index * 100 - index,
+                    True, has_video=False, rate=rate,
+                )))
+        elif asset.id in (camera_audio or {}):
+            assert camera_audio is not None
+            clips.append(audio_metadata(SequenceClip(
+                f"camera-audio-{asset.id}", camera_audio[asset.id], placement.in_s, duration,
+                placement.offset_s, -camera_index - 1, True, has_video=False, rate=rate,
+            )))
         room = project.outputs.get(f"ambience:{asset.id}", [])
         if room and room[0].is_file():
             clips.append(SequenceClip(
@@ -259,6 +288,34 @@ def build_sequence(project: Project, name: str = "Studio", *, use_edit: bool = T
     )
 
 
+def export_camera_audio(context: StageContext) -> dict[str, Path]:
+    """Detach selected streams so both NLE formats reference unambiguous PCM."""
+    result: dict[str, Path] = {}
+    overrides = context.settings.get("transcribe", {}).get("audio_streams", {})
+    for asset in context.project.assets:
+        if asset.role is not AssetRole.CAMERA:
+            continue
+        if any(path.is_file() for path in context.project.outputs.get(f"sync:{asset.id}", [])):
+            continue
+        media = asset.manual.get("media_info", {})
+        stream = overrides.get(asset.id, media.get("audio_stream_index"))
+        if stream is None:
+            continue
+        output = context.work_dir / "export" / "camera-audio" / f"{asset.id}.wav"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        bits = media.get("audio_bits_per_sample") or 24
+        codec = "pcm_s16le" if bits <= 16 else "pcm_s24le" if bits <= 24 else "pcm_s32le"
+        decoded = subprocess.run([
+            "ffmpeg", "-nostdin", "-v", "error", "-i",
+            str(context.project.source_dir / asset.path), "-map", f"0:{stream}",
+            "-vn", "-c:a", codec, "-rf64", "auto", str(output),
+        ], capture_output=True, text=True)
+        if decoded.returncode:
+            raise RuntimeError(f"camera audio export failed for {asset.id}: {decoded.stderr}")
+        result[asset.id] = output
+    return result
+
+
 def audio_metadata(clip: SequenceClip) -> SequenceClip:
     """Read rendered PCM metadata instead of inheriting camera channel counts."""
     import wave
@@ -295,7 +352,7 @@ def write_fcpxml(
         height=str(sequence.height),
     )
     resource_ids: dict[str, str] = {}
-    formats = {}
+    formats: dict[tuple[Fraction, int, int], str] = {}
     for index, clip in enumerate(sequence.clips, 2):
         if clip.asset_id in resource_ids:
             continue
@@ -376,8 +433,8 @@ def write_fcpxml(
                           value=_rational(clip.source_in_s, 1_000_000), interp="linear")
             ET.SubElement(time_map, "timept",
                           time=_rational(
-                              _parse_time(element.get("start"))
-                              + _parse_time(element.get("duration")), 1_000_000),
+                               _parse_time(element.attrib["start"])
+                               + _parse_time(element.attrib["duration"]), 1_000_000),
                           value=_rational(clip.source_in_s + clip.duration_s / clip.rate,
                                           1_000_000), interp="linear")
             element.insert(0, time_map)

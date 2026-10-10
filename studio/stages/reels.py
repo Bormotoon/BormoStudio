@@ -6,6 +6,7 @@ import json
 import subprocess
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 from studio.core.project import Project, stable_fingerprint
 from studio.core.transcript import Transcript
@@ -56,7 +57,7 @@ class ReelsStage:
     optional_after = ("text", "program", "speakers")
     gpu = GpuUse.LLM
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         reels = _settings(settings)
         if not reels["enabled"]:
             return []
@@ -71,7 +72,7 @@ class ReelsStage:
             for role in enabled
         ]
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         reels = _settings(settings)
         if not reels["enabled"]:
             return Decision.skip("reels are disabled")
@@ -83,7 +84,7 @@ class ReelsStage:
             return Decision.run({"transcript": "timeline"})
         return Decision.blocked("no transcript is available", "run timeline or text")
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         reels = _settings(settings)
         source = _transcript_path(project)
         content = source.read_text(encoding="utf-8") if source and source.is_file() else ""
@@ -119,7 +120,7 @@ class ReelsStage:
         )
         template = _prompt(_language(transcript.language, str(reels["prompt_language"])))
 
-        def routed(role):
+        def routed(role: str) -> LlamaProvider:
             return role_provider(
                 context.settings,
                 "reels",
@@ -161,7 +162,7 @@ class ReelsStage:
                     failures.append(f"episode_metadata: {exc}")
             try:
 
-                def validate_context(payload):
+                def validate_context(payload: Any) -> Any:
                     format_episode_context(payload)
                     return payload
 
@@ -371,8 +372,8 @@ class ReelsStage:
         return StageOutput((moments, summary, report), {"outputs": outputs})
 
 
-def _settings(settings: dict[str, object]) -> dict[str, object]:
-    defaults: dict[str, object] = {
+def _settings(settings: dict[str, Any]) -> dict[str, Any]:
+    defaults: dict[str, Any] = {
         "enabled": False,
         "base_url": "http://127.0.0.1:8080",
         "model": "local",
@@ -443,7 +444,7 @@ def _language(transcript_language: str, configured: str) -> str:
     )
 
 
-def _summary(records: list[object]) -> str:
+def _summary(records: list[MomentRecord]) -> str:
     lines = ["# Reels Suggestions", ""]
     for index, record in enumerate(records, 1):
         value = record.to_dict()

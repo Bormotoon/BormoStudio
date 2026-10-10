@@ -140,7 +140,7 @@ def _interpolate(sentences: list[str], start: float, end: float) -> list[tuple[f
     return result
 
 
-def _float(value: object) -> float | None:
+def _float(value: Any) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):

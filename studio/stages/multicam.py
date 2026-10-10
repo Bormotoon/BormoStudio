@@ -7,6 +7,20 @@ from studio.core.timeline import EditMap
 from studio.stages.export import Sequence, _frame_time, _parse_time, write_fcpxml
 
 
+def _child(parent: ET.Element, path: str) -> ET.Element:
+    found = parent.find(path)
+    if found is None:
+        raise ValueError(f"generated FCPXML lacks {path}")
+    return found
+
+
+def _attribute(element: ET.Element, name: str) -> str:
+    value = element.get(name)
+    if value is None:
+        raise ValueError(f"generated FCPXML element {element.tag} lacks {name}")
+    return value
+
+
 def write_multicam(sequence: Sequence, output: Path, *, media_base: Path,
                   version: str = "1.9", camera_plan: EditMap | None = None) -> Path:
     videos = [clip for clip in sequence.clips if clip.has_video]
@@ -15,14 +29,14 @@ def write_multicam(sequence: Sequence, output: Path, *, media_base: Path,
     write_fcpxml(sequence, output, media_base=media_base, version=version)
     tree = ET.parse(output)
     root = tree.getroot()
-    resources = root.find("resources")
-    sequence_el = root.find(".//project/sequence")
-    spine = sequence_el.find("spine")
-    bed = spine.find("gap")
+    resources = _child(root, "resources")
+    spine = _child(_child(root, ".//project/sequence"), "spine")
+    bed = _child(spine, "gap")
     media = ET.SubElement(resources, "media", id="mc-resource", name=sequence.name + " Multicam")
     multicam = ET.SubElement(media, "multicam", format="r1", tcStart="0s", tcFormat="NDF")
-    angles = {}
-    elements = {}
+    angles: dict[tuple[bool, int], ET.Element] = {}
+    elements: dict[int, ET.Element] = {}
+    audio_angles: dict[int, ET.Element] = {}
     for clip, element in zip(sequence.clips, list(bed.findall("asset-clip")), strict=True):
         elements[id(clip)] = element
         if clip.asset_id.startswith("ambience-"):
@@ -69,7 +83,7 @@ def write_multicam(sequence: Sequence, output: Path, *, media_base: Path,
         background.set("offset", "0s")
         background.set("lane", "-1")
         composite.append(background)
-        elements[("audio", id(camera))] = angle
+        audio_angles[id(camera)] = angle
     for angle in angles.values():
         angle[:] = sorted(angle, key=lambda element: _parse_time(element.get("offset", "0s")))
     # Partition coverage so the project never selects an unavailable angle.
@@ -101,21 +115,22 @@ def write_multicam(sequence: Sequence, output: Path, *, media_base: Path,
                   and clip.asset_id == f"voice-{selected.asset_id}"
                   and clip.timeline_start_s <= start + 1e-9
                   and clip.timeline_start_s + clip.duration_s >= end - 1e-9]
-        video_angle = angles[(True, selected.lane)].get("angleID")
-        audio_angle = elements.get(("audio", id(selected)))
+        video_angle = _attribute(angles[(True, selected.lane)], "angleID")
+        audio_angle = audio_angles.get(id(selected))
         ET.SubElement(element, "mc-source", angleID=video_angle,
                       srcEnable="video" if voices or audio_angle is not None else "all")
         if audio_angle is not None:
-            ET.SubElement(element, "mc-source", angleID=audio_angle.get("angleID"),
+            ET.SubElement(element, "mc-source", angleID=_attribute(audio_angle, "angleID"),
                           srcEnable="audio")
         elif voices:
             ET.SubElement(element, "mc-source",
-                          angleID=angles[(False, voices[0].lane)].get("angleID"), srcEnable="audio")
+                          angleID=_attribute(angles[(False, voices[0].lane)], "angleID"),
+                          srcEnable="audio")
     # Markers use multicam source time within the corresponding project clip.
     for marker in sequence.markers:
         for element in spine.findall("mc-clip"):
-            start = _parse_time(element.get("start"))
-            end = start + _parse_time(element.get("duration"))
+            start = _parse_time(_attribute(element, "start"))
+            end = start + _parse_time(_attribute(element, "duration"))
             if start <= marker.at_s < end:
                 ET.SubElement(element, "marker", start=_frame_time(marker.at_s, sequence.fps),
                               duration=_frame_time(1 / float(sequence.fps), sequence.fps),

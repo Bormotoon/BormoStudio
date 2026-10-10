@@ -317,7 +317,7 @@ def _run_batch(
                 )
                 return 130, results
             try:
-                options = {"batch_session": owner}
+                options: dict[str, Any] = {"batch_session": owner}
                 if cancel_file is not None:
                     options["cancel_file"] = cancel_file
                 _run_pipeline(source, overrides, only=only, skip=skip, stream=stream, **options)
@@ -339,7 +339,7 @@ def _run_batch(
 
 def _fetch_project(
     url: str, destination: Path, cancelled: Callable[[], bool] = lambda: False
-) -> tuple[Project, dict[str, str]]:
+) -> tuple[Project, dict[str, Any]]:
     from studio.stages.fetch import resumable_fetch
 
     destination = destination.resolve()
@@ -426,6 +426,9 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument("--camera")
     target.add_argument("--clear", action="store_true")
     cameras.add_argument("--json", action="store_true")
+    preset = commands.add_parser("preset", help="list or apply packaged settings presets")
+    preset.add_argument("source", type=Path, nargs="?")
+    preset.add_argument("--apply", metavar="NAME")
     batch = commands.add_parser("batch")
     batch.add_argument("sources", nargs="+", type=Path)
     batch.add_argument("--json", action="store_true")
@@ -500,7 +503,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command == "models":
         from studio.modules.models import ModelManager
 
-        manager = ModelManager()
+        model_manager = ModelManager()
         if args.action == "install":
             if not args.name:
                 raise ValueError("models install requires a model name")
@@ -509,7 +512,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
                     {
                         "name": args.name,
                         "path": str(
-                            manager.install(
+                            model_manager.install(
                                 args.name, progress=installation_progress, **install_options
                             )
                         ),
@@ -522,7 +525,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             print(
                 json.dumps(
                     {
-                        "models": [manager.describe(name) for name in manager.names()]
+                        "models": [model_manager.describe(name) for name in model_manager.names()]
                     }
                 )
             )
@@ -576,6 +579,18 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command in {"tracks", "cameras"}:
         handler = _update_tracks if args.command == "tracks" else _update_cameras
         print(json.dumps(handler(args.source, args), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "preset":
+        from studio.core.presets import apply_preset, list_presets
+
+        if args.apply is None:
+            print("\n".join(list_presets()))
+            return 0
+        if args.source is None:
+            raise ValueError("preset --apply requires a project folder")
+        _, _, settings_path = _project(args.source)
+        applied = apply_preset(settings_path.parent, args.apply)
+        print(json.dumps(applied, ensure_ascii=False, indent=2))
         return 0
     if args.command in {"batch", "channel"}:
         from studio.cli.channel import acquire_channel, write_report
@@ -649,10 +664,10 @@ def _main(argv: Sequence[str] | None = None) -> int:
         from studio.stages.sync_verify import measure, validate_parameters
 
         validate_parameters(args.grid_s, args.window_s, median_threshold_ms=args.threshold_ms)
-        report = measure(args.camera, args.voice, grid_s=args.grid_s, window_s=args.window_s)
-        status, reason = report.verdict(args.threshold_ms)
-        print(json.dumps({"status": status, "reason": reason, **report.summary()}, indent=2))
-        return 0 if status == "passed" else 1
+        verification = measure(args.camera, args.voice, grid_s=args.grid_s, window_s=args.window_s)
+        verdict, reason = verification.verdict(args.threshold_ms)
+        print(json.dumps({"status": verdict, "reason": reason, **verification.summary()}, indent=2))
+        return 0 if verdict == "passed" else 1
     if args.command == "review":
         from studio.stages.roughcut import review_cut
 

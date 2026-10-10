@@ -26,8 +26,8 @@ class ModulesPage(QWidget):
         self.process = QProcess(self)
         self.buffer = ""
         self.installed_result: dict | None = None
-        self.cancel_directory = None
-        self.cancel_file = None
+        self.cancel_directory: tempfile.TemporaryDirectory[str] | None = None
+        self.cancel_file: Path | None = None
         self.cancel_button = QPushButton("Cancel installation")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel)
@@ -59,7 +59,7 @@ class ModulesPage(QWidget):
         inspect.clicked.connect(lambda: self.start("modules", "list"))
         models = QPushButton("Check installed models")
         models.clicked.connect(lambda: self.start("models", "list"))
-        self.actions = [install, download, inspect, models]
+        self.action_buttons = [install, download, inspect, models]
         self.status = QLabel(
             "Download Whisper and Gemma GGUF models here; downloads resume after "
             "cancellation and are verified against pinned checksums. Install vision, "
@@ -95,7 +95,7 @@ class ModulesPage(QWidget):
         self.cancel_button.setEnabled(action == "install")
         self.progress.setRange(0, 0)
         self.status.setText(f"Running {command} {action} {name or ''}...")
-        for button in self.actions:
+        for button in self.action_buttons:
             button.setEnabled(False)
         arguments = [
             command,
@@ -109,7 +109,7 @@ class ModulesPage(QWidget):
         self.process.start(executable, arguments)
 
     def _output(self) -> None:
-        text = bytes(self.process.readAllStandardOutput()).decode(errors="replace")
+        text = self.process.readAllStandardOutput().data().decode(errors="replace")
         self.log.insertPlainText(text)
         self.buffer += text
         while "\n" in self.buffer:
@@ -146,14 +146,14 @@ class ModulesPage(QWidget):
             )
             self.status.setText(f"Completed: {self.installed_result['path']}")
         self._cleanup_cancel()
-        for button in self.actions:
+        for button in self.action_buttons:
             button.setEnabled(True)
 
     def _error(self) -> None:
         self.status.setText(self.process.errorString())
         if self.process.state() == QProcess.ProcessState.NotRunning:
             self._cleanup_cancel()
-        for button in self.actions:
+        for button in self.action_buttons:
             button.setEnabled(True)
 
     def cancel(self) -> None:

@@ -1,6 +1,7 @@
 """Acoustic-first alignment with accepted text evidence as a fallback."""
 
 from pathlib import Path
+from typing import Any
 
 from studio.core.transcript import Transcript
 from studio.stages.sync_acoustic import acoustic_coarse_align
@@ -12,7 +13,7 @@ from studio.stages.sync_models import AlignmentMap
 
 def align_sources(
     target: Transcript, source: Transcript, target_path: Path, source_path: Path,
-    conf: dict[str, object], *, acoustic_first: bool,
+    conf: dict[str, Any], *, acoustic_first: bool,
 ) -> AlignmentMap:
     settings = MatchSettings()
     reasons = []

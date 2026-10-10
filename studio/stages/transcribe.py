@@ -19,7 +19,7 @@ from studio.core.project import Project, stable_fingerprint
 from studio.core.transcript import Segment, Transcript, Word, to_srt
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 
-CACHE_SCHEMA = "studio/transcript-cache/1"
+CACHE_SCHEMA = "studio/transcript-cache/2"
 TEMPERATURES = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
 
@@ -35,6 +35,9 @@ class TranscribeSettings:
     quality_beam_size: int = 10
     initial_prompt: str = ""
     glossary: tuple[str, ...] = ()
+    hotwords: str = ""
+    repetition_penalty: float = 1.1
+    no_repeat_ngram_size: int = 3
     keep_fillers: bool = True
     use_cache: bool = True
 
@@ -55,6 +58,9 @@ class TranscribeSettings:
             quality_beam_size=int(values.get("quality_beam_size", 10)),
             initial_prompt=str(values.get("initial_prompt", "")),
             glossary=tuple(glossary),
+            hotwords=str(values.get("hotwords", "")),
+            repetition_penalty=float(values.get("repetition_penalty", 1.1)),
+            no_repeat_ngram_size=int(values.get("no_repeat_ngram_size", 3)),
             keep_fillers=bool(values.get("keep_fillers", True)),
             use_cache=bool(values.get("use_cache", True)),
         )
@@ -124,6 +130,9 @@ class FasterWhisperBackend:
             "log_prob_threshold": -1.0,
             "no_speech_threshold": 0.6,
             "initial_prompt": settings.prompt() or None,
+            "hotwords": settings.hotwords or ", ".join(settings.glossary) or None,
+            "repetition_penalty": settings.repetition_penalty,
+            "no_repeat_ngram_size": settings.no_repeat_ngram_size,
         }
         if settings.mode == "quality":
             kwargs.update(
@@ -152,6 +161,7 @@ class FasterWhisperBackend:
                     for word in (segment.words or [])
                 ),
                 avg_logprob=_optional_float(getattr(segment, "avg_logprob", None)),
+                text_override=str(segment.text).strip(),
             )
             for segment in generated
         ]
@@ -259,10 +269,10 @@ class TranscribeStage:
     after: tuple[str, ...] = ("prepare",)
     gpu = GpuUse.WHISPER
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return [Requirement("package", "faster-whisper", "local speech recognition")]
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         requirements = project.work_dir / "stages" / "prepare" / "requirements.json"
         if not requirements.is_file():
             return Decision.blocked("prepare requirements are missing", "run prepare")
@@ -271,7 +281,7 @@ class TranscribeStage:
             "no source requires transcription"
         )
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         requirements = project.work_dir / "stages" / "prepare" / "requirements.json"
         content = requirements.read_text(encoding="utf-8") if requirements.is_file() else ""
         requested = json.loads(content).get("transcripts", []) if content else []
@@ -285,7 +295,7 @@ class TranscribeStage:
                 if source is not None and source.is_file() else {"missing": True}
             )
         return stable_fingerprint(
-            "transcribe-v2", content, identities, settings.get("transcribe", {}),
+            "transcribe-v3", content, identities, settings.get("transcribe", {}),
         )
 
     def run(self, context: StageContext) -> StageOutput:

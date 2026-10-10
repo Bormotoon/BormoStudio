@@ -8,6 +8,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtWidgets import (
     QApplication,
@@ -31,6 +32,7 @@ from studio.gui.material import MaterialPage
 from studio.gui.modules import ModulesPage
 from studio.gui.settings_page import SettingsPage
 from studio.gui.setup_wizard import SetupWizard
+from studio.gui.source_timeline import SourceTimeline
 from studio.gui.subtitles import SubtitleEditor
 
 
@@ -69,6 +71,7 @@ class MainWindow(QMainWindow):
         self.review_player.mediaStatusChanged.connect(self._review_ready)
         self.review_player.positionChanged.connect(self._review_position)
         self.cut_timeline = CutTimeline()
+        self.source_timeline = SourceTimeline()
         self.cut_timeline.cut_selected.connect(self._select_cut_from_timeline)
         self.review.currentItemChanged.connect(self._select_cut_from_list)
         self.plan_label = QLabel("Scan a folder to build the plan.")
@@ -130,10 +133,13 @@ class MainWindow(QMainWindow):
         start_layout.addStretch()
         self.pages.addWidget(start)
         self.pages.addWidget(self.material)
-        self.pages.addWidget(self._page(self.plan_label, "Build plan", self._plan))
+        plan = self._page(self.plan_label, "Build plan", self._plan)
+        self.pages.addWidget(plan)
         run = QPushButton("Run processing plan")
         run.clicked.connect(self._run)
-        self.pages.widget(2).layout().addWidget(run)
+        plan_layout = plan.layout()
+        if plan_layout is not None:
+            plan_layout.addWidget(run)
         self.pages.addWidget(self._review_page())
         self.pages.addWidget(self._page(self.log, "Cancel", self.bridge.cancel))
         self.pages.addWidget(self._page(self.result, "Open export folder", self._open_result))
@@ -144,6 +150,7 @@ class MainWindow(QMainWindow):
     def _review_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.addWidget(self.source_timeline)
         layout.addWidget(self.cut_timeline)
         layout.addWidget(self.review)
         layout.addWidget(self.review_status)
@@ -309,7 +316,9 @@ class MainWindow(QMainWindow):
         if path.is_file():
             self._show_review(Project.load(path))
 
-    def closeEvent(self, event: object) -> None:
+    def closeEvent(self, event: QCloseEvent | None) -> None:  # noqa: N802
+        if event is None:
+            return
         from PyQt6.QtCore import QProcess
 
         if self.bridge.process.state() != QProcess.ProcessState.NotRunning:
@@ -362,9 +371,11 @@ class MainWindow(QMainWindow):
             self.material.status.setText(str(exc))
 
     def _show_review(self, project: Project) -> None:
+        self.source_timeline.load(project)
         self.review.clear()
         paths = project.outputs.get("roughcut", [])
         if not paths or not paths[0].is_file():
+            self.cut_timeline.set_edit(0, [], [])
             self.review_status.setText("No edit decisions available.")
             return
         data = json.loads(paths[0].read_text(encoding="utf-8"))

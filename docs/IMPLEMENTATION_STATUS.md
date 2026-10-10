@@ -14,7 +14,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 |---|---|---|
 | 0 — Preparation | Imported histories and preserved source snapshots/patch, fixture generator, locks/CI definitions, local wheel/frozen smoke | Executed CI matrix, clean installed-artifact tests, private acceptance recording, release interpreter qualification |
 | 1 — Contracts and pipeline | Versioned project/manifests, four time domains, planner/worker/events, recoverable publication, scan/prepare/transcribe/complex sync, CLI and Qt shell | Complete legacy golden coverage and real end-to-end GUI/CLI parity |
-| 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, multiple overlapping recorders, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Disjoint sessions, complete source/stream selection parity, NLE import and relinking |
+| 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, overlapping and explicitly positioned disjoint sessions, reference-camera choice, selected-stream matching/rendering and detached camera PCM for NLE, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Full legacy source-selection workflow parity, NLE import and relinking |
 | 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, timeline cut overview, with-cut/original audition with or without master, markers, placement-aware CFR program/transcript with duration-preserving join crossfades | Real word-integrity/listening acceptance, end-to-end re-export check |
 | 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade, project speaker-camera choices (GUI/CLI), retimed multicam FCPXML | Wide-shot policy, nonlinear warped mic attribution, cross-file identities, real pyannote and NLE acceptance |
 | 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch with webhook/desktop notifications and mid-download cancellation, reports/night helper, owned llama lifecycle, settings migration, legacy comparison runner | Raw recorder warp replay, Studio sections for still-unmapped legacy keys, phase-wide reuse, full Forge golden migration |
@@ -24,9 +24,9 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 ### Current verification
 
 - Latest combined source suite: **447 passed, 2 skipped** on Python **3.10.20**
-  with offscreen Qt (2026-10-10); Ruff passes. `mypy studio tools` still fails
-  (186 errors, down from 195; no new errors in the files added on 2026-10-10), so
-  CI stays red on the type check until the repair task is done.
+  with offscreen Qt (2026-10-10); Ruff passes. After the type-check repair,
+  `mypy studio tools` passes on Python 3.10 and 3.12 (124 source files).
+  The remote CI result still needs a new run with these working-tree changes.
 - Frozen WhisperSync suite run through `tools/legacy_suites.py` in a Python 3.12
   environment from its lock file: **403/403**, matching the snapshot. The Forge
   suite was not run locally (its lock pins torch); CI runs it through the same tool.
@@ -38,7 +38,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 
 ### Prioritized local backlog
 
-1. Type-check repair so CI is green again.
+1. Confirm the repaired type check in a new CI run.
 2. Real acceptance of the new local pieces: LLM edit suggestions on a real model,
    listening to with-cut previews and program join crossfades, Material screen
    interaction (lanes, drag and drop, cameras), an overnight channel run with
@@ -62,6 +62,76 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - CI matrix, Python 3.12 qualification and clean Linux installation first;
   Windows/macOS and process-tree cancellation afterward per owner platform priority.
 - Third-party model/font/ffmpeg license inventory before distribution.
+
+### Type-check repair — 2026-10-10
+
+- Completed the existing working-tree typing repair: stage protocol signatures,
+  optional Qt/process values, frozen runtime paths, completion-provider protocol,
+  typed Markdown sections, NumPy return boundaries and distinct CLI local names.
+- Missing-import overrides cover only optional untyped ML libraries, including
+  installed `faster_whisper`; project checks retain their existing strict flags.
+- Verification: mypy passes for all 124 source files on Python 3.10 and 3.12;
+  Ruff passes; offscreen source tests on Python 3.10: 447 passed, 2 skipped.
+  Python 3.12 verification used the existing legacy environment with the declared
+  `types-PyYAML` development dependency added; this is not release qualification.
+
+### Phase 1–2 fixture continuation — 2026-10-10
+
+- Probe now records the absolute ffprobe stream index (not its ordinal among
+  audio streams). `transcribe.audio_streams` overrides that choice per asset;
+  synchronization privately decodes the same stream losslessly with all channels.
+  Simple mode prepares camera transcripts before alignment instead of failing later.
+- Session planning accepts camera/recorder pairs independently, rejects nonoverlap,
+  connects clock maps through shared recordings and reports rejected pairs. Truly
+  disconnected sessions require explicit `sync.session_offsets` (asset/group,
+  seconds in the reference camera clock); their relative placement is not guessed.
+  `sync.reference_camera` selects that reference by asset/group. Voice selection
+  prioritizes covered duration, then residual/inliers; old sync-derived outputs
+  are removed from the project output registry when recomputing synchronization.
+- Timeline transcription includes disjoint recorder coverage without duplicating
+  overlapping microphone speech. A single-camera timeline creates its identity
+  placement, allowing export when synchronization is intentionally skipped.
+- Whisper forwards glossary hotwords, repetition penalty and n-gram controls;
+  segment text survives missing word alignment. Transcript cache/producer versions
+  invalidate results generated before these decoding changes.
+- `--only` can consume a verified cached dependency; explicit skips and damaged
+  manifests still block required dependents. A real QProcess bridge regression
+  checks identical GUI/CLI exports, unchanged mtimes on reuse and regeneration
+  after export corruption. PCM legacy parity covers all three strategies with
+  positive/negative/zero offsets and both directions of drift; overlap FCPXML
+  intervals are compared with the frozen golden fixture.
+- Frozen WhisperSync baseline rerun: 403 passed, matches snapshot. This is oracle
+  validation, not proof that all baseline tests exercise Studio implementations.
+- Owner confirms fixture-only acceptance material and no NLE access currently.
+  Real recording, real model GUI/CLI parity and NLE acceptance remain open, as do
+  the full golden workflow matrix, full timeline preview and complete source/NLE
+  workflow parity. Phases 1 and 2 are not marked accepted.
+- Camera-only NLE export now detaches the selected stream to published lossless
+  PCM and mutes embedded camera audio in both formats. XML references final paths,
+  never private worker paths; artifacts participate in manifest validation.
+- Camera mode prepares and uses camera transcripts even when recorder files exist;
+  it no longer accidentally selects recorder speech. Export includes additional
+  synchronized recorder lanes when `recorder_mode=all` rather than dropping them.
+- Edit page includes a keyboard-navigable source overview with group, interval,
+  in-point, clock rate and coverage; stale cut displays clear on project changes.
+  This is a read-only overview, not full audiovisual timeline/simulator parity.
+- Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
+  Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
+
+### Rough-cut detectors and presets — 2026-10-10
+
+- `unknown-sound` markers cover audio that is neither detected silence nor a
+  transcript word, limited to the placed source coverage; an empty transcript keeps
+  its whole duration and marks it instead of cutting it. Overlapping word
+  timestamps no longer produce false pauses, and one boundary guard drops any cut
+  (pause, retake, LLM) whose edge falls inside a word. "как бы" is a two-word
+  filler marker; an LLM filler at the same word replaces the heuristic marker.
+- Packaged presets `roughcut-gentle/balanced/tight` (`studio/resources/presets`,
+  in wheel and PyInstaller data) merge into settings.yaml via `uvf preset` or the
+  Settings page; unrelated keys survive.
+- `tools/check_program.py` re-transcribes the master and diffs words against the
+  edited transcript plus `self_check` timing diagnosis. Not yet run on a real model.
+- Checks: 474 passed, 2 skipped on Python 3.10 (offscreen); Ruff and mypy pass.
 
 ### Continuation — 2026-10-10: rough-cut LLM, preview, tracks, models, migration, batch
 

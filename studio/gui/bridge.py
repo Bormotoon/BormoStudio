@@ -21,8 +21,8 @@ class RunnerBridge(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.process = QProcess(self)
-        self.cancel_directory = None
-        self.cancel_file = None
+        self.cancel_directory: tempfile.TemporaryDirectory[str] | None = None
+        self.cancel_file: Path | None = None
         self.stdout_buffer = ""
         self.document_output = ""
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)

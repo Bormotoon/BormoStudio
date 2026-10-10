@@ -25,7 +25,7 @@ def test_native_editor_save_and_invalid_times(tmp_path: Path) -> None:
     editor.load_project(project)
     assert editor.table.rowCount() == 1
     editor.table.item(0, 2).setText("Updated subtitle")
-    editor.size.setValue(60)
+    editor.font_size.setValue(60)
     editor.framing.setCurrentText("crop")
     editor.crop_x.setValue(80)
     assert editor.dirty

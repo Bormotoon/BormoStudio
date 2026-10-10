@@ -234,7 +234,7 @@ def _median_filter(values: np.ndarray, size: int) -> np.ndarray:
     half = size // 2
     padded = np.pad(values, half, mode="edge")
     windows = np.lib.stride_tricks.sliding_window_view(padded, size)
-    return np.median(windows, axis=1)
+    return np.asarray(np.median(windows, axis=1))
 
 
 def _moving_average(values: np.ndarray, size: int) -> np.ndarray:
@@ -248,7 +248,7 @@ def _moving_average(values: np.ndarray, size: int) -> np.ndarray:
 
 def _ease(v0: float, v1: float, frac: float) -> float:
     frac = min(1.0, max(0.0, frac))
-    return v0 + (v1 - v0) * (0.5 - 0.5 * np.cos(np.pi * frac))
+    return float(v0 + (v1 - v0) * (0.5 - 0.5 * np.cos(np.pi * frac)))
 
 
 # --------------------------------------------------------------------------

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError
 
-from studio.llm.providers import parse_json_response
+from studio.llm.providers import CompletionProvider, parse_json_response
 
 
 @dataclass
@@ -18,7 +18,12 @@ class JsonRequestBudget:
     backoff_s: float = 1.0
     backoff_total_s: float = 0.0
 
-    def request(self, provider, prompt: str, validate: Callable[[Any], Any] | None = None):
+    def request(
+        self,
+        provider: CompletionProvider,
+        prompt: str,
+        validate: Callable[[Any], Any] | None = None,
+    ) -> Any:
         for attempt in range(self.retries + 1):
             self.attempts += 1
             try:

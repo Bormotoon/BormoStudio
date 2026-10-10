@@ -5,8 +5,10 @@ import math
 import re
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from studio.core.project import Project, stable_fingerprint
 from studio.core.timeline import SourcePlacement, TimeDomain
@@ -58,8 +60,11 @@ def synchronized_voices(project: Project) -> dict[str, Path]:
     }
 
 
+AudioInput = tuple[Path | None, SourcePlacement | None, str]
+
+
 @contextmanager
-def analysis_audio(project: Project, transcript: Transcript):
+def analysis_audio(project: Project, transcript: Transcript) -> Iterator[AudioInput]:
     source = resolve_audio(project, transcript)
     if source is not None:
         yield source, None, "0:a:0"
@@ -137,8 +142,12 @@ def analysis_audio(project: Project, transcript: Transcript):
     yield placed if placed else (None, None, "0:a:0")
 
 
-def resolve_placed_audio(project: Project, transcript: Transcript):
+def resolve_placed_audio(
+    project: Project, transcript: Transcript
+) -> tuple[Path, SourcePlacement, str] | None:
     if transcript.time_domain is not TimeDomain.TIMELINE:
+        return None
+    if len(transcript.metadata.get("source_asset_ids", [])) > 1:
         return None
     source_id = transcript.metadata.get("source_asset_id")
     asset = next((asset for asset in project.assets if asset.id == source_id), None)
@@ -194,13 +203,13 @@ def _cached_features(path: Path) -> tuple[float, float] | None:
 def annotate_audio(
     records: list[MomentRecord],
     source: Path | None,
-    settings: dict,
+    settings: dict[str, Any],
     *,
     cache_dir: Path | None = None,
     placement: SourcePlacement | None = None,
     stream: str = "0:a:0",
-) -> tuple[list[MomentRecord], dict]:
-    report = {
+) -> tuple[list[MomentRecord], dict[str, Any]]:
+    report: dict[str, Any] = {
         "status": "unavailable" if source is None else "ok",
         "source": str(source) if source else None,
         "mapping": "SourcePlacement" if placement else "domain_aligned",

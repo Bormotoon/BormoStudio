@@ -13,6 +13,7 @@ def test_resource_directories_are_importable() -> None:
     assert root.joinpath("prompts", "en", "article_default.txt").is_file()
     assert root.joinpath("fonts", "licenses", "OFL-montserrat.txt").is_file()
     assert root.joinpath("subtitle_editor", "assets", "editor.js").is_file()
+    assert root.joinpath("presets", "roughcut-balanced.yaml").is_file()
 
 
 def test_resource_smoke_command(capsys) -> None:  # type: ignore[no-untyped-def]

@@ -13,7 +13,7 @@ def speaker_camera_edit(
         if not any(asset.id == target or asset.group_id == target for asset in cameras.values()):
             raise ValueError(f"unknown speaker camera/group: {target}")
     placements = [item for item in project.placements if item.asset_id in cameras]
-    result = []
+    result: list[KeepRange] = []
     current = None
     shot_start = 0.0
     for keep in edit.keep:
@@ -34,9 +34,10 @@ def speaker_camera_edit(
             active = {str(turn["speaker"]) for turn in turns
                       if float(turn["start"]) <= start and float(turn["end"]) > start}
             speaker = next(iter(active)) if len(active) == 1 else None
-            target = mapping.get(speaker) if speaker not in {"unknown", "overlap"} else None
+            chosen = (mapping.get(speaker)
+                      if speaker is not None and speaker not in {"unknown", "overlap"} else None)
             forced = keep.camera_id
-            desired = forced or target
+            desired = forced or chosen
             preferred = [asset_id for asset_id in available
                          if asset_id == desired or cameras[asset_id].group_id == desired]
             if forced and not preferred:

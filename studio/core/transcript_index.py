@@ -182,7 +182,7 @@ class TranscriptIndex:
         return next((word.end for word in self.words[index:] if word.end >= target), None)
 
 
-def _float(value: object) -> float | None:
+def _float(value: Any) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):

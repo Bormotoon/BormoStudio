@@ -54,6 +54,10 @@ def test_complex_worker_publishes_real_voice_and_warp(tmp_path: Path, recorder_c
     assert len(project.outputs["voice-segments:cam"]) == 4
     assert result.manifest.reusable(work, "complex-fp")
     assert not list(work.glob(".settings-*"))
+    from studio.stages.export import build_sequence
+
+    sequence = build_sequence(project, use_edit=False, retimed=True)
+    assert len([clip for clip in sequence.clips if not clip.has_video]) == recorder_count
 
 
 def test_repair_updates_selected_lane_map_report_and_segment_input(tmp_path: Path) -> None:
@@ -102,3 +106,46 @@ def test_repair_updates_selected_lane_map_report_and_segment_input(tmp_path: Pat
     assert changes["audio_warp_maps"] == [repaired_map]
     published = json.loads((work / "stages" / "sync" / "output.json").read_text())
     assert published["voices"]["cam"] == "repair/cam-repaired.wav"
+
+
+def test_disjoint_sessions_render_only_matching_recorders(tmp_path: Path) -> None:
+    from studio.stages.sync_models import AlignmentMap
+
+    work = tmp_path / "work"
+    work.mkdir()
+    assets = []
+    paths = {}
+    for index in range(2):
+        source = tmp_path / f"rec{index}.wav"
+        with wave.open(str(source), "wb") as audio:
+            audio.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
+            audio.writeframes((b"\x10\x00" if index == 0 else b"\x20\x00") * 48000 * 4)
+        for prefix, kind, role in (("rec", AssetKind.AUDIO, AssetRole.RECORDER),
+                                   ("cam", AssetKind.VIDEO, AssetRole.CAMERA)):
+            name = f"{prefix}{index}"
+            assets.append(Asset(name, source.name, kind, role))
+            path = work / f"{name}.json"
+            Transcript(tmp_path / f"{name}.wav", "en", 3, []).save(path)
+            paths[name] = path
+    project = Project(tmp_path, work, assets=assets, transcripts=paths)
+
+    def fitted(target, source, *_args, **_kwargs):
+        if target.source_audio.stem[-1] != source.source_audio.stem[-1]:
+            raise ValueError("unrelated session")
+        return AlignmentMap([], 0, 1, 0, "acoustic", 5, 3)
+
+    with patch("studio.stages.sync_sessions.align_sources", side_effect=fitted):
+        result = _run_complex(StageContext(project, {"sync": {
+            "mode": "simple", "recorder_mode": "all", "session_offsets": {"cam1": 100},
+        }}, work))
+    changes = result.project_changes
+    pairs = {(warp.source_asset_id, warp.target_asset_id) for warp in changes["audio_warp_maps"]}
+    assert pairs == {
+        ("rec0", "cam0"), ("rec1", "cam1"),
+    }
+    assert {p.asset_id: p.offset_s for p in changes["placements"]} == {
+        "rec0": 0, "cam0": 0, "rec1": 100, "cam1": 100,
+    }
+    for camera in ("cam0", "cam1"):
+        assert len(changes["outputs"][f"sync-tracks:{camera}"]) == 1
+        assert changes["outputs"][f"sync:{camera}"][0].is_file()

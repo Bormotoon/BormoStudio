@@ -61,6 +61,20 @@ def test_user_skip_propagates_to_required_dependency(tmp_path: Path) -> None:
     assert plan.stages[-1].decision.reason == "dependency sync did not run"
 
 
+def test_only_consumes_verified_dependency_but_skip_still_blocks(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    artifact = project.work_dir / "sync.json"
+    artifact.write_text("{}")
+    StageManifest("sync", "sync", {}, [describe_artifact(project.work_dir, artifact)],
+                  ArtifactStatus.OK, "test").save(project.work_dir / "manifests" / "sync.json")
+    stages = [_Stage("prepare"), _Stage("sync", ("prepare",)), _Stage("export", ("sync",))]
+    assert build_plan(stages, project, {}, only={"export"}).stages[-1].decision.kind.value == "run"
+    skipped = build_plan(stages, project, {}, only={"export"}, skip={"sync"})
+    assert skipped.stages[-1].decision.kind.value == "skip"
+    artifact.write_text("damaged")
+    assert build_plan(stages, project, {}, only={"export"}).stages[-1].decision.kind.value == "skip"
+
+
 def test_cycles_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="cycle"):
         build_plan([_Stage("a", ("b",)), _Stage("b", ("a",))], _project(tmp_path), {})

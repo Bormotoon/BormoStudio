@@ -94,7 +94,7 @@ def test_llm_suggestions_are_unaccepted_and_fillers_stay_markers() -> None:
         "slips": [{"phrase": 2, "quote": "был вторник", "reason": "fix", "confidence": 0.9}],
         "fillers": [{"phrase": 3, "quote": "как бы", "reason": "empty", "confidence": 0.9}],
     }, _options())
-    options = dict(mode="cut", minimum_pause_s=5, keep_pause_s=0.4, edge_pad_s=0.2, silence=[])
+    options = dict(mode="cut", minimum_pause_s=5, keep_pause_s=0.4, edge_pad_s=0.2, silence=None)
     edit = build_edit_list(transcript, llm=result, **options)
     llm_cuts = [cut for cut in edit.cuts if cut.reason == "llm"]
     assert len(llm_cuts) == 1 and not llm_cuts[0].accepted

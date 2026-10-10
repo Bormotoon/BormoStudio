@@ -19,3 +19,7 @@ def test_complex_prepare_declares_all_transcripts_before_execution(tmp_path: Pat
     data = json.loads(output.artifacts[0].read_text(encoding="utf-8"))
     assert data["transcripts"] == ["rec", "cam"]
     assert data["plan_revision"] == 1
+    for mode, expected in [("simple", ["rec", "cam"]), ("camera", ["cam"])]:
+        context = StageContext(project, {"sync": {"mode": mode}}, project.work_dir)
+        output = PrepareStage().run(context)
+        assert json.loads(output.artifacts[0].read_text())["transcripts"] == expected

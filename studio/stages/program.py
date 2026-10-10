@@ -8,6 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 
 from studio.core.media import build_atempo_chain
 from studio.core.project import AssetRole, Project, describe_artifact, stable_fingerprint
@@ -30,15 +31,15 @@ class ProgramStage:
     optional_after = ("roughcut", "speakers")
     gpu = GpuUse.NVENC
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return [Requirement("binary", "ffmpeg", "render the review master")]
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         program = settings.get("program", {})
         enabled = program.get("enabled", False) if isinstance(program, dict) else False
         return Decision.run() if enabled else Decision.skip("program render is disabled")
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         edit_path = _edit_path(project)
         edit = edit_path.read_text(encoding="utf-8") if edit_path.is_file() else ""
         return stable_fingerprint(
@@ -111,7 +112,7 @@ class ProgramStage:
             fps=str(conf.get("fps", "auto")),
             crossfade_ms=float(conf.get("crossfade_ms", 10.0)),
         )
-        transcript_ranges = []
+        transcript_ranges: list[KeepRange] = []
         for item in edit.keep:
             if transcript_ranges and abs(transcript_ranges[-1].end_s - item.start_s) < 1e-9:
                 transcript_ranges[-1] = KeepRange(transcript_ranges[-1].start_s, item.end_s)
@@ -433,7 +434,7 @@ def rendered_timeline_map(edit: EditMap, report: dict) -> list[dict]:
     return result
 
 
-def align_transcript_to_frames(transcript: Transcript, report: dict[str, object]) -> Transcript:
+def align_transcript_to_frames(transcript: Transcript, report: dict[str, Any]) -> Transcript:
     """Apply frame-boundary trim/pad decisions to edited-time word positions."""
     rate = float(Fraction(str(report["fps"])))
     intervals = []

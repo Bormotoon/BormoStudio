@@ -68,3 +68,22 @@ def test_oom_retries_lazy_generation_with_smaller_batches() -> None:
         backend.transcribe(Path("audio.wav"), TranscribeSettings(batch_size=8))
     assert attempts == [("fast", 8), ("fast", 4), ("fast", 2)]
     assert unload.call_count == 2
+
+
+def test_quality_backend_passes_glossary_controls_and_preserves_unaligned_text() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    settings = TranscribeSettings(device="cpu", mode="quality", glossary=("UVF",))
+    backend = FasterWhisperBackend(settings)
+    model = Mock()
+    model.transcribe.return_value = ([SimpleNamespace(
+        start=0, end=1, text="Unaligned speech.", words=[], avg_logprob=-0.2,
+    )], SimpleNamespace(language="en", duration=1))
+    with patch.object(backend, "_ensure_model", return_value=model):
+        transcript = backend.transcribe(Path("audio.wav"), settings)
+    assert model.transcribe.call_args.kwargs["hotwords"] == "UVF"
+    assert model.transcribe.call_args.kwargs["repetition_penalty"] == 1.1
+    assert model.transcribe.call_args.kwargs["no_repeat_ngram_size"] == 3
+    assert transcript.segments[0].text == "Unaligned speech."
+    assert transcript.to_dict()["sentences"][0]["text"] == "Unaligned speech."

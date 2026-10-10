@@ -3,14 +3,22 @@
 import shutil
 from pathlib import Path
 
-from PyQt6.QtWidgets import QCheckBox, QComboBox, QLabel, QVBoxLayout, QWizard, QWizardPage
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+    QWizard,
+    QWizardPage,
+)
 
 from studio.core.settings import load_settings
 from studio.core.settings_store import save_settings
 
 
 class SetupWizard(QWizard):
-    def __init__(self, work_dir: Path, parent=None) -> None:
+    def __init__(self, work_dir: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.work_dir = work_dir
         self.setWindowTitle("Set up processing")

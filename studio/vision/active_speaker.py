@@ -23,7 +23,7 @@ import os
 import threading
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -92,7 +92,7 @@ def _dct_ortho_matrix(n: int) -> np.ndarray:
     i = np.arange(n)[None, :]
     mat = np.cos(np.pi * k * (2 * i + 1) / (2 * n)) * np.sqrt(2.0 / n)
     mat[0] /= np.sqrt(2.0)
-    return mat
+    return cast(np.ndarray, mat)
 
 
 def mfcc(signal: np.ndarray, samplerate: int = SAMPLE_RATE) -> np.ndarray:
@@ -124,7 +124,7 @@ def mfcc(signal: np.ndarray, samplerate: int = SAMPLE_RATE) -> np.ndarray:
     lift = 1 + (22 / 2.0) * np.sin(np.pi * np.arange(13) / 22)
     feat = feat * lift
     feat[:, 0] = np.log(energy)
-    return feat
+    return cast(np.ndarray, feat)
 
 
 # --------------------------------------------------------------------------

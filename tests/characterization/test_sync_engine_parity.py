@@ -12,7 +12,10 @@ from studio.stages.sync_engine import render_aligned_clip
 
 
 @pytest.mark.parametrize("strategy", [1, 2, 3])
-def test_planning_through_render_matches_frozen_engine(tmp_path: Path, strategy: int) -> None:
+@pytest.mark.parametrize("offset,drift", [(0.1, 1.001), (-0.2, 0.999), (0.0, 1.0)])
+def test_planning_through_render_matches_frozen_engine(
+    tmp_path: Path, strategy: int, offset: float, drift: float,
+) -> None:
     rate = 48000
     source = tmp_path / "source.wav"
     with wave.open(str(source), "wb") as audio:
@@ -21,9 +24,9 @@ def test_planning_through_render_matches_frozen_engine(tmp_path: Path, strategy:
             struct.pack("<h", index % 20000 - 10000) for index in range(rate * 4)
         ))
     alignment = AlignmentMap(
-        anchors=[Anchor(cam_time=t * 1.001 + 0.1, rec_time=t, token=str(t), confidence=0.9)
+        anchors=[Anchor(cam_time=t * drift + offset, rec_time=t, token=str(t), confidence=0.9)
                  for t in (0.5, 1.0, 1.5, 2.0, 2.5)],
-        offset=0.1, k=1.001, residual_ms=0.0,
+        offset=offset, k=drift, residual_ms=0.0,
     )
     words = [(0.5, 1.0), (2.0, 2.5)]
     settings = WhisperSyncConfig()

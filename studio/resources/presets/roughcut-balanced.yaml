@@ -1,0 +1,6 @@
+roughcut:
+  pause_min_s: 1.0
+  pause_keep_s: 0.4
+  head_tail_pad_s: 0.2
+  silence_threshold_db: -40.0
+  unknown_sound_min_s: 0.3

@@ -2,7 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from studio.core.audio_spans import Span, detect_silence
+from studio.core.audio_spans import Span, detect_silence, unknown_sound_spans, word_gaps
 from studio.core.project import ArtifactStatus, Project, StageManifest, describe_artifact
 from studio.core.transcript import Segment, Transcript, Word
 from studio.stages.retake_models import RetakeSettings
@@ -99,3 +99,37 @@ def test_review_rejects_cut_without_invalidating_detector_manifest(tmp_path: Pat
     }
     review_cut(project, edit.cuts[0].id, accepted=True)
     assert json.loads(edit_path.read_text())["cuts"][0]["accepted"]
+
+
+def test_overlapping_words_cannot_create_false_pause_or_boundary_cut() -> None:
+    words = [Word("long", 0, 5), Word("short", 1, 2), Word("next", 4, 6)]
+    assert word_gaps(words, minimum_s=1) == []
+    edit = build_edit_list(
+        Transcript(Path("audio.wav"), "en", 6, [Segment(0, 6, tuple(words))]),
+        mode="cut", minimum_pause_s=1, keep_pause_s=0.4, edge_pad_s=0.2,
+    )
+    assert not edit.cuts
+
+
+def test_unknown_sounds_exclude_silence_words_and_absent_source() -> None:
+    words = [Word("speech", 2, 3)]
+    assert unknown_sound_spans(
+        words, [Span(1, 1.5), Span(3, 4)], duration_s=6,
+        coverage=Span(1, 5),
+    ) == [Span(1.5, 2), Span(4, 5)]
+    transcript = Transcript(Path("audio.wav"), "en", 6, [Segment(2, 3, tuple(words))])
+    edit = build_edit_list(
+        transcript, mode="cut", minimum_pause_s=1, keep_pause_s=0.4,
+        edge_pad_s=0.2, silence=[Span(1, 1.5), Span(3, 4)], audio_coverage=Span(1, 5),
+    )
+    assert [marker.at for marker in edit.markers] == [1.5, 4]
+    assert not edit.cuts
+
+
+def test_empty_transcript_preserves_unrecognized_audio() -> None:
+    edit = build_edit_list(
+        Transcript(Path("audio.wav"), "en", 5, []), mode="cut",
+        minimum_pause_s=1, keep_pause_s=0.4, edge_pad_s=0.2, silence=[],
+    )
+    assert edit.keep == ((0, 5),)
+    assert edit.markers[0].kind == "unknown-sound"

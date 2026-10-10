@@ -102,7 +102,7 @@ def speaker_change_starts(project: Project, transcript: Transcript) -> tuple[lis
         mapping = mapping_report.get("timeline_to_rendered")
         if not isinstance(mapping, list):
             return [], "missing_edit_mapping"
-        mapped = []
+        mapped: list[float] = []
         previous_end = 0.0
         previous_piece = None
         for piece in mapping:

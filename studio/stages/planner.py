@@ -32,6 +32,7 @@ def build_plan(
     *, only: set[str] | None = None, skip: set[str] | None = None,
 ) -> Plan:
     ordered = _topological_order(stages)
+    registry = {stage.id: stage for stage in ordered}
     planned: list[PlannedStage] = []
     decisions: dict[str, Decision] = {}
     only = only or set()
@@ -58,6 +59,9 @@ def build_plan(
                     for dependency in stage.after
                     if dependency not in getattr(stage, "optional_after", ())
                     if decisions[dependency].kind is not DecisionKind.RUN
+                    if not (only and dependency not in only and dependency not in skip
+                            and _reusable_manifest(project, dependency,
+                                registry[dependency].fingerprint(project, settings)))
                 ),
                 None,
             )

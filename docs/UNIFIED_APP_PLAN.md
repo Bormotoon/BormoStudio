@@ -958,10 +958,10 @@ release-база, её квалификация в этом окружении �
 **Задачи:**
 
 - [x] `AudioWarpMap` и preserved strategy 1/2/3 planner/renderer реализованы; приближённый k не заменяет кусочную модель. Реальный полный parity — отдельная приёмка.
-- [ ] **Частично:** camera/simple/auto и acoustic fallback реализованы. Не доделано: полный паритет selection/source-reference и раздельные сессии записи.
+- [ ] **Частично:** camera/simple/auto, acoustic fallback, reference-camera и независимые пары recorder/camera реализованы. Раздельные сессии связываются общими записями либо явными `sync.session_offsets`; неподтверждённые смещения не угадываются. Выбранный камерный поток экспортируется отдельным PCM для NLE. Не доделано: полный legacy workflow parity и реальная NLE-приёмка.
 - [x] Camera-only acoustic placement реализован и проверен generated-audio regression.
 - [x] Timeline transcript строится через placement без повторного Whisper; синхронизированный voice имеет отдельные warp/rendered contracts.
-- [ ] **Частично:** transcript/SRT, confidence и initial_prompt есть. Не доделано: подтверждённый полный sentence/glossary/hotwords parity Forge.
+- [ ] **Частично:** transcript/SRT, confidence, initial_prompt, glossary/hotwords и anti-repetition controls есть; текст сегмента сохраняется без word alignment. Не доделано: подтверждённый полный sentence/glossary/hotwords parity Forge на реальных моделях.
 - [x] Sequence → FCPXML/XMEML, структурные/interval regression tests реализованы. Реальный NLE импорт не закрыт этой отметкой.
 - [x] Роли/группы/device редактируются и переживают rescan; группы меняются drag&drop на экране «Материал» (несколько файлов сразу). Реальная GUI-приёмка отдельно.
 - [x] `RecorderTrack` в модели проекта (каналы, спикер, имя, включена), предложение дорожек при scan с сохранением ручных, GUI/CLI (`uvf tracks`) объединения каналов, имён спикеров и отключения; `speakers` берёт именованные дорожки. Реальная GUI-приёмка отдельно.
@@ -978,7 +978,7 @@ release-база, её квалификация в этом окружении �
 **Задачи:**
 
 - [x] Общие word-gap/silence span utilities и energy-gated roughcut реализованы.
-- [ ] **Частично:** pauses/head/tail/retakes и filler markers есть. Не доделано: полный набор unknown-sound detectors и реальные preset/listening проверки.
+- [ ] **Частично:** pauses/head/tail/retakes, filler markers (включая «как бы»), маркеры unknown-sound (не тишина и не слово), общая защита границ резов, пресеты gentle/balanced/tight (`uvf preset`, Settings) и `tools/check_program.py` (перераспознавание мастера) есть. Не доделано: реальные preset/listening проверки и прогон проверки слов на реальной модели.
 - [ ] **Приёмка:** cut/markers и XML reasons реализованы; не проверены disable/видимость/семантика в реальном NLE.
 - [x] `program`: placement-aware мастер с выбранными камерами и синхронизированным звуком, CFR и отображением транскрипта на фактические кадровые интервалы; кроссфейды звука на стыках (`program.crossfade_ms`, по умолчанию 10 мс) без изменения длительности. Приёмка стыков на слух/длинного A/V отдельно.
 - [ ] **Частично:** accept/reject и прослушивание «с резом / оригинал» реализованы, в том числе без мастера (синхронизированный голос камеры или исходник транскрипта через placement). Не доделано: реальное прослушивание и сквозная проверка переэкспорта.

@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass, replace
 from importlib.resources import files
 from pathlib import Path
+from typing import Any, TypedDict
 
 from studio.core.project import Project, stable_fingerprint
 from studio.core.transcript import Segment, Transcript, to_srt
@@ -42,13 +43,13 @@ class TextStage:
     after: tuple[str, ...] = ("timeline",)
     gpu = GpuUse.LLM
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         text = _text_settings(settings)
         if not _enabled(text):
             return []
         return [Requirement("llama", str(text["model"]), "generate local text outputs")]
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         text = _text_settings(settings)
         if not _enabled(text):
             return Decision.skip("text outputs are disabled")
@@ -58,7 +59,7 @@ class TextStage:
             {"proofread": bool(text["proofread"]), "article": bool(text["article"])}
         )
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         source = project.transcripts.get("timeline")
         content = source.read_text(encoding="utf-8") if source and source.is_file() else ""
         return stable_fingerprint(
@@ -136,7 +137,7 @@ class TextStage:
         return StageOutput(tuple(artifacts), {"outputs": outputs, "transcripts": transcripts})
 
 
-def _text_settings(settings: dict[str, object]) -> dict[str, object]:
+def _text_settings(settings: dict[str, Any]) -> dict[str, object]:
     defaults: dict[str, object] = {
         "proofread": False,
         "article": False,
@@ -157,12 +158,12 @@ def _text_settings(settings: dict[str, object]) -> dict[str, object]:
     return defaults
 
 
-def _enabled(settings: dict[str, object]) -> bool:
+def _enabled(settings: dict[str, Any]) -> bool:
     return bool(settings["proofread"]) or bool(settings["article"])
 
 
 def proofread_transcript(
-    transcript: Transcript, provider: LlamaProvider, settings: dict[str, object]
+    transcript: Transcript, provider: LlamaProvider, settings: dict[str, Any]
 ) -> tuple[Transcript, dict[str, object]]:
     language = _prompt_language(transcript.language, str(settings["prompt_language"]))
     template = _prompt("proofread_default", language)
@@ -208,7 +209,9 @@ def proofread_transcript(
     return corrected, report
 
 
-def check_transcript_terms(transcript, settings, cache_path):
+def check_transcript_terms(
+    transcript: Transcript, settings: dict[str, Any], cache_path: Path
+) -> tuple[Transcript, dict[str, Any]]:
     from studio.stages.term_check import (
         TermFix,
         WikiTermVerifier,
@@ -305,7 +308,7 @@ def _corrections(payload: object) -> dict[int, str]:
 
 
 def build_article(
-    transcript: Transcript, provider: LlamaProvider, settings: dict[str, object]
+    transcript: Transcript, provider: LlamaProvider, settings: dict[str, Any]
 ) -> tuple[list[ArticleSection], dict[str, object]]:
     language = _prompt_language(transcript.language, str(settings["prompt_language"]))
     template = _prompt("article_default", language)
@@ -370,8 +373,13 @@ def faithfulness_report(source: str, edited: str) -> dict[str, object]:
     }
 
 
-def parse_markdown_sections(text: str) -> list[dict[str, object]]:
-    sections: list[dict[str, object]] = []
+class MarkdownSection(TypedDict):
+    title: str
+    paragraphs: list[str]
+
+
+def parse_markdown_sections(text: str) -> list[MarkdownSection]:
+    sections: list[MarkdownSection] = []
     title = ""
     paragraphs: list[str] = []
     current: list[str] = []

@@ -37,6 +37,12 @@ def test_legacy_transcript_json_and_srt_contract(tmp_path: Path) -> None:
         "1\n00:00:00,125 --> 00:00:01,500\nHello world.\n\n"
         "2\n00:00:03,000 --> 00:00:04,000\nAgain\n"
     )
+    from studio.core.transcript import Transcript as StudioTranscript
+    from studio.core.transcript import to_srt
+
+    converted = StudioTranscript.from_dict(actual)
+    assert converted.to_dict()["sentences"] == actual["sentences"]
+    assert to_srt(converted) == srt.read_text()
 
 
 def test_legacy_export_overlap_staging_and_replacement_audio(tmp_path: Path) -> None:
@@ -73,6 +79,19 @@ def test_legacy_export_overlap_staging_and_replacement_audio(tmp_path: Path) -> 
     }
     assert actual == json.loads((GOLDEN / "overlap.json").read_text())
     assert check_fcpxml(output, check_media=False) == []
+
+
+def test_studio_export_intervals_match_legacy_overlap_fixture(tmp_path: Path) -> None:
+    from studio.stages.export import Sequence, SequenceClip, write_fcpxml
+
+    clips = tuple(SequenceClip(name, tmp_path / f"{name}.mov", 0, duration, start, 0, False)
+                  for name, start, duration in [("a", 0, 10), ("b", 3, 4), ("c", 12, 5)])
+    output = write_fcpxml(Sequence("Fixture", Fraction(25), 1920, 1080, clips),
+                          tmp_path / "studio.fcpxml", media_base=tmp_path)
+    actual = fcpxml_intervals(output)
+    expected = json.loads((GOLDEN / "overlap.json").read_text())["intervals"]
+    for name in ("a", "b", "c"):
+        assert list(actual[name]) == expected[name]
 
 
 def test_legacy_fingerprint_bytes_and_adoption_policy(tmp_path: Path) -> None:

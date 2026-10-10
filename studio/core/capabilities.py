@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 from studio.core.launch import python_command
 
@@ -30,11 +31,13 @@ def inspect_compute() -> dict:
             text=True,
             timeout=30,
         )
-        whisper = (
+        whisper: dict[str, Any] = (
             json.loads(result.stdout)
             if result.returncode == 0
             else {"available": False, "cuda_devices": 0, "error": result.stderr[-2000:]}
         )
+        if not isinstance(whisper, dict):
+            raise ValueError("whisper probe did not return an object")
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         whisper = {"available": False, "cuda_devices": 0, "error": str(exc)}
     cuda = bool(whisper.get("available") and whisper.get("cuda_devices", 0))

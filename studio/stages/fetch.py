@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from studio.core.project import Project, stable_fingerprint
 from studio.modules.cancellation import run_cancellable
@@ -18,15 +19,15 @@ class FetchStage:
     after: tuple[str, ...] = ()
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return [Requirement("module", "youtube", "download YouTube source media")]
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         fetch = settings.get("fetch", {})
         url = fetch.get("url") if isinstance(fetch, dict) else None
         return Decision.run({"url": url}) if url else Decision.skip("input is a local folder")
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         return stable_fingerprint("fetch-v1", settings.get("fetch", {}))
 
     def run(self, context: StageContext) -> StageOutput:

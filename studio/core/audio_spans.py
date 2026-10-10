@@ -25,11 +25,40 @@ class Span:
 
 def word_gaps(words: list[Word], *, minimum_s: float) -> list[Span]:
     ordered = sorted(words, key=lambda word: word.start)
-    return [
-        Span(left.end, right.start)
-        for left, right in zip(ordered, ordered[1:], strict=False)
-        if right.start - left.end >= minimum_s
-    ]
+    gaps: list[Span] = []
+    covered_end = ordered[0].end if ordered else 0.0
+    for word in ordered[1:]:
+        if word.start - covered_end >= minimum_s:
+            gaps.append(Span(covered_end, word.start))
+        covered_end = max(covered_end, word.end)
+    return gaps
+
+
+def unknown_sound_spans(
+    words: list[Word], silence: list[Span], *, duration_s: float,
+    minimum_s: float = 0.3, coverage: Span | None = None,
+) -> list[Span]:
+    """Audible intervals without words; never infer a sound outside source coverage."""
+    bounds = coverage or Span(0.0, duration_s)
+    start, end = max(0.0, bounds.start_s), min(duration_s, bounds.end_s)
+    occupied = sorted(
+        [Span(word.start, word.end) for word in words] + silence,
+        key=lambda span: span.start_s,
+    )
+    result: list[Span] = []
+    cursor = start
+    for span in occupied:
+        if span.end_s <= cursor:
+            continue
+        right = min(end, span.start_s)
+        if right - cursor >= minimum_s:
+            result.append(Span(cursor, right))
+        cursor = max(cursor, span.end_s)
+        if cursor >= end:
+            break
+    if end - cursor >= minimum_s:
+        result.append(Span(cursor, end))
+    return result
 
 
 def parse_silencedetect(stderr: str, duration_s: float | None = None) -> list[Span]:

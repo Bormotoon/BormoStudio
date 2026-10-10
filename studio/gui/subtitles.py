@@ -34,7 +34,7 @@ from studio.core.transcript import Transcript
 
 
 class CaptionOverlay(QLabel):
-    style = SubtitleStyle()
+    caption_style = SubtitleStyle()
     portrait = False
 
     def paintEvent(self, event: object) -> None:
@@ -45,8 +45,8 @@ class CaptionOverlay(QLabel):
         frame_width, frame_height = reference_width * scale, reference_height * scale
         frame_left, frame_top = (self.width() - frame_width) / 2, (self.height() - frame_height) / 2
         font = self.font()
-        font.setFamily(self.style.font)
-        font.setPixelSize(max(1, round(self.style.size * scale)))
+        font.setFamily(self.caption_style.font)
+        font.setPixelSize(max(1, round(self.caption_style.size * scale)))
         metrics = QFontMetricsF(font)
         lines = []
         for paragraph in self.text().splitlines():
@@ -61,9 +61,10 @@ class CaptionOverlay(QLabel):
             lines.append(current)
         line_height = metrics.height()
         top = (
-            frame_top + self.style.margin * scale
-            if self.style.alignment == 8
-            else frame_top + frame_height - self.style.margin * scale - len(lines) * line_height
+            frame_top + self.caption_style.margin * scale
+            if self.caption_style.alignment == 8
+            else frame_top + frame_height - self.caption_style.margin * scale
+            - len(lines) * line_height
         )
         path = QPainterPath()
         for number, line in enumerate(lines):
@@ -71,18 +72,18 @@ class CaptionOverlay(QLabel):
             path.addText(x, top + metrics.ascent() + number * line_height, font, line)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self.style.outline:
+        if self.caption_style.outline:
             painter.setPen(
                 QPen(
                     QColor("black"),
-                    self.style.outline * scale * 2,
+                    self.caption_style.outline * scale * 2,
                     Qt.PenStyle.SolidLine,
                     Qt.PenCapStyle.RoundCap,
                     Qt.PenJoinStyle.RoundJoin,
                 )
             )
             painter.drawPath(path)
-        painter.fillPath(path, QColor(self.style.color))
+        painter.fillPath(path, QColor(self.caption_style.color))
         painter.end()
 
 
@@ -128,17 +129,19 @@ class SubtitleEditor(QWidget):
         play.clicked.connect(self._play)
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Start (s)", "End (s)", "Subtitle text"])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        if header is not None:
+            header.setStretchLastSection(True)
         self.table.setAccessibleName("Subtitle cues")
         self.table.cellChanged.connect(self._changed)
         self.table.cellClicked.connect(self._jump)
         self.preset = QComboBox()
         self.preset.addItems(PRESETS)
         self.preset.activated.connect(lambda: self._set_style(PRESETS[self.preset.currentText()]))
-        self.font = QLineEdit("DejaVu Sans")
+        self.font_family = QLineEdit("DejaVu Sans")
         self.color = QLineEdit("#FFFFFF")
-        self.size, self.outline, self.margin = QSpinBox(), QSpinBox(), QSpinBox()
-        self.size.setRange(12, 160)
+        self.font_size, self.outline, self.margin = QSpinBox(), QSpinBox(), QSpinBox()
+        self.font_size.setRange(12, 160)
         self.outline.setRange(0, 10)
         self.margin.setRange(0, 500)
         self.alignment = QComboBox()
@@ -159,8 +162,8 @@ class SubtitleEditor(QWidget):
         form = QFormLayout()
         for name, control in (
             ("Preset", self.preset),
-            ("Font", self.font),
-            ("Size (1080p)", self.size),
+            ("Font", self.font_family),
+            ("Size (1080p)", self.font_size),
             ("Color (#RRGGBB)", self.color),
             ("Outline", self.outline),
             ("Vertical margin", self.margin),
@@ -173,10 +176,10 @@ class SubtitleEditor(QWidget):
         ):
             form.addRow(name, control)
             control.setAccessibleName(name)
-        for field in (self.font, self.color):
-            field.textChanged.connect(self._changed)
-        for field in (self.size, self.outline, self.margin):
-            field.valueChanged.connect(self._changed)
+        for text_field in (self.font_family, self.color):
+            text_field.textChanged.connect(self._changed)
+        for number_field in (self.font_size, self.outline, self.margin):
+            number_field.valueChanged.connect(self._changed)
         self.alignment.currentIndexChanged.connect(self._changed)
         self.framing.currentIndexChanged.connect(self._changed)
         self.frame_width.valueChanged.connect(self._changed)
@@ -303,8 +306,8 @@ class SubtitleEditor(QWidget):
 
     def _style(self) -> SubtitleStyle:
         return SubtitleStyle(
-            self.font.text(),
-            self.size.value(),
+            self.font_family.text(),
+            self.font_size.value(),
             self.color.text(),
             self.outline.value(),
             self.margin.value(),
@@ -320,20 +323,21 @@ class SubtitleEditor(QWidget):
             self.caption.update()
 
     def _set_style(self, style: SubtitleStyle) -> None:
-        self.font.setText(style.font)
-        self.size.setValue(style.size)
+        self.font_family.setText(style.font)
+        self.font_size.setValue(style.size)
         self.color.setText(style.color)
         self.outline.setValue(style.outline)
         self.margin.setValue(style.margin)
         self.alignment.setCurrentIndex(1 if style.alignment == 8 else 0)
 
+    def _cell(self, row: int, column: int) -> str:
+        item = self.table.item(row, column)
+        return item.text() if item is not None else ""
+
     def _cues(self) -> list[Cue]:
+        # An empty time cell raises ValueError like any other invalid time.
         return [
-            Cue(
-                float(self.table.item(row, 0).text()),
-                float(self.table.item(row, 1).text()),
-                self.table.item(row, 2).text(),
-            )
+            Cue(float(self._cell(row, 0)), float(self._cell(row, 1)), self._cell(row, 2))
             for row in range(self.table.rowCount())
         ]
 
@@ -352,14 +356,14 @@ class SubtitleEditor(QWidget):
             )
             self.caption.setText(cue.text if cue else "")
             style = self._style()
-            self.caption.style = style
+            self.caption.caption_style = style
             self.caption.update()
         except (ValueError, AttributeError):
             self.caption.setText("")
 
     def _jump(self, row: int, _column: int) -> None:
         try:
-            self.player.setPosition(round(float(self.table.item(row, 0).text()) * 1000))
+            self.player.setPosition(round(float(self._cell(row, 0)) * 1000))
         except ValueError:
             pass
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 from studio.core.media import MediaInfo, probe
 from studio.core.project import Asset, AssetKind, AssetRole, Project, stable_fingerprint
@@ -21,15 +22,15 @@ class ScanStage:
     after: tuple[str, ...] = ()
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return [Requirement("binary", "ffprobe", "read media metadata")]
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         return Decision.run() if project.source_dir.is_dir() else Decision.blocked(
             "source directory does not exist", "choose an existing directory"
         )
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         files = _media_paths(project.source_dir)
         identities = [
             (

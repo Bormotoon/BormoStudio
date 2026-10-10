@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from studio.core.project import Asset, AssetRole, Project, stable_fingerprint
 from studio.core.timeline import AudioWarpMap, AudioWarpPiece, SourcePlacement, TimeDomain
@@ -27,10 +28,10 @@ class SyncStage:
     after: tuple[str, ...] = ("transcribe",)
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         return [Requirement("binary", "ffmpeg", "render synchronized audio")]
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         cameras = [asset for asset in project.assets if asset.role is AssetRole.CAMERA]
         if not cameras:
             return Decision.skip("no camera assets")
@@ -46,7 +47,7 @@ class SyncStage:
             )
         return Decision.run({"mode": _sync_mode(settings)})
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         transcripts = {
             asset_id: path.read_text(encoding="utf-8")
             for asset_id, path in project.transcripts.items()
@@ -55,10 +56,10 @@ class SyncStage:
         from studio.stages.transcribe import _sha256
 
         return stable_fingerprint(
-            "sync-v3", transcripts, project.assets,
+            "sync-v4", transcripts, project.assets,
             {asset.id: _sha256(project.source_dir / asset.path)
              for asset in project.assets if asset.role in {AssetRole.CAMERA, AssetRole.RECORDER}},
-            settings.get("sync", {}),
+            settings.get("sync", {}), settings.get("transcribe", {}).get("audio_streams", {}),
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -166,62 +167,47 @@ def text_anchors(camera: Transcript, recorder: Transcript) -> list[TextAnchor]:
 
 
 def _run_complex(context: StageContext) -> StageOutput:
+    from studio.stages.sync_media import selected_media
+
+    context.work_dir.mkdir(parents=True, exist_ok=True)
+    with selected_media(context.project, context.work_dir,
+                        context.settings.get("transcribe", {}).get("audio_streams")) as project:
+        return _render_complex(StageContext(project, context.settings, context.work_dir))
+
+
+def _render_complex(context: StageContext) -> StageOutput:
     project = context.project
-    cameras = [asset for asset in project.assets if asset.role is AssetRole.CAMERA]
+    cameras = _ordered_cameras(project, context.settings)
     recorders = [asset for asset in project.assets if asset.role is AssetRole.RECORDER]
     if not recorders:
         raise ValueError("recorder rendering requires a recorder")
-    recorder = recorders[0]
-    transcript = Transcript.load(project.transcripts[recorder.id])
-    alignments = []
-    camera_transcripts = []
-    for camera in cameras:
-        candidate = Transcript.load(project.transcripts[camera.id])
-        sync = context.settings.get("sync", {})
-        alignment = align_sources(
-            candidate, transcript, project.source_dir / camera.path,
-            project.source_dir / recorder.path, sync if isinstance(sync, dict) else {},
-            acoustic_first=_sync_mode(context.settings) in {"auto", "simple"},
-        )
-        alignments.append(alignment)
-        camera_transcripts.append(candidate)
-    if not alignments:
+    if not cameras:
         raise ValueError("complex rendering requires a camera")
-    reference = alignments[0]
-    offsets = [reference.offset - reference.k * item.offset / item.k for item in alignments]
-    origin = min(0.0, reference.offset, *offsets)
-    placements = [SourcePlacement(
-        recorder.id, reference.offset - origin, 0.0, transcript.duration,
-        reference.k, "text",
-    )]
     artifacts = []
     warps = []
-    outputs = {key: paths for key, paths in project.outputs.items() if not key.startswith("sync:")}
-    source = project.source_dir / recorder.path
+    outputs = {key: paths for key, paths in project.outputs.items()
+               if not key.startswith(("sync:", "sync-tracks:", "voice-segments:", "ambience:"))
+               and key not in {"master_wav", "self_check", "repair", "verify", "audio_processing"}}
     sync = context.settings.get("sync", {})
     sync = sync if isinstance(sync, dict) else {}
     if sync.get("self_check") == "repair" and sync.get("voice_enhance", "off") != "off":
         raise ValueError("sync.self_check=repair currently requires voice_enhance=off")
     mode = _sync_mode(context.settings)
+    from studio.stages.sync_sessions import plan_sessions
+
+    transcripts = {asset.id: Transcript.load(project.transcripts[asset.id])
+                   for asset in [*recorders, *cameras]}
+    camera_transcripts = [transcripts[camera.id] for camera in cameras]
+    placements, fits, rejected = plan_sessions(
+        project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
+    )
     repair_sources = {}
-    for extra in recorders[1:]:
-        extra_transcript = Transcript.load(project.transcripts[extra.id])
-        fitted = align_sources(
-            transcript, extra_transcript, source, project.source_dir / extra.path,
-            sync, acoustic_first=mode in {"auto", "simple"},
-        )
-        placements.append(SourcePlacement(
-            extra.id, reference.offset + reference.k * fitted.offset - origin, 0,
-            extra_transcript.duration, reference.k * fitted.k, fitted.provenance,
-        ))
-    for camera, candidate, alignment, offset in zip(
-        cameras, camera_transcripts, alignments, offsets, strict=True,
-    ):
-        placements.append(SourcePlacement(
-            camera.id, offset - origin, 0.0, candidate.duration,
-            reference.k / alignment.k, alignment.provenance,
-            {"inliers": float(alignment.inliers), "residual_ms": alignment.residual_ms},
-        ))
+    for camera, candidate in zip(cameras, camera_transcripts, strict=True):
+        available = [asset for asset in recorders if (camera.id, asset.id) in fits]
+        recorder = available[0]
+        transcript = transcripts[recorder.id]
+        source = project.source_dir / recorder.path
+        alignment = fits[camera.id, recorder.id]
         voice = context.work_dir / "stages" / "sync" / "voice" / f"{camera.id}.wav"
         selected = choose_sync_mode(
             mode, candidate.duration, alignment.k, alignment.residual_ms / 1000,
@@ -241,12 +227,9 @@ def _run_complex(context: StageContext) -> StageOutput:
         artifacts.append(voice)
         outputs[f"sync:{camera.id}"] = [voice]
         choices = [(recorder.id, voice, alignment.residual_ms, alignment.inliers)]
-        for extra in recorders[1:]:
-            extra_transcript = Transcript.load(project.transcripts[extra.id])
-            fitted = align_sources(
-                candidate, extra_transcript, project.source_dir / camera.path,
-                project.source_dir / extra.path, sync, acoustic_first=mode in {"auto", "simple"},
-            )
+        for extra in available[1:]:
+            extra_transcript = transcripts[extra.id]
+            fitted = fits[camera.id, extra.id]
             extra_voice = voice.with_name(f"{camera.id}-{extra.id}.wav")
             extra_mode = choose_sync_mode(
                 mode, candidate.duration, fitted.k, fitted.residual_ms / 1000,
@@ -265,7 +248,17 @@ def _run_complex(context: StageContext) -> StageOutput:
             warps.append(extra_plan.warp)
             artifacts.append(extra_voice)
             choices.append((extra.id, extra_voice, fitted.residual_ms, fitted.inliers))
-        choices.sort(key=lambda item: (item[2], -item[3]))
+        def choice_rank(
+            item: tuple[str, Any, float, int], camera_id: str = camera.id,
+            duration: float = candidate.duration,
+        ) -> tuple[float, float, int]:
+            fitted = fits[camera_id, item[0]]
+            coverage = max(0.0, min(duration,
+                fitted.offset + fitted.k * transcripts[item[0]].duration)
+                - max(0.0, fitted.offset))
+            return (-coverage, item[2], -item[3])
+
+        choices.sort(key=choice_rank)
         outputs[f"sync:{camera.id}"] = [choices[0][1]]
         if sync.get("self_check") == "repair":
             selected_asset = next(asset for asset in recorders if asset.id == choices[0][0])
@@ -284,6 +277,7 @@ def _run_complex(context: StageContext) -> StageOutput:
         "voices": {camera.id: str(outputs[f"sync:{camera.id}"][0].relative_to(report.parent))
                    for camera in cameras},
         "padding": "silence is outside invertible source maps",
+        "rejected_pairs": rejected,
     }, indent=2) + "\n", encoding="utf-8")
     artifacts.append(report)
     if sync.get("voice_enhance", "off") != "off" or sync.get("ambience"):
@@ -377,8 +371,17 @@ def _run_complex(context: StageContext) -> StageOutput:
 
 
 def _run_camera_placement(context: StageContext) -> StageOutput:
+    from studio.stages.sync_media import selected_media
+
+    context.work_dir.mkdir(parents=True, exist_ok=True)
+    with selected_media(context.project, context.work_dir,
+                        context.settings.get("transcribe", {}).get("audio_streams")) as project:
+        return _place_cameras(StageContext(project, context.settings, context.work_dir))
+
+
+def _place_cameras(context: StageContext) -> StageOutput:
     project = context.project
-    cameras = [asset for asset in project.assets if asset.role is AssetRole.CAMERA]
+    cameras = _ordered_cameras(project, context.settings)
     if not cameras:
         raise ValueError("no camera assets")
     reference = cameras[0]
@@ -387,17 +390,26 @@ def _run_camera_placement(context: StageContext) -> StageOutput:
     primary = (Transcript.load(project.transcripts[reference.id])
                if reference.id in project.transcripts else
                Transcript(project.source_dir / reference.path, "", _duration(reference), []))
-    placements = [SourcePlacement(reference.id, 0, 0, primary.duration, provenance="metadata")]
+    offsets = conf.get("session_offsets", {})
+    reference_offset = float(offsets.get(reference.id, offsets.get(reference.group_id, 0)))
+    placements = [SourcePlacement(reference.id, reference_offset, 0, primary.duration,
+                                  provenance="metadata")]
     for camera in cameras[1:]:
         candidate = (Transcript.load(project.transcripts[camera.id])
                      if camera.id in project.transcripts else
-                     Transcript(project.source_dir / camera.path, "", _duration(camera), []))
+                      Transcript(project.source_dir / camera.path, "", _duration(camera), []))
+        manual_offset = offsets.get(camera.id, offsets.get(camera.group_id))
+        if manual_offset is not None:
+            placements.append(SourcePlacement(camera.id, float(manual_offset), 0,
+                                              candidate.duration, provenance="manual"))
+            continue
         fitted = align_sources(
             primary, candidate, project.source_dir / reference.path,
             project.source_dir / camera.path, conf, acoustic_first=True,
         )
         placements.append(SourcePlacement(
-            camera.id, fitted.offset, 0, candidate.duration, fitted.k, fitted.provenance,
+            camera.id, reference_offset + fitted.offset, 0, candidate.duration,
+            fitted.k, fitted.provenance,
             {"inliers": float(fitted.inliers), "residual_ms": fitted.residual_ms},
         ))
     origin = min(item.offset_s for item in placements)
@@ -455,13 +467,24 @@ def _required_transcripts(project: Project) -> list[str]:
     return list(json.loads(path.read_text(encoding="utf-8")).get("transcripts", []))
 
 
-def _sync_mode(settings: dict[str, object]) -> str:
+def _sync_mode(settings: dict[str, Any]) -> str:
     sync = settings.get("sync", {})
     return str(sync.get("mode", "auto")) if isinstance(sync, dict) else "auto"
 
 
 def _duration(asset: Asset) -> float:
     return float(asset.manual.get("media_info", {}).get("duration_s", 0.0))
+
+
+def _ordered_cameras(project: Project, settings: dict[str, Any]) -> list[Asset]:
+    cameras = [asset for asset in project.assets if asset.role is AssetRole.CAMERA]
+    selected = settings.get("sync", {}).get("reference_camera", "auto")
+    if selected == "auto":
+        return cameras
+    matches = [asset for asset in cameras if asset.id == selected or asset.group_id == selected]
+    if not matches:
+        raise ValueError(f"unknown sync.reference_camera: {selected}")
+    return [*matches, *(asset for asset in cameras if asset not in matches)]
 
 
 def _normalize(text: str) -> str:

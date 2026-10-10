@@ -4,6 +4,7 @@ import json
 import math
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from studio.core.timeline import SourcePlacement
 from studio.stages.sync_render import cut_wav_segment, mix_clips_on_timeline
@@ -57,7 +58,7 @@ def render_voice_master(
                          for value in (item.offset_s, item.offset_s + item.duration_s * item.k)})
     import tempfile
 
-    intervals = []
+    intervals: list[tuple[float, float, Any]] = []
     for start, end in zip(boundaries, boundaries[1:], strict=False):
         available = [item for item in candidates
                      if item.offset_s <= start

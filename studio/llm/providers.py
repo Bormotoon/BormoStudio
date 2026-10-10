@@ -6,11 +6,17 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.request import Request, urlopen
 
 from studio.core.workspace import published
 from studio.llm.json_utils import extract_first_json_value
+
+
+class CompletionProvider(Protocol):
+    def complete(
+        self, prompt: str, *, grammar: str | None = None, refresh: bool = False
+    ) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)

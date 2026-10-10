@@ -52,7 +52,9 @@ def test_overrides_reach_worker_without_rewriting_project_yaml(
     plan = json.loads(capsys.readouterr().out)
     requirements_path = work / "stages" / "prepare" / "requirements.json"
     requirements = json.loads(requirements_path.read_text(encoding="utf-8"))
-    assert requirements["transcripts"] == ["recorder-zoom0001-tr1"]
+    assert requirements["transcripts"] == [
+        "camera-a-dji-0001", "camera-b-gx010024", "camera-b-gx020024",
+    ]
     project = Project.load(work / "project.json")
     effective = load_settings([settings_path], ["sync.mode=camera"]).to_dict()
     manifest = StageManifest.load(work / "manifests" / "prepare.json")

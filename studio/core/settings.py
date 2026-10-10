@@ -31,6 +31,8 @@ class SyncSettings:
     acoustic_window_s: float = 8.0
     acoustic_min_sharpness: float = 50.0
     recorder_mode: str = "best"
+    session_offsets: dict[str, float] = field(default_factory=dict)
+    reference_camera: str = "auto"
     boundary_flex: bool = False
     verify: bool = False
     voice_segment_minutes: float = 0.0
@@ -55,6 +57,10 @@ class TranscribeSettings:
     initial_prompt: str = ""
     use_cache: bool = True
     glossary: list[str] = field(default_factory=list)
+    hotwords: str = ""
+    audio_streams: dict[str, int] = field(default_factory=dict)
+    repetition_penalty: float = 1.1
+    no_repeat_ngram_size: int = 3
     keep_fillers: bool = True
 
 
@@ -65,6 +71,7 @@ class RoughcutSettings:
     pause_min_s: float = 1.0
     pause_keep_s: float = 0.4
     silence_threshold_db: float = -40.0
+    unknown_sound_min_s: float = 0.3
     head_tail_pad_s: float = 0.2
     detect_retakes: bool = True
     retake_min_words: int = 4
@@ -246,6 +253,11 @@ def validate_settings(settings: Settings) -> None:
     _non_negative("sync.voice_segment_minutes", settings.sync.voice_segment_minutes)
     _non_negative("sync.master_crossfade_ms", settings.sync.master_crossfade_ms)
     _one_of("sync.recorder_mode", settings.sync.recorder_mode, {"best", "all"})
+    if any(not key.strip() or not math.isfinite(value)
+           for key, value in settings.sync.session_offsets.items()):
+        raise SettingsError("sync.session_offsets requires names and finite seconds")
+    if not settings.sync.reference_camera.strip():
+        raise SettingsError("sync.reference_camera must not be empty")
     _one_of("sync.self_check", settings.sync.self_check, {"off", "warn", "repair"})
     if settings.sync.self_check == "repair" and settings.sync.voice_enhance != "off":
         raise SettingsError("sync.self_check=repair currently requires voice_enhance=off")
@@ -258,6 +270,12 @@ def validate_settings(settings: Settings) -> None:
         _positive(f"sync.{name}", getattr(settings.sync, name))
     _one_of("transcribe.device", settings.transcribe.device, {"auto", "cuda", "cpu"})
     _one_of("transcribe.mode", settings.transcribe.mode, {"fast", "quality"})
+    _positive("transcribe.repetition_penalty", settings.transcribe.repetition_penalty)
+    if any(not key.strip() or value < 0
+           for key, value in settings.transcribe.audio_streams.items()):
+        raise SettingsError("transcribe.audio_streams requires names and non-negative indices")
+    if settings.transcribe.no_repeat_ngram_size < 0:
+        raise SettingsError("transcribe.no_repeat_ngram_size must be non-negative")
     if settings.transcribe.batch_size < 1:
         raise SettingsError("transcribe.batch_size must be at least 1")
     for name in ("batch_size", "beam_size", "quality_beam_size"):
@@ -302,6 +320,7 @@ def validate_settings(settings: Settings) -> None:
         except (ValueError, ZeroDivisionError) as exc:
             raise SettingsError("program.fps must be auto or a rate between 1 and 240") from exc
     _positive("roughcut.pause_min_s", settings.roughcut.pause_min_s)
+    _positive("roughcut.unknown_sound_min_s", settings.roughcut.unknown_sound_min_s)
     _non_negative("roughcut.pause_keep_s", settings.roughcut.pause_keep_s)
     _non_negative("roughcut.head_tail_pad_s", settings.roughcut.head_tail_pad_s)
     _non_negative("roughcut.retake_max_gap_s", settings.roughcut.retake_max_gap_s)

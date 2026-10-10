@@ -5,6 +5,7 @@ import math
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from studio.core.proc import run_logged
 from studio.modules.manager import ModuleManager
@@ -26,7 +27,9 @@ with open(output, 'w', encoding='utf-8') as stream:
 """
 
 
-def diarize(source: Path, directory: Path, *, model: str, device: str) -> list[dict]:
+def diarize(
+    source: Path, directory: Path, *, model: str, device: str
+) -> list[dict[str, Any]]:
     manager = ModuleManager()
     if not manager.installed("diarization"):
         raise RuntimeError("diarization module is missing; install the diarization module")
@@ -43,10 +46,13 @@ def diarize(source: Path, directory: Path, *, model: str, device: str) -> list[d
         if result.returncode:
             raise RuntimeError("pyannote worker failed; inspect speakers backend logs")
         turns = json.loads(output.read_text(encoding="utf-8"))
-    for turn in turns:
+    if not isinstance(turns, list) or not all(isinstance(turn, dict) for turn in turns):
+        raise ValueError("pyannote worker returned malformed turns")
+    checked: list[dict[str, Any]] = turns
+    for turn in checked:
         start, end = float(turn["start"]), float(turn["end"])
         if not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end:
             raise ValueError("invalid pyannote turn timing")
         if not isinstance(turn["speaker"], str) or not turn["speaker"]:
             raise ValueError("invalid pyannote speaker label")
-    return turns
+    return checked

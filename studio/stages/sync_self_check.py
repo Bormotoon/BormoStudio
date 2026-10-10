@@ -37,12 +37,24 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 
 from studio.stages.sync_check_settings import SelfCheckSettings
 from studio.stages.sync_matcher import normalize_token
 from studio.stages.sync_models import AlignmentMap, Word
+
+
+class TimedWord(Protocol):
+    """What the diagnosis reads: Studio and WhisperSync words both qualify."""
+
+    @property
+    def text(self) -> str: ...
+    @property
+    def start(self) -> float: ...
+    @property
+    def end(self) -> float: ...
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +138,7 @@ class _Tok:
     text: str
 
 
-def _tokens(words: list[Word]) -> list[_Tok]:
+def _tokens(words: Sequence[TimedWord]) -> list[_Tok]:
     out: list[_Tok] = []
     for w in sorted(words, key=lambda x: x.start):
         norm = normalize_token(w.text)
@@ -300,8 +312,8 @@ def _content_spans(
 
 
 def diagnose(
-    render_words: list[Word],
-    cam_words: list[Word],
+    render_words: Sequence[TimedWord],
+    cam_words: Sequence[TimedWord],
     min_run_words: int = DEFAULT_MIN_RUN_WORDS,
     shift_threshold_s: float = DEFAULT_SHIFT_THRESHOLD_S,
     min_content_words: int = DEFAULT_MIN_CONTENT_WORDS,
@@ -392,8 +404,8 @@ def diagnose_words(
 
 
 def check_rendered_clip(
-    rendered_words: list[Word],
-    camera_words: list[Word],
+    rendered_words: Sequence[TimedWord],
+    camera_words: Sequence[TimedWord],
     config: object,
     clip_duration: float | None = None,
 ) -> SelfCheckOutcome:

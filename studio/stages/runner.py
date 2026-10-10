@@ -120,8 +120,9 @@ def _run_stage_process(
             messages.put(None)
 
     def read_stderr() -> None:
-        assert process.stderr is not None
-        for chunk in iter(lambda: process.stderr.read(8192), ""):
+        stream = process.stderr
+        assert stream is not None
+        for chunk in iter(lambda: stream.read(8192), ""):
             diagnostics.append(chunk)
             # Keep a bounded diagnostic tail even for noisy native libraries.
             if len(diagnostics) > 32:

@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
-from studio.core.audio_spans import Span, detect_silence, word_gaps
+from studio.core.audio_spans import Span, detect_silence, unknown_sound_spans, word_gaps
 from studio.core.project import Project, stable_fingerprint
 from studio.core.timeline import file_to_timeline
 from studio.core.transcript import Transcript
@@ -68,16 +69,16 @@ class RoughcutStage:
     optional_after = ("speakers",)
     gpu = GpuUse.NONE
 
-    def requirements(self, settings: dict[str, object]) -> list[Requirement]:
+    def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         conf = _conf(settings)
         if not conf.get("llm", False):
             return []
         return [Requirement("llama", str(conf.get("model", "local")), "LLM rough-cut detectors")]
 
-    def uses_llm(self, settings: dict[str, object]) -> bool:
+    def uses_llm(self, settings: dict[str, Any]) -> bool:
         return bool(_conf(settings).get("llm", False))
 
-    def decide(self, project: Project, settings: dict[str, object]) -> Decision:
+    def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         roughcut = settings.get("roughcut", {})
         enabled = roughcut.get("enabled", True) if isinstance(roughcut, dict) else True
         if not enabled:
@@ -86,7 +87,7 @@ class RoughcutStage:
             "timeline transcript is missing", "run timeline"
         )
 
-    def fingerprint(self, project: Project, settings: dict[str, object]) -> str:
+    def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         path = project.transcripts.get("timeline")
         content = path.read_text(encoding="utf-8") if path and path.is_file() else ""
         source = Transcript.load(path).source_audio if path and path.is_file() else None
@@ -107,7 +108,7 @@ class RoughcutStage:
                  for language in ("ru", "en")],
             )
         return stable_fingerprint(
-            "roughcut-v4", content, project.placements,
+            "roughcut-v5", content, project.placements,
             _sha256(source) if source and source.is_file() else "missing",
             settings.get("roughcut", {}), llm_identity,
         )
@@ -156,6 +157,10 @@ class RoughcutStage:
             retakes=retakes,
             llm=llm,
             llm_apply=str(conf.get("llm_apply", "suggest")),
+            unknown_sound_min_s=float(conf.get("unknown_sound_min_s", 0.3)),
+            audio_coverage=(Span(placement.offset_s,
+                                 placement.offset_s + placement.duration_s * placement.k)
+                            if placement else None),
         )
         overrides = context.project.work_dir / "edit-overrides.json"
         if overrides.is_file():
@@ -167,7 +172,7 @@ class RoughcutStage:
         return StageOutput((output, *artifacts), {"outputs": outputs})
 
 
-def _conf(settings: dict[str, object]) -> dict:
+def _conf(settings: dict[str, Any]) -> dict:
     roughcut = settings.get("roughcut", {})
     return roughcut if isinstance(roughcut, dict) else {}
 
@@ -271,10 +276,21 @@ def build_edit_list(
     retakes: RetakeSettings | None = None,
     llm: LlmResult | None = None,
     llm_apply: str = "suggest",
+    unknown_sound_min_s: float = 0.3,
+    audio_coverage: Span | None = None,
 ) -> EditList:
+    if mode not in {"cut", "markers"}:
+        raise ValueError("roughcut mode must be cut or markers")
     words = transcript.words
     if not words:
-        return EditList(mode, (), (), ())
+        sounds = unknown_sound_spans(
+            [], silence, duration_s=transcript.duration,
+            minimum_s=unknown_sound_min_s, coverage=audio_coverage,
+        ) if silence is not None else []
+        return EditList(mode, ((0.0, transcript.duration),), (), tuple(
+            Marker(span.start_s, "unknown-sound", f"untranscribed audio {span.duration_s:.2f}s")
+            for span in sounds
+        ))
     cuts: list[Cut] = []
     def quiet(start: float, end: float) -> bool:
         return silence is None or any(
@@ -343,12 +359,31 @@ def build_edit_list(
             f"{finding.detector}: {finding.quote} — {finding.reason}",
             accepted=llm_apply == "cut",
         ))
+    # Every detector shares the same boundary guard, including retakes and LLM findings.
+    cuts = [cut for cut in cuts if 0 <= cut.start < cut.end <= transcript.duration
+            and not inside_word(cut.start) and not inside_word(cut.end)]
     cuts.sort(key=lambda cut: cut.start)
-    markers = tuple(sorted((
+    fillers = [
         *(Marker(word.start, "filler", word.text)
           for word in words
           if word.text.casefold().strip(".,!?…") in FILLERS),
+        *(Marker(left.start, "filler", f"{left.text} {right.text}")
+          for left, right in zip(words, words[1:], strict=False)
+          if left.text.casefold().strip(".,!?…") == "как"
+          and right.text.casefold().strip(".,!?…") == "бы"
+          and 0 <= right.start - left.end <= 0.3),
+    ]
+    # An LLM filler marker at the same word replaces the heuristic one.
+    llm_filler_starts = {marker.at for marker in llm_markers if marker.kind == "llm-filler"}
+    markers = tuple(sorted((
+        *(marker for marker in fillers if marker.at not in llm_filler_starts),
         *llm_markers,
+        *(Marker(span.start_s, "unknown-sound",
+                 f"untranscribed audio {span.duration_s:.2f}s")
+          for span in (unknown_sound_spans(
+              words, silence, duration_s=transcript.duration,
+              minimum_s=unknown_sound_min_s, coverage=audio_coverage,
+          ) if silence is not None else [])),
     ), key=lambda marker: marker.at))
     keep = (
         _complement(transcript.duration, cuts)

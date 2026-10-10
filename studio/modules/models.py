@@ -13,6 +13,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from studio.core.launch import frozen_root
 from studio.core.workspace import project_lock, published
 from studio.modules.cancellation import check_cancelled
 
@@ -35,7 +36,7 @@ def recipes() -> dict[str, ModelRecipe]:
         ("light-asd", "active_speaker.py", "light_asd_talkset.model"),
     ):
         source = (
-            Path(sys._MEIPASS) / "managed" / "studio" / "vision" / module
+            frozen_root() / "managed" / "studio" / "vision" / module
             if getattr(sys, "frozen", False)
             else files("studio.vision").joinpath(module)
         )
@@ -131,7 +132,7 @@ class ModelManager:
                         if hasattr(response, "headers")
                         else 0
                     )
-                    last = -1
+                    last: int | None = -1
                     for block in iter(lambda: response.read(1024 * 1024), b""):
                         check_cancelled(cancelled)
                         size += len(block)

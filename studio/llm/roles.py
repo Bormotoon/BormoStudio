@@ -1,10 +1,20 @@
 """Per-task model routing preserving managed-server ownership."""
 
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 from studio.llm.providers import LlamaProvider
 from studio.llm.session import model_identity
 
 
-def role_provider(settings, section, role, cache_dir, factory=LlamaProvider):
+def role_provider(
+    settings: dict[str, Any],
+    section: str,
+    role: str,
+    cache_dir: Path | None,
+    factory: Callable[..., LlamaProvider] = LlamaProvider,
+) -> LlamaProvider:
     config = settings.get(section, {})
     override = settings.get("llm", {}).get("roles", {}).get(role, {})
     endpoint = override.get("base_url", config.get("base_url", "http://127.0.0.1:8080"))

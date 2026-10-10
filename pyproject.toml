@@ -47,6 +47,7 @@ include = ["studio*"]
     "fonts/*",
     "fonts/licenses/*",
     "prompts/en/*",
+    "presets/*",
     "prompts/ru/*",
     "subtitle_editor/*",
     "subtitle_editor/assets/*",
@@ -69,3 +70,9 @@ python_version = "3.12"
 disallow_untyped_defs = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+# Optional ML/download dependencies live in managed module environments and ship
+# without type information; Studio code imports them lazily inside those workers.
+module = ["cv2", "torch", "torch.*", "ctranslate2", "faster_whisper"]
+ignore_missing_imports = true

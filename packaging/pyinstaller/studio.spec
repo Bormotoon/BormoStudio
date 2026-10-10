@@ -17,6 +17,7 @@ a = Analysis(
     datas=[
         (str(root / "studio" / "gui" / "theme.qss"), "studio/gui"),
         (str(resource_root / "prompts"), "studio/resources/prompts"),
+        (str(resource_root / "presets"), "studio/resources/presets"),
         (str(resource_root / "fonts"), "studio/resources/fonts"),
         (str(resource_root / "subtitle_editor"), "studio/resources/subtitle_editor"),
     ] + managed_sources,

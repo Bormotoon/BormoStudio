@@ -83,3 +83,23 @@ def test_depth_comes_from_default_audio_stream(tmp_path: Path) -> None:
     assert info.audio_stream_index == 1
     assert info.audio_sample_rate == 44100
     assert info.audio_bits_per_sample == 24
+
+
+def test_probe_uses_absolute_stream_index(tmp_path: Path) -> None:
+    import json
+    from unittest.mock import patch
+
+    from studio.core.media import probe
+
+    data = {"format": {"duration": "1"}, "streams": [
+        {"index": 0, "codec_type": "video"},
+        {"index": 1, "codec_type": "audio", "channels": 1},
+        {"index": 3, "codec_type": "audio", "channels": 2,
+         "disposition": {"default": 1}},
+    ]}
+    with patch("studio.core.media.subprocess.run") as run:
+        run.return_value.returncode = 0
+        run.return_value.stdout = json.dumps(data)
+        info = probe(tmp_path / "multi.mov")
+    assert info.audio_stream_index == 3
+    assert info.audio_channels == 2
