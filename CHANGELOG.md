@@ -16,6 +16,20 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- Reel layouts (`reels.layout`): a hook-title band over the framed picture and an
+  audiogram that needs no camera; per-reel framing, crop, tracking and title
+  (`uvf reel`, Subtitles page) with an instant crop preview over an unframed still.
+- Forge caption looks for reels (`reels.caption_preset` and `reels.caption_*`):
+  word-timed cues, word/fill/reveal/pop/karaoke highlights, case, punctuation,
+  censoring and fades, burned with the packaged fonts.
+- Speaker identities matched across recorder files and diarized sessions by voice.
+- Owned llama-server tuning (`llm.*`), per-role sampling, a streaming watchdog
+  with retries, and their migration from Forge `llama_cpp.*`.
+- Measured Whisper/llama tuning (`uvf tune`, Settings) and a whole-edit preview
+  proxy on the Edit page (`uvf preview`).
+- Mac: MLX Whisper (`transcribe.device=mlx`) and VideoToolbox encoding; not yet
+  run on Apple hardware.
+
 - LLM rough-cut detectors (start, slips, semantic fillers, take delivery) with
   verbatim-quote evidence; suggestions by default, report of rejected findings.
 - Whole-timeline cut overview, with-cut/original audition without a master, and

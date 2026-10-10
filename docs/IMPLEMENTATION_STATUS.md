@@ -15,16 +15,16 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 | 0 — Preparation | Imported histories and preserved source snapshots/patch, fixture generator, locks/CI definitions, local wheel/frozen smoke | Executed CI matrix, clean installed-artifact tests, private acceptance recording, release interpreter qualification |
 | 1 — Contracts and pipeline | Versioned project/manifests, four time domains, planner/worker/events, recoverable publication, scan/prepare/transcribe/complex sync, CLI and Qt shell | Complete legacy golden coverage and real end-to-end GUI/CLI parity |
 | 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, overlapping and explicitly positioned disjoint sessions, reference-camera choice, selected-stream matching/rendering and detached camera PCM for NLE, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Full legacy source-selection workflow parity, NLE import and relinking |
-| 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, timeline cut overview, with-cut/original audition with or without master, markers, placement-aware CFR program/transcript with duration-preserving join crossfades | Real word-integrity/listening acceptance, end-to-end re-export check |
-| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade, project speaker-camera choices (GUI/CLI), wide-shot policy, retimed multicam FCPXML | Cross-file identities, real pyannote and NLE acceptance |
-| 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch with webhook/desktop notifications and mid-download cancellation, reports/night helper, owned llama lifecycle, settings migration, legacy comparison runner | Studio homes for the remaining reels/llm legacy keys, phase-wide reuse, full Forge golden migration |
-| 6 — Modules/distribution | Managed modules, pinned verified YuNet/Light-ASD/Whisper/GGUF downloads with resume, LLM rough-cut detectors, native setup/settings/GGUF picker and dirty guards, compute probe, Linux frozen/local installer | Real-model LLM edit acceptance, download step in first-run wizard, measured tuning, bundled dependencies, clean-machine/Python 3.12/platform qualification |
-| 7 — Follow-up | Source-video reel rendering and native editor foundations already available | Speaker-angle reels, vision auto-assignment, OTIO, MLX/VideoToolbox, LUFS/covers/audiograms/YouTube replay data |
+| 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, timeline cut overview, with-cut/original audition with or without master, cached 360p whole-edit preview with synchronized playhead and seeking, markers, placement-aware CFR program/transcript with duration-preserving join crossfades | Real word-integrity/listening acceptance, end-to-end re-export check |
+| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade with per-session sources, cross-file speaker identity matching (pyannote embeddings / MFCC signatures), project speaker-camera choices (GUI/CLI), wide-shot policy, retimed multicam FCPXML | Real pyannote/identity and NLE acceptance |
+| 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch with webhook/desktop notifications and mid-download cancellation, reports/night helper, owned llama lifecycle, settings migration, legacy comparison runner | Remaining legacy keys (clip tiers, judge context, diversity weights, subtitle whisper_sync/speaker colours, video encoding), phase-wide reuse, full Forge golden migration |
+| 6 — Modules/distribution | Managed modules, pinned verified YuNet/Light-ASD/Whisper/GGUF downloads with resume, LLM rough-cut detectors, native setup/settings/GGUF picker and dirty guards, compute probe, Linux frozen/local installer | Real-model LLM edit acceptance, real-GPU tuning acceptance, bundled dependencies, clean-machine/Python 3.12/platform qualification |
+| 7 — Follow-up | Speaker-angle reels, vision auto-assignment, OTIO, LUFS/covers/replay ranking, hook-title and audiogram layouts, per-reel framing with instant crop preview, Forge caption looks, MLX Whisper and VideoToolbox (substituted tests only) | Visual acceptance of layouts/captions, Mac hardware run, NLE/Resolve imports |
 
 ### Current verification
 
-- Latest combined source suite: **447 passed, 2 skipped** on Python **3.10.20**
-  with offscreen Qt (2026-10-10); Ruff passes. After the type-check repair,
+- Latest combined source suite: **562 passed, 3 skipped** on Python **3.10.20**
+  with offscreen Qt (2026-10-10, after the remaining feature items); Ruff passes. After the type-check repair,
   `mypy studio tools` passes on Python 3.10 and 3.12 (124 source files).
   The remote CI result still needs a new run with these working-tree changes.
 - Frozen WhisperSync suite run through `tools/legacy_suites.py` in a Python 3.12
@@ -46,8 +46,8 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 3. Raw recorder warp replay without voice artifacts; Studio sections (batch, fetch,
    hooks, remaining reels/llm options) for keys the migration still reports as
    unmapped; phase-wide model ownership/reuse.
-4. Wide-shot policy for speaker cameras, download step in the first-run wizard,
-   measured Whisper/llama tuning.
+4. Real-GPU `uvf tune` run with the GPU free; visual review of reel layouts,
+   caption looks and the whole-edit preview; real pyannote identity check.
 5. Studio-vs-legacy golden parity on the comparison suites, installed/frozen
    real-processing checks, production packaging, private sample acceptance.
 
@@ -62,6 +62,36 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - CI matrix, Python 3.12 qualification and clean Linux installation first;
   Windows/macOS and process-tree cancellation afterward per owner platform priority.
 - Third-party model/font/ffmpeg license inventory before distribution.
+
+### Remaining feature items — 2026-10-10
+
+- Reels: `reels.layout` `title` (hook band, libass with packaged fonts) and
+  `audiogram` (waveform from the reel's audio, works without cameras). Per-reel
+  framing/crop/tracking/title overrides in `_studio/reels/overrides.json`, edited
+  in the subtitle editor over an unframed still with a live crop window and with
+  `uvf reel`. Forge caption looks from the shared `subtitle-presets.js`
+  (`reels.caption_*`): word-timed cues, bottom-heavy lines, word/fill/reveal/pop/
+  karaoke highlights, case, punctuation, censoring, fades; manual edits still win.
+  Sample frames of title, audiogram and three caption looks were inspected.
+- Speakers: cross-file identity matching with mutual-best pairing; lanes of one
+  file, simultaneous files and different user names never merge. pyannote
+  diarizes each placed source that covers new timeline and returns embeddings.
+- LLM: owned llama-server tuning flags (support-checked for newer ones), log file,
+  `cache_ram_mb: auto`, per-role sampling/timeout, streaming watchdog with
+  first-token/stall timeouts and retries. Migration maps the matching
+  `llama_cpp.*`, watchdog, role override and `subtitles.*` keys.
+- Measured tuning: `uvf tune` / Settings button; Whisper type × batch and llama
+  layers × batch trials in separate processes with nvidia-smi peaks. One real CPU
+  run (whisper tiny, 40 s espeak sample) completed six trials and recommended
+  float32/batch 4 at 8.3× real time. GPU and llama trials were not run here: the
+  GPU was occupied by another llama-server, which was left untouched.
+- Whole-edit preview: cached 360p proxy via `uvf preview`, GUI player with a
+  synchronized playhead and seeking on the cut overview.
+- Mac: MLX Whisper backend (`transcribe.device=mlx`, `[mlx]` extra) and
+  VideoToolbox encoder selection/fallback. Only substituted tests; no Mac run.
+- Verification: 562 passed, 3 skipped on Python 3.10 offscreen; Ruff and mypy
+  (139 source files) pass. Not accepted: visual/listening review on real
+  material, real pyannote identity, GPU tuning, Apple hardware.
 
 ### Type-check repair — 2026-10-10
 

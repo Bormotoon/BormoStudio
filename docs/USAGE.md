@@ -16,8 +16,8 @@ Enable video output with `--set reels.render=true`; optionally add
 `--set reels.burn_subtitles=true`. The `reel_render` stage publishes MP4, local-time
 JSON/SRT and `render.json` in `_studio/stages/reel_render/`. Timeline moments use
 placed cameras and synchronized audio; edited moments require `program.mp4`.
-`reels.render_fps` defaults to `25`. Rendering currently preserves source framing;
-automatic subject tracking remains pending. Set `reels.framing=crop` for portrait
+`reels.render_fps` defaults to `25`. Rendering preserves source framing by default
+(face tracking is described below). Set `reels.framing=crop` for portrait
 cropping or `reels.framing=fit` to preserve the full image with padding. Output
 size defaults to 1080x1920 (`reels.width` / `reels.height`); `reels.crop_x` sets
 horizontal crop position from 0 (left) to 1 (right), defaulting to the center.
@@ -33,6 +33,57 @@ replayed" heatmap from yt-dlp's info.json adds a `replay` ranking factor
 its placement, and through the program mapping for edited transcripts. Without a
 heatmap the factor is neutral and the ranking is unchanged.
 
+### Layouts: hook title and audiogram
+
+`reels.layout` chooses how a reel is composed (also on the Settings page):
+
+- `video` (default) — the framed picture only;
+- `title` — a band of `reels.title_band` of the height (default 0.22) on top shows
+  the moment's hook (`reels.title_field=hook`, falling back to its title), and the
+  picture is framed into the rest; `reels.title_seconds` limits how long the title
+  stays (0 = whole reel);
+- `audiogram` — no camera needed: the reel's sound with a live waveform
+  (`reels.waveform_color`) under the title, on `reels.background_color`. Works for
+  audio-only projects (for example `fetch.download=audio`).
+
+The title uses the packaged fonts (`reels.title_font`, default Montserrat Black;
+`reels.title_color`). `render.json` records the layout and title of every reel.
+
+### Per-reel framing
+
+Framing, crop position, tracking and the title text can differ per reel. The
+Subtitles page shows an unframed still of the selected reel (`reel-NNN-frame.jpg`)
+with the kept window drawn over it, updated instantly as the controls change; set
+**Framing for** to **This reel only** before saving. From the CLI:
+
+```bash
+uvf reel ./episode                                   # list overrides
+uvf reel ./episode --reel cand-12 --framing crop --crop-x 0.3 --title "Why it works"
+uvf reel ./episode --reel cand-12 --no-tracking
+uvf reel ./episode --reel cand-12 --clear            # back to project settings
+```
+
+Overrides live in `_studio/reels/overrides.json`, keyed by the moment's
+`candidate_id` (or `reel-NNN`), and rerendering picks them up. Output width and
+height stay project-wide.
+
+### Caption styles
+
+`reels.caption_preset` applies one of the Forge caption looks shared with the web
+subtitle editor (`forge`, `hormozi`, `mrbeast`, `karaoke`, `tiktok`, `box`,
+`sticker`, `word_box`, `neon`, `vibrant`, `minimal`, `classic`, `one_word`, `retro`,
+`bold_pop`, `headline`) to reels whose captions were not edited by hand. Cues are
+built from words: a pause of `reels.caption_pause_split_s` (0.5 s), the
+`reels.caption_max_duration_s` (7 s), the word limit or the characters of
+`reels.caption_max_lines` lines end a cue; lines are bottom-heavy. The preset's
+own choices can be overridden: `caption_highlight` (`none`, `word`, `fill`,
+`reveal`, `pop`, `karaoke`), `caption_case`, `caption_punctuation` (`keep`,
+`periods`, `all`), `caption_max_words` (-1 = preset), `caption_max_chars` (0 =
+from font and `caption_width_ratio`), `caption_font_size` (looks are tuned at 96),
+`caption_highlight_color`, `caption_min_gap_s`, `caption_fade_min_gap_s`, and
+`caption_censor` (`["бля*"]`; `caption_censor_style` `middle`/`first`/`whole`).
+Captions saved in the Subtitles page still win over the preset.
+
 ## Subtitle editor and captions
 
 The desktop **Subtitles** page edits rendered reels and the review program with
@@ -44,10 +95,11 @@ both reels and the review program. Program captions publish a separate
 `program-captioned.mp4` through the `program_subtitles` stage; CLI users enable
 it with `--set program.burn_subtitles=true`.
 
-The same page exposes project-wide reel framing mode, output dimensions and crop
-position. Save the choices and use **Save and render captions** to see the new
-framing in the rendered clip. Changes preserve other project settings; framing
-controls are disabled for the review program.
+The same page exposes reel framing mode, output dimensions, crop position and the
+reel title, for the whole project or only the selected reel (see Per-reel
+framing). The frame preview shows the crop before rendering; use **Save and
+render captions** to produce the clip. Changes preserve other project settings;
+framing controls are disabled for the review program.
 
 ## Face / active-speaker tracking
 
@@ -156,6 +208,36 @@ Batch owns a shared llama session across project boundaries. Identical managed
 configuration and GGUF content reuse the session when LLM work remains adjacent;
 non-LLM stages still stop the server to release resources. Model/configuration
 changes, project failures, cancellation and queue completion close the owned session.
+
+### llama-server tuning, sampling and watchdog
+
+The owned server takes the usual llama.cpp tuning, passed only when set (null
+keeps the server default): `llm.n_gpu_layers`, `ctx_size`, `batch_size`,
+`ubatch_size`, `threads`, `main_gpu`, `parallel` (default 1: Studio sends one
+request at a time, extra slots only cost VRAM), `flash_attn` (`auto`/`on`/`off`),
+`cache_type_k`/`cache_type_v` (for example `q8_0`), `ctx_checkpoints` and
+`extra_args`. `llm.cache_ram_mb` limits the host-RAM prompt cache: MiB, or `auto`
+for the memory available at start minus `cache_ram_reserve_mb`, clamped to
+`cache_ram_min_mb`…`cache_ram_max_mb`. Flags the installed build does not know
+(`--cache-ram`, `--ctx-checkpoints`) are left out. Server output goes to
+`_studio/llama/llama-server.log` (`llm.log_file`, empty to discard); it shows how
+many layers really reached the GPU.
+
+`llm.temperature` and `llm.n_predict` set sampling for every request;
+`llm.role_options` overrides them per role together with the request timeout:
+
+```yaml
+llm:
+  role_options:
+    scout: {temperature: 0.35, n_predict: 2048, timeout_s: 600}
+    judge: {temperature: 0.05}
+```
+
+Non-default sampling is part of the response-cache key. With `llm.watchdog`
+(default on) responses are streamed: a server that sends no first token within
+`first_token_timeout_s` or stalls for `stall_timeout_s` (120 s each) is abandoned
+and the request retried up to `max_retries` times with `retry_backoff_s` doubling;
+client errors (4xx) are not retried.
 
 ## Reels analysis: context, review and retries
 
@@ -317,6 +399,17 @@ voice lanes, muted camera sound and markers; import it in Resolve with
 **File → Import → Timeline**. Drift-corrected clips carry an OTIO
 `LinearTimeWarp`. Import into Resolve itself has not been verified yet.
 
+## Whole-edit preview
+
+**Preview whole edit** on the Edit page renders a 360p proxy of exactly what the
+program would render — accepted cuts, speaker camera switches and synchronized
+voices — and plays it under the cut overview, whose playhead follows playback;
+clicking the overview seeks (a click inside a removed range jumps to the next kept
+moment). The proxy is cached in `_studio/cache/preview/` by the edit and its
+inputs, so an unchanged edit opens immediately; accepting or rejecting a cut asks
+for a new one. CLI: `uvf preview ./episode [--height 360]` prints the file and the
+preview↔timeline map.
+
 ## Rough-cut presets and word check
 
 Pause thresholds come in packaged presets: `roughcut-gentle`, `roughcut-balanced`
@@ -349,6 +442,27 @@ below `roughcut.llm_min_confidence`, longer than `llm_max_cut_s`, beyond
 `stages/roughcut/llm-report.json`. With `roughcut.llm_apply: suggest` (default)
 LLM cuts appear unaccepted in the Edit list and delivery choices as markers;
 `cut` applies them. Fillers are always markers.
+
+## Speaker identities across files
+
+Each recorder file and each diarized source labels its speakers on its own. With
+`speakers.match_files` (default on) labels of different files are matched by
+voice so one person keeps one name: pyannote centroid embeddings when diarization
+provides them (`speakers.embedding_threshold`, cosine, default 0.5), otherwise an
+MFCC voice signature of the label's loudest speech (`speakers.match_threshold`,
+default 0.9). A pair merges only when each is the other's most similar label in
+its file. Lanes of one file, files that play at the same time and two different
+names given by the user are never merged; an unnamed lane can inherit a name.
+
+- Microphones: matching applies across recorder files that do not overlap on the
+  timeline (separate sessions); merged lanes take the earliest lane's name.
+- pyannote: besides the transcript source, every placed file that covers mostly
+  new timeline (another session) is diarized; labels of later sources take the
+  matching first-source label, unmatched ones that would collide get `@asset`.
+
+`speakers/report.json` lists the similarities, merges and renames
+(`identities`). This is voice matching, not face identity; check it on real
+recordings before relying on it.
 
 ## Recorder tracks and speaker cameras
 
@@ -422,6 +536,38 @@ conflicts and dependency fixes (for example tracking without crop framing) are
 listed too, and the output passes Studio validation. The legacy runner executes
 the frozen suites unmodified in their own environment and compares per-test
 outcomes with the 403/620 snapshot and with an earlier report.
+
+## Measured Whisper and llama tuning
+
+`uvf tune ./episode` (or **Measure and tune Whisper / llama** in Settings) times
+real candidates on this machine, each in its own process so an out-of-memory
+trial does not stop the run:
+
+- Whisper: compute types (float16, int8_float16, int8 on CUDA; int8, float32 on
+  CPU) × growing batch sizes on `--sample-s` (60) seconds from the middle of a
+  project recording; a batch stops growing when it fails, does not fit, or gains
+  less than 5 %. int8 has to be clearly faster to win (×0.9 score).
+- llama: GPU layers (server fit / all) × batch/ubatch, each starting an owned
+  server on a free port and timing one completion with llama-server's own timings;
+  the score is the time of a 3000-token prompt with an 800-token answer.
+
+GPU memory is the trial process's peak from nvidia-smi; trials must fit the free
+memory measured before tuning minus a headroom, so stop other GPU users first.
+The report is written to `_studio/tuning.json`; `--apply` (or **Apply compute
+recommendations** afterwards) saves the winners. `--whisper` / `--llama` limit
+the run.
+
+## Mac (Apple Silicon)
+
+`transcribe.device=mlx` runs Whisper through mlx-whisper
+(`pip install 'ultimate-video-forge[mlx]'`); `auto` picks it on Apple Silicon
+without CUDA. Model names map to the mlx-community conversions (for example
+`large-v3-turbo` → `mlx-community/whisper-large-v3-turbo`); a repo or folder can be
+given directly. mlx-whisper has no batched pipeline, VAD filter, hotwords or
+repetition controls. `program.encoder=videotoolbox` encodes the program with
+`h264_videotoolbox` at 12 Mbit/s; `auto` prefers it on macOS after a real encode
+probe and falls back to libx264. llama.cpp uses Metal on its own. These paths are
+covered by substituted tests only and have not been run on a Mac.
 
 ## Linux installation
 

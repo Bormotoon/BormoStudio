@@ -894,10 +894,10 @@ compute:    {allow_cpu: false}
 | 0 | Истории, snapshots/patch, фикстуры и локальные сборки есть | CI/чистая установка, реальная запись, квалификация Python 3.12 |
 | 1 | Каркас и локальный pipeline реализованы | Полная golden-регрессия и сквозная GUI/CLI приёмка |
 | 2 | Режимы sync, voice/warp, FCPXML/XMEML, ручные роли, RecorderTrack и drag&drop групп есть | Паритет выбора потоков, раздельные сессии, реальный импорт NLE |
-| 3 | Паузы/дубли, решения, обзор резов на таймлайне, прослушивание без мастера, CFR-мастер с кроссфейдами есть | Реальное прослушивание, проверка слов на стыках, сквозной переэкспорт |
-| 4 | Mics/pyannote facade, выбор камер (GUI/CLI), политика общего плана, дорожки спикеров и multicam есть | Cross-file identity, модели и NLE приёмка |
-| 5 | Тексты/term-check, role routing, рилсы/аудиокэш, captions/editor, vision, fetch, channel/batch с уведомлениями и отменой загрузок, миграция настроек есть | Оставшиеся reels/llm ключи, phase-wide reuse и Forge-регрессия |
-| 6 | Модули, загрузка YuNet/Light-ASD/Whisper/GGUF, LLM-детекторы монтажа, мастер настройки и Linux frozen есть | Приёмка LLM-монтажа на модели, измеряемое tuning, production installers |
+| 3 | Паузы/дубли, решения, обзор резов на таймлайне, прослушивание без мастера, предпросмотр всего монтажа (прокси), CFR-мастер с кроссфейдами есть | Реальное прослушивание, проверка слов на стыках, сквозной переэкспорт |
+| 4 | Mics/pyannote facade, cross-file identity, выбор камер (GUI/CLI), политика общего плана, дорожки спикеров и multicam есть | Модели, проверка сопоставления на записи и NLE приёмка |
+| 5 | Тексты/term-check, role routing, рилсы/аудиокэш, captions/editor, vision, fetch, channel/batch с уведомлениями и отменой загрузок, миграция настроек есть | Clip tiers/judge context/diversity и прочие ключи, phase-wide reuse и Forge-регрессия |
+| 6 | Модули, загрузка YuNet/Light-ASD/Whisper/GGUF, LLM-детекторы монтажа, мастер настройки и Linux frozen есть | Приёмка LLM-монтажа на модели, GPU-прогон автонастройки, production installers |
 | 7 | Последующая дорожная карта | Не блокирует первоначальный локальный выпуск |
 
 **Ни одна фаза ещё не закрыта по всем критериям приёмки.** Текущая база —
@@ -942,7 +942,7 @@ release-база, её квалификация в этом окружении �
 - [x] `prepare` + `transcribe`: нужные входы объявляются планировщиком, effective settings сохраняются для worker.
 - [ ] **Частично:** `sync complex` planner/renderer, voice WAV, warp maps и PCM parity реализованы. Не доделано: полный characterization и реальная WhisperSync-регрессия.
 - [x] Нейтральный `Sequence` и FCPXML/XMEML адаптеры реализованы; экспорт синхронизированного звука, rates/channels/roles покрыт локальными регрессиями. NLE-приёмка отдельно.
-- [ ] **Частично:** Qt-экраны/bridge, запуск/лог/отмена/Material и Settings dirty guards есть. Не доделано: drag/drop, полный timeline preview и визуальная/клавиатурная приёмка.
+- [ ] **Частично:** Qt-экраны/bridge, запуск/лог/отмена/Material и Settings dirty guards есть; полный предпросмотр монтажа — кэшируемый 360p-прокси (`uvf preview`) с плеером, курсором на обзоре резов и переходом по клику. Не доделано: drag/drop и визуальная/клавиатурная приёмка.
 - [x] `cli`: `scan`, `plan`, `run`, `doctor` (публичный entry point `uvf`).
 - [ ] **Частично:** перенесены выбранные регрессии. Не доделано: весь baseline suite и golden parity; legacy сохраняется.
 
@@ -995,7 +995,7 @@ release-база, её квалификация в этом окружении �
 
 **Задачи:**
 
-- [ ] **Частично:** mics/smoothing/pyannote facade есть; атрибуция микрофонов при сложной синхронизации идёт через кусочную `AudioWarpMap` (вне её покрытия — линейное размещение). Не доделано: turns/manual naming parity, cross-file identity и real model acceptance.
+- [ ] **Частично:** mics/smoothing/pyannote facade есть; атрибуция микрофонов при сложной синхронизации идёт через кусочную `AudioWarpMap` (вне её покрытия — линейное размещение). Cross-file identity: метки разных файлов/сессий сводятся по голосу (эмбеддинги pyannote или MFCC-подпись, взаимно лучшая пара; одновременные файлы и разные ручные имена не сливаются), pyannote размечает каждый источник новой сессии. Не доделано: turns/manual naming parity и real model acceptance.
 - [x] speaker-camera mapping задаётся на экране «Материал» и `uvf cameras` (хранится в проекте, перекрывает `program.speaker_cameras`); общий план назначается так же (`@wide`, «Wide shot»).
 - [ ] **Приёмка:** правила 5.6 реализованы: camera_id, minimum shot, coverage fallback, manual precedence, наложения и частые перебросы → общий план, вставка общего в длинный план (`max_shot_s`), упреждение реза `cut_lead_s`. Не проверена реальная оценка переключений.
 - [ ] **Приёмка:** retimed multicam/voice/ambience/speaker selection и XMEML lanes реализованы, generated FCPXML прошёл 1.9 DTD. Не проверены импорт/переключение/playback в NLE.
@@ -1007,7 +1007,7 @@ release-база, её квалификация в этом окружении �
 
 **Задачи:**
 
-- [ ] **Частично:** provider/cache/session/retries/role routing есть; `tools/migrate_settings.py` переносит старые настройки по таблице 6.3 с отчётом по каждому ключу. Разделы `fetch` (формат, качество, cookies, повторы, скорость, фильтры канала) и `batch` (уведомления, минимум свободного места) работают и принимают ключи `youtube.*`/`autonomy.*`; заменённые ключи получают в отчёте конкретную замену. Не доделано: часть reels/llm ключей (llama service tuning, watchdog, clip tiers, subtitle styling) и phase-wide model reuse.
+- [ ] **Частично:** provider/cache/session/retries/role routing есть; `tools/migrate_settings.py` переносит старые настройки по таблице 6.3 с отчётом по каждому ключу. Разделы `fetch` (формат, качество, cookies, повторы, скорость, фильтры канала) и `batch` (уведомления, минимум свободного места) работают и принимают ключи `youtube.*`/`autonomy.*`; заменённые ключи получают в отчёте конкретную замену. Ключи llama service tuning, watchdog, параметры по ролям и subtitle styling переносятся. Не доделано: clip tiers, judge context/diversity, subtitle whisper_sync и phase-wide model reuse.
 - [x] Вычитка/realignment, статья и term-check интеграция реализованы: ручные offline fixes, отдельный network opt-in, кэш и отчёт. Реальная приёмка отдельно.
 - [ ] **Частично:** verified selection/refine/judge/ranking/context, role routing и content-based audio probes/cache реализованы. Voice/placement/edited mapping позволяют работать без постоянного мастера/program. Без voice WAV анализ воспроизводит голос из сырого рекордера через `AudioWarpMap` (raw warp replay). Не доделано: полный legacy settings и moments golden parity.
 - [ ] **Частично:** source/program reels, captions и isolated tracking/fallback есть. Не доделано: полный render parity, реальные vision/frozen inference и визуальная приёмка.
@@ -1031,18 +1031,18 @@ release-база, её квалификация в этом окружении �
 - [ ] **Приёмка:** modules manager/recipes/GUI/progress/cancel/locks есть; планировщик проверяет требования каждого запускаемого этапа (ffmpeg, faster-whisper, модули, модели, управляемый llama), `uvf plan`/`run` называют недостающее и как установить, `run` не запускает этап без обязательного, экран плана ведёт кнопкой в «Модули и модели» с предвыбранной позицией. Не проверены реальные ML установки/запуски.
 - [x] YuNet/Light-ASD, Whisper (base…large-v3-turbo) и Gemma 4 GGUF загружаются из приложения: закреплённые ревизии, проверка хэшей, докачка, отмена, подстановка в настройки; мастер первого запуска показывает скачанное, предлагает large-v3-turbo и сохраняет выбранные Whisper/GGUF в проект. Реальная загрузка на чистой машине — приёмка фазы.
 - [ ] **Частично:** Linux frozen, setup wizard и local install script (binary/link/desktop entry) есть; same-host installed smoke пройден. Не доделано: dependency bundling, clean-machine/Python 3.12 и Windows/macOS; бинарник требует rebuild после последних guards.
-- [ ] **Частично:** compute probe/recommendations есть. Не доделано: измеряемое memory/performance autotuning Whisper/llama.
+- [ ] **Приёмка:** compute probe и измеряемая автонастройка (`uvf tune`, кнопка в настройках): Whisper тип × batch и llama слои × batch/ubatch в отдельных процессах, пик видеопамяти через nvidia-smi, рекомендации с запасом памяти. Реальный CPU-прогон пройден; GPU-прогон не выполнялся.
 
 **Готово, когда:** на чистой машине установщик → первый запуск → проект из фикстур проходит без ручной установки чего-либо, кроме драйвера NVIDIA.
 
 ### Фаза 7. Дальше (по приоритету)
 
-- [ ] **Частично:** source-video reels есть; рилсы из таймлайна переключают ракурс по спикерам той же политикой камер, что программа (`reels.speaker_angles`). Не доделано: per-reel framing и instant crop preview.
+- [ ] **Частично:** source-video reels есть; рилсы из таймлайна переключают ракурс по спикерам той же политикой камер, что программа (`reels.speaker_angles`). Per-reel framing (`uvf reel`, «Только этот рилс» в редакторе) и мгновенный предпросмотр кадра по неотрезанному кадру рилса сделаны; визуальная приёмка отдельно.
 - [ ] **Приёмка:** vision авто-привязка камер к спикерам реализована (окна реплик → YuNet + Light-ASD в vision-модуле → контраст «говорит в своих репликах», общий план по ≥2 лицам; `uvf cameras --suggest [--apply]`, кнопка на «Материале», ручной выбор не перезаписывается). Не запускалась на реальных моделях и записи.
 - [ ] **Приёмка:** OTIO-экспорт (`export.targets: otio`) реализован без новых runtime-зависимостей и читается OpenTimelineIO 0.18; импорт в DaVinci Resolve не проверен.
-- [ ] **Не выполнено:** MLX/VideoToolbox на Mac.
+- [ ] **Приёмка:** MLX Whisper (`transcribe.device=mlx`, extra `[mlx]`) и VideoToolbox (`program.encoder=videotoolbox`, auto на macOS с откатом на libx264) реализованы и покрыты тестами на подменах; на Mac не запускались.
 - [ ] **Частично:** нативный subtitle editor есть; последующие расширения/визуальная приёмка остаются.
-- [ ] **Частично:** −14 LUFS (двухпроходный loudnorm), обложки (кадр рилса) и YouTube most-replayed (heatmap из info.json как фактор ранжирования) реализованы. Не доделано: отдельный hook-title layout и аудиограмма.
+- [ ] **Частично:** −14 LUFS (двухпроходный loudnorm), обложки (кадр рилса) и YouTube most-replayed (heatmap из info.json как фактор ранжирования) реализованы. Hook-title layout и аудиограмма (`reels.layout`) и Forge-пресеты субтитров (`reels.caption_preset`) реализованы; визуальная приёмка отдельно.
 
 ---
 
