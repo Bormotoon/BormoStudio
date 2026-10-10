@@ -7,7 +7,8 @@ last piece or pad silence; silence has no invertible source-time mapping.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from studio.core.timeline import AudioWarpMap, AudioWarpPiece, TimeDomain
 
@@ -18,6 +19,9 @@ class RenderedAudioPlan:
     duration_s: float
     lead_silence_s: float
     tail_silence_s: float
+    # Acoustic refinement report (``sync_refine``) and the warnings it raised.
+    refine: dict[str, Any] | None = None
+    warnings: tuple[str, ...] = field(default=())
 
 
 def adapt_piece_plan(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from studio.core.project import Asset, AssetRole, Project, stable_fingerprint
@@ -13,6 +14,7 @@ from studio.stages.base import Decision, GpuUse, Requirement, StageContext, Stag
 from studio.stages.sync_alignment import align_sources
 from studio.stages.sync_engine import render_aligned_clip
 from studio.stages.sync_geometry import PieceConfig
+from studio.stages.sync_refine import RefineSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +206,8 @@ def _render_complex(context: StageContext) -> StageOutput:
         project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
     )
     repair_sources = {}
+    refine_reports: dict[str, Any] = {}
+    stage_warnings: list[str] = []
     for camera, candidate in zip(cameras, camera_transcripts, strict=True):
         available = [asset for asset in recorders if (camera.id, asset.id) in fits]
         recorder = available[0]
@@ -216,6 +220,7 @@ def _render_complex(context: StageContext) -> StageOutput:
             max_drift_ms=float(sync.get("max_drift_ms", 20.0)),
         )
         strategy = int(sync.get("strategy", 3)) if selected == "complex" else 1
+        refine = refine_settings(sync, camera)
         plan = render_aligned_clip(
             alignment, PieceConfig(), source, voice,
             clip_duration_s=candidate.duration, recorder_duration_s=transcript.duration,
@@ -224,7 +229,12 @@ def _render_complex(context: StageContext) -> StageOutput:
             source_asset_id=recorder.id, target_asset_id=camera.id,
             channels=int(recorder.manual.get("media_info", {}).get("audio_channels") or 1),
             camera_audio=project.source_dir / camera.path if sync.get("boundary_flex") else None,
+            refine_audio=project.source_dir / camera.path if refine else None,
+            refine=refine, label=Path(camera.path).name,
         )
+        if plan.refine is not None:
+            refine_reports[camera.id] = plan.refine
+        stage_warnings.extend(plan.warnings)
         warps.append(plan.warp)
         artifacts.append(voice)
         outputs[f"sync:{camera.id}"] = [voice]
@@ -246,7 +256,12 @@ def _render_complex(context: StageContext) -> StageOutput:
                 channels=int(extra.manual.get("media_info", {}).get("audio_channels") or 1),
                 camera_audio=(project.source_dir / camera.path
                               if sync.get("boundary_flex") else None),
+                refine_audio=project.source_dir / camera.path if refine else None,
+                refine=refine, label=f"{Path(camera.path).name}/{Path(extra.path).name}",
             )
+            if extra_plan.refine is not None:
+                refine_reports[f"{camera.id}:{extra.id}"] = extra_plan.refine
+            stage_warnings.extend(extra_plan.warnings)
             warps.append(extra_plan.warp)
             artifacts.append(extra_voice)
             choices.append((extra.id, extra_voice, fitted.residual_ms, fitted.inliers))
@@ -280,6 +295,7 @@ def _render_complex(context: StageContext) -> StageOutput:
                    for camera in cameras},
         "padding": "silence is outside invertible source maps",
         "rejected_pairs": rejected,
+        "acoustic_refine": refine_reports,
     }, indent=2) + "\n", encoding="utf-8")
     artifacts.append(report)
     if sync.get("voice_enhance", "off") != "off" or sync.get("ambience"):
@@ -315,7 +331,7 @@ def _render_complex(context: StageContext) -> StageOutput:
                 dict(zip([camera.id for camera in cameras], camera_transcripts, strict=True)),
                 {camera.id: project.source_dir / camera.path for camera in cameras},
                 repair_sources, report.parent / "repair", checks[-1],
-                context.settings.get("transcribe", {}),
+                context.settings.get("transcribe", {}), sync,
             )
             artifacts.extend(repair_artifacts)
             outputs["repair"] = list(repair_artifacts)
@@ -380,7 +396,7 @@ def _render_complex(context: StageContext) -> StageOutput:
     report.write_text(json.dumps(report_data, indent=2) + "\n", encoding="utf-8")
     return StageOutput(tuple(artifacts), {
         "placements": placements, "audio_warp_maps": warps, "outputs": outputs,
-    })
+    }, tuple(stage_warnings))
 
 
 def _run_camera_placement(context: StageContext) -> StageOutput:
@@ -437,6 +453,16 @@ def _place_cameras(context: StageContext) -> StageOutput:
     return StageOutput((output,), {"placements": placements, "audio_warp_maps": [],
                                   "outputs": {key: paths for key, paths in project.outputs.items()
                                               if not key.startswith("sync:")}})
+
+
+def refine_settings(sync: dict[str, Any], camera: Asset) -> RefineSettings | None:
+    """Acoustic plan refinement for ``camera``, or ``None`` when off or it has no sound."""
+    if sync.get("acoustic_refine", "auto") == "off":
+        return None
+    info = camera.manual.get("media_info", {})
+    if info and info.get("audio_stream_index") is None and not info.get("audio_channels"):
+        return None
+    return RefineSettings.from_sync(sync, PieceConfig().seam_snap_max_s)
 
 
 def fit_alignment(anchors: list[TextAnchor]) -> tuple[float, float, float]:

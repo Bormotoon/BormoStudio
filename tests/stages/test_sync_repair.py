@@ -33,7 +33,7 @@ def test_repair_requires_both_checks_and_publishes_matching_map(
 
     def render(*args, **kwargs):
         args[3].write_bytes(b"candidate PCM")
-        return SimpleNamespace(warp=warp)
+        return SimpleNamespace(warp=warp, refine=None)
 
     with ExitStack() as stack:
         factory = stack.enter_context(patch("studio.stages.sync_repair.WhisperEngine"))

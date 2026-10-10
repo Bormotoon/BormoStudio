@@ -81,6 +81,8 @@ def execute(
             raise ValueError(f"stage returned unknown project field: {key}")
         setattr(project, key, value)
     project.save(result_project)
+    for message in output.warnings:
+        _emit(StageEvent(EventType.WARNING, stage_id, {"message": message}))
     for artifact in output.artifacts:
         _emit(StageEvent(EventType.ARTIFACT, stage_id, {"path": str(artifact)}))
     _emit(StageEvent(EventType.DONE, stage_id, {"status": "ok", "output": str(result_project)}))

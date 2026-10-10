@@ -108,6 +108,12 @@ def _run_pipeline(
     def forward(event: StageEvent) -> None:
         print(event.to_json(), flush=True)
 
+    def report(event: StageEvent) -> None:
+        if stream:
+            forward(event)
+        elif event.type is EventType.WARNING:
+            print(f"{event.stage}: {event.payload.get('message', '')}", file=sys.stderr)
+
     with project_lock(project.work_dir), ExitStack() as cleanup:
         if batch_session is None:
             session = ManagedLlamaSession(
@@ -172,7 +178,7 @@ def _run_pipeline(
                     fingerprint_parts=fingerprint_parts(
                         registry[candidate.stage_id], project, settings
                     ),
-                    on_event=forward if stream else None,
+                    on_event=report,
                     cancelled=lambda: cancel_file is not None and cancel_file.exists(),
                 )
             except StageProcessError as exc:

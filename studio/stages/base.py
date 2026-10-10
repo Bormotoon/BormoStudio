@@ -56,6 +56,8 @@ class Decision:
 class StageOutput:
     artifacts: tuple[Path, ...] = ()
     project_changes: dict[str, Any] = field(default_factory=dict)
+    # Published as ``warning`` events: things the user should look at.
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
