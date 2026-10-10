@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,9 +18,15 @@ from platformdirs import user_cache_path
 from studio.core.digest import file_digest
 from studio.core.project import Project, stable_fingerprint
 from studio.core.transcript import Segment, Transcript, Word, to_srt
+from studio.core.transcript_sanity import (
+    SEGMENTATION_VERSION,
+    repair_detached_words,
+    speech_clips,
+    suspect_count,
+)
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 
-CACHE_SCHEMA = "studio/transcript-cache/2"
+CACHE_SCHEMA = "studio/transcript-cache/3"
 TEMPERATURES = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
 
@@ -40,6 +47,8 @@ class TranscribeSettings:
     no_repeat_ngram_size: int = 3
     keep_fillers: bool = True
     use_cache: bool = True
+    vad_merge_gap_s: float = 1.5
+    max_word_gap_s: float = 2.0
 
     @classmethod
     def from_mapping(cls, data: object) -> TranscribeSettings:
@@ -63,6 +72,8 @@ class TranscribeSettings:
             no_repeat_ngram_size=int(values.get("no_repeat_ngram_size", 3)),
             keep_fillers=bool(values.get("keep_fillers", True)),
             use_cache=bool(values.get("use_cache", True)),
+            vad_merge_gap_s=float(values.get("vad_merge_gap_s", 1.5)),
+            max_word_gap_s=float(values.get("max_word_gap_s", 2.0)),
         )
 
     def prompt(self) -> str:
@@ -121,10 +132,14 @@ class FasterWhisperBackend:
 
     def _transcribe_once(self, audio: Path, settings: TranscribeSettings) -> Transcript:
         model = self._ensure_model()
+        samples, clips = self._speech_clips(audio, settings)
+        if not clips:
+            return Transcript(audio, settings.language or "", len(samples) / 16000, [],
+                              settings.model, self.device, self.compute_type, settings.mode)
         kwargs: dict[str, Any] = {
             "language": settings.language,
             "word_timestamps": True,
-            "vad_filter": True,
+            "vad_filter": False,
             "temperature": TEMPERATURES,
             "compression_ratio_threshold": 2.4,
             "log_prob_threshold": -1.0,
@@ -139,13 +154,17 @@ class FasterWhisperBackend:
                 beam_size=settings.quality_beam_size,
                 condition_on_previous_text=True,
             )
-            generated, info = model.transcribe(str(audio), **kwargs)
+            generated, info = model.transcribe(
+                samples, clip_timestamps=[value for clip in clips for value in clip], **kwargs
+            )
         else:
             from faster_whisper import BatchedInferencePipeline  # type: ignore[import-not-found]
 
             kwargs.update(beam_size=settings.beam_size, condition_on_previous_text=False)
             generated, info = BatchedInferencePipeline(model=model).transcribe(
-                str(audio), batch_size=max(1, settings.batch_size), **kwargs
+                samples, batch_size=max(1, settings.batch_size),
+                clip_timestamps=[{"start": start, "end": end} for start, end in clips],
+                **kwargs,
             )
         segments = [
             Segment(
@@ -174,6 +193,31 @@ class FasterWhisperBackend:
             device=self.device,
             compute_type=self.compute_type,
             mode=settings.mode,
+        )
+
+    @staticmethod
+    def _speech_clips(
+        audio: Path, settings: TranscribeSettings
+    ) -> tuple[Any, list[tuple[float, float]]]:
+        """Decoded 16 kHz samples and Studio's own VAD clips (see ``speech_clips``).
+
+        faster-whisper would glue fragments into 30 s chunks across any silence
+        and give a phrase's first word the time of a noise burst minutes
+        earlier. A clip is a real range of the file, so word times need no
+        restoring.
+        """
+        from faster_whisper import decode_audio  # type: ignore[import-not-found]
+        from faster_whisper.vad import (  # type: ignore[import-not-found]
+            VadOptions,
+            get_speech_timestamps,
+        )
+
+        samples = decode_audio(str(audio), sampling_rate=16000)
+        fragments = get_speech_timestamps(
+            samples, VadOptions(max_speech_duration_s=30, min_silence_duration_ms=160))
+        return samples, speech_clips(
+            [(item["start"] / 16000, item["end"] / 16000) for item in fragments],
+            merge_gap_s=settings.vad_merge_gap_s,
         )
 
     def unload(self) -> None:
@@ -288,7 +332,7 @@ class WhisperEngine:
                 cached.source_audio = path
                 return cached
         if stream_index is None:
-            transcript = self.backend.transcribe(path, self.settings)
+            transcript = self._sane(self.backend.transcribe(path, self.settings), path)
         else:
             if (not isinstance(stream_index, int)
                     or isinstance(stream_index, bool) or stream_index < 0):
@@ -301,16 +345,22 @@ class WhisperEngine:
                      "-c:a", "pcm_s16le", str(decoded)],
                     check=True, capture_output=True,
                 )
-                transcript = self.backend.transcribe(decoded, self.settings)
+                transcript = self._sane(self.backend.transcribe(decoded, self.settings), decoded)
         transcript.source_audio = path
         if self.settings.use_cache:
             self._save(cache_path, transcript)
         return transcript
 
+    def _sane(self, transcript: Transcript, audio: Path) -> Transcript:
+        """Repair words torn from their phrase (any backend); see ``transcript_sanity``."""
+        return repair_detached_words(transcript, energy_probe(audio),
+                                     max_word_gap_s=self.settings.max_word_gap_s)
+
     def _key(self, path: Path, stream_index: int | None) -> str:
         identity = _sha256(path, self.digest_cache)
         return stable_fingerprint(
             CACHE_SCHEMA,
+            SEGMENTATION_VERSION,
             identity,
             stream_index,
             self.settings,
@@ -383,7 +433,8 @@ class TranscribeStage:
                 if source is not None and source.is_file() else {"missing": True}
             )
         return stable_fingerprint(
-            "transcribe-v3", content, identities, settings.get("transcribe", {}),
+            "transcribe-v4", SEGMENTATION_VERSION, content, identities,
+            settings.get("transcribe", {}),
         )
 
     def explain_stale(
@@ -404,6 +455,7 @@ class TranscribeStage:
         settings = TranscribeSettings.from_mapping(context.settings.get("transcribe", {}))
         engine = WhisperEngine(settings, digest_cache=context.project.work_dir)
         artifacts: list[Path] = []
+        warnings: list[str] = []
         transcripts = dict(context.project.transcripts)
         for asset_id in requirements.get("transcripts", []):
             asset = asset_by_id[asset_id]
@@ -416,7 +468,11 @@ class TranscribeStage:
             srt.write_text(to_srt(transcript), encoding="utf-8")
             artifacts.extend((output, srt))
             transcripts[asset_id] = output
-        return StageOutput(tuple(artifacts), {"transcripts": transcripts})
+            if suspect_count(transcript):
+                words = ", ".join(f"«{item['text']}» at {item['start']:.1f} s"
+                                  for item in transcript.metadata["suspect_words"][:5])
+                warnings.append(f"{asset.path}: words placed in silence, check them: {words}")
+        return StageOutput(tuple(artifacts), {"transcripts": transcripts}, tuple(warnings))
 
 
 def mlx_available() -> bool:
@@ -426,6 +482,32 @@ def mlx_available() -> bool:
 
     return (sys.platform == "darwin" and platform.machine() == "arm64"
             and importlib.util.find_spec("mlx_whisper") is not None)
+
+
+def energy_probe(audio: Path) -> Callable[[float, float], float]:
+    """RMS level (dBFS) of ``[start, end]`` of ``audio``, decoded on demand."""
+
+    def energy(start: float, end: float) -> float:
+        start = max(0.0, start)
+        if end <= start:
+            return -120.0
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{start:.3f}", "-t",
+                 f"{end - start:.3f}", "-i", str(audio), "-vn", "-ac", "1", "-ar", "16000",
+                 "-f", "f32le", "-"],
+                check=True, capture_output=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return 0.0  # unknown: treat as sound, so nothing is marked silent
+        import numpy as np
+
+        samples = np.frombuffer(result.stdout, dtype=np.float32)
+        if not samples.size:
+            return -120.0
+        return float(20 * np.log10(np.sqrt(np.mean(samples.astype(np.float64) ** 2)) + 1e-9))
+
+    return energy
 
 
 def _resolve_device(requested: str) -> str:

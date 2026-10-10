@@ -80,9 +80,13 @@ def test_quality_backend_passes_glossary_controls_and_preserves_unaligned_text()
     model.transcribe.return_value = ([SimpleNamespace(
         start=0, end=1, text="Unaligned speech.", words=[], avg_logprob=-0.2,
     )], SimpleNamespace(language="en", duration=1))
-    with patch.object(backend, "_ensure_model", return_value=model):
+    with patch.object(backend, "_ensure_model", return_value=model), patch.object(
+        backend, "_speech_clips", return_value=([0.0] * 16000, [(0.0, 1.0)])
+    ):
         transcript = backend.transcribe(Path("audio.wav"), settings)
     assert model.transcribe.call_args.kwargs["hotwords"] == "UVF"
+    assert model.transcribe.call_args.kwargs["clip_timestamps"] == [0.0, 1.0]
+    assert model.transcribe.call_args.kwargs["vad_filter"] is False
     assert model.transcribe.call_args.kwargs["repetition_penalty"] == 1.1
     assert model.transcribe.call_args.kwargs["no_repeat_ngram_size"] == 3
     assert transcript.segments[0].text == "Unaligned speech."

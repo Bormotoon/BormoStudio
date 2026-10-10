@@ -72,6 +72,10 @@ class TranscribeSettings:
     repetition_penalty: float = 1.1
     no_repeat_ngram_size: int = 3
     keep_fillers: bool = True
+    # Whisper clips merge VAD fragments only across pauses this short.
+    vad_merge_gap_s: float = 1.5
+    # Segments split at longer word gaps; 1-2 word series beyond them are checked.
+    max_word_gap_s: float = 2.0
 
 
 @dataclass(slots=True)
@@ -387,6 +391,8 @@ def validate_settings(settings: Settings) -> None:
     _one_of("transcribe.device", settings.transcribe.device, {"auto", "cuda", "cpu", "mlx"})
     _one_of("transcribe.mode", settings.transcribe.mode, {"fast", "quality"})
     _positive("transcribe.repetition_penalty", settings.transcribe.repetition_penalty)
+    _positive("transcribe.vad_merge_gap_s", settings.transcribe.vad_merge_gap_s)
+    _positive("transcribe.max_word_gap_s", settings.transcribe.max_word_gap_s)
     if any(not key.strip() or value < 0
            for key, value in settings.transcribe.audio_streams.items()):
         raise SettingsError("transcribe.audio_streams requires names and non-negative indices")
