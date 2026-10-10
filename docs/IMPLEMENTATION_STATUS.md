@@ -118,6 +118,15 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
   Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
 
+### OTIO export — 2026-10-10
+
+- `export_otio.py` writes OTIO JSON (Timeline/Stack/Track/Clip.1/Gap/Marker.1)
+  from the neutral sequence on whole sequence frames: video lanes, embedded camera
+  audio lanes (disabled where synced voice replaces it), voice lanes, markers,
+  `LinearTimeWarp` for drift-corrected clips; overlapping clips on one lane fail.
+  Opt-in through `export.targets: otio`. OpenTimelineIO 0.18 reads the file (dev
+  dependency for that test). Resolve import not verified.
+
 ### Reel loudness, covers and most-replayed — 2026-10-10
 
 - `reel_finish.py`: two-pass EBU R128 `loudnorm` to `reels.loudness_lufs`

@@ -306,6 +306,15 @@ voice or the transcript source through its placement, so no master is required.
 crossfades that keep the exact program length: constant-power on edit joins,
 linear where only the camera changes. `0` restores hard joins.
 
+## DaVinci Resolve (OTIO)
+
+Add `otio` to `export.targets` (for example
+`--set 'export.targets=[fcpxml, xmeml, otio]'`) to write `export/<name>.otio`
+next to the XML files. It holds the same frame-aligned clips, gaps, synchronized
+voice lanes, muted camera sound and markers; import it in Resolve with
+**File → Import → Timeline**. Drift-corrected clips carry an OTIO
+`LinearTimeWarp`. Import into Resolve itself has not been verified yet.
+
 ## Rough-cut presets and word check
 
 Pause thresholds come in packaged presets: `roughcut-gentle`, `roughcut-balanced`

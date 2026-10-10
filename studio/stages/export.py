@@ -123,6 +123,10 @@ class ExportStage:
         if "xmeml" in targets:
             write_xmeml(sequence, xmeml)
             artifacts.append(xmeml)
+        if "otio" in targets:
+            from studio.stages.export_otio import write_otio
+
+            artifacts.append(write_otio(sequence, fcpxml.with_suffix(".otio")))
         outputs = {**context.project.outputs, "export": artifacts}
         return StageOutput(tuple(artifacts), {"outputs": outputs})
 

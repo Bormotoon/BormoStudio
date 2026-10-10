@@ -1039,7 +1039,7 @@ release-база, её квалификация в этом окружении �
 
 - [ ] **Частично:** source-video reels есть; не доделан speaker-angle выбор для рилсов, per-reel framing и instant crop preview.
 - [ ] **Не выполнено:** vision авто-привязка камер к спикерам.
-- [ ] **Не выполнено:** OTIO/DaVinci Resolve экспорт.
+- [ ] **Приёмка:** OTIO-экспорт (`export.targets: otio`) реализован без новых runtime-зависимостей и читается OpenTimelineIO 0.18; импорт в DaVinci Resolve не проверен.
 - [ ] **Не выполнено:** MLX/VideoToolbox на Mac.
 - [ ] **Частично:** нативный subtitle editor есть; последующие расширения/визуальная приёмка остаются.
 - [ ] **Частично:** −14 LUFS (двухпроходный loudnorm), обложки (кадр рилса) и YouTube most-replayed (heatmap из info.json как фактор ранжирования) реализованы. Не доделано: отдельный hook-title layout и аудиограмма.
