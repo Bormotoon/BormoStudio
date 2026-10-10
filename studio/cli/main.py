@@ -391,10 +391,16 @@ def _suggest_cameras(
 
 
 def _tracks_document(project: Project) -> dict[str, Any]:
+    from studio.core.channels import describe
+
+    analyses = {asset.id: asset.manual.get("media_info", {}).get("channel_analysis")
+                for asset in project.assets}
     return {
         "tracks": [
             {"id": track.id, "asset_id": track.asset_id, "channels": list(track.channels),
-             "speaker": track.speaker, "name": track.name, "enabled": track.enabled}
+             "speaker": track.speaker, "name": track.name, "enabled": track.enabled,
+             **({"channel_analysis": describe(analyses[track.asset_id])}
+                if analyses.get(track.asset_id) else {})}
             for track in project.recorder_tracks
         ],
         "speaker_cameras": dict(project.speaker_cameras),

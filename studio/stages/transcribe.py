@@ -15,6 +15,7 @@ from typing import Any, Protocol
 
 from platformdirs import user_cache_path
 
+from studio.core.channels import effective_audio
 from studio.core.digest import file_digest
 from studio.core.project import Project, stable_fingerprint
 from studio.core.transcript import Segment, Transcript, Word, to_srt
@@ -324,24 +325,30 @@ class WhisperEngine:
         self.cache_dir = cache_dir or user_cache_path("studio") / "transcripts"
         self.digest_cache = digest_cache
 
-    def transcribe(self, path: Path, stream_index: int | None = None) -> Transcript:
-        cache_path = self.cache_dir / f"{self._key(path, stream_index)}.json"
+    def transcribe(
+        self, path: Path, stream_index: int | None = None, audio_filter: str | None = None,
+    ) -> Transcript:
+        """Transcribe ``path``; ``audio_filter`` (an ffmpeg ``pan``) picks the channel
+        Whisper hears instead of a downmix that halves a dead-channel recording."""
+        cache_path = self.cache_dir / f"{self._key(path, stream_index, audio_filter)}.json"
         if self.settings.use_cache:
             cached = self._load(cache_path)
             if cached is not None:
                 cached.source_audio = path
                 return cached
-        if stream_index is None:
+        if stream_index is None and audio_filter is None:
             transcript = self._sane(self.backend.transcribe(path, self.settings), path)
         else:
-            if (not isinstance(stream_index, int)
+            if stream_index is not None and (not isinstance(stream_index, int)
                     or isinstance(stream_index, bool) or stream_index < 0):
                 raise ValueError("audio stream index must be a non-negative integer")
             with tempfile.TemporaryDirectory(prefix="uvf-transcribe-") as temporary:
                 decoded = Path(temporary) / "selected.wav"
+                mono = ["-af", audio_filter] if audio_filter else ["-ac", "1"]
+                stream = f"0:{stream_index}" if stream_index is not None else "0:a:0"
                 subprocess.run(
                     ["ffmpeg", "-nostdin", "-v", "error", "-i", str(path),
-                     "-map", f"0:{stream_index}", "-vn", "-ac", "1", "-ar", "16000",
+                     "-map", stream, "-vn", *mono, "-ar", "16000",
                      "-c:a", "pcm_s16le", str(decoded)],
                     check=True, capture_output=True,
                 )
@@ -356,13 +363,13 @@ class WhisperEngine:
         return repair_detached_words(transcript, energy_probe(audio),
                                      max_word_gap_s=self.settings.max_word_gap_s)
 
-    def _key(self, path: Path, stream_index: int | None) -> str:
+    def _key(self, path: Path, stream_index: int | None, audio_filter: str | None = None) -> str:
         identity = _sha256(path, self.digest_cache)
         return stable_fingerprint(
             CACHE_SCHEMA,
             SEGMENTATION_VERSION,
             identity,
-            stream_index,
+            stream_index if audio_filter is None else (stream_index, audio_filter),
             self.settings,
             self.backend.device,
             self.backend.compute_type,
@@ -461,7 +468,9 @@ class TranscribeStage:
             asset = asset_by_id[asset_id]
             source = context.project.source_dir / asset.path
             stream = requirements.get("audio_streams", {}).get(asset_id)
-            transcript = engine.transcribe(source, stream)
+            pan = effective_audio(asset).pan
+            transcript = engine.transcribe(source, stream, pan) if pan else engine.transcribe(
+                source, stream)
             output = context.work_dir / "stages" / "transcribe" / f"{asset_id}.json"
             srt = output.with_suffix(".srt")
             transcript.save(output)

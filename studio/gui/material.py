@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from studio.core.channels import describe
 from studio.core.project import AssetRole, Project
 from studio.core.recorder_tracks import channel_count, project_speakers
 from studio.stages.camera_selection import WIDE_SHOT
@@ -183,12 +184,19 @@ class MaterialPage(QWidget):
             child.setFlags(child.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
         self.tree.expandAll()
         self.tracks.clear()
+        assets_by_id = {asset.id: asset for asset in project.assets}
         for track in project.recorder_tracks:
             item = QTreeWidgetItem(self.tracks, [
                 track.name or track.asset_id, ",".join(str(c) for c in track.channels),
                 track.speaker or "", "yes" if track.enabled else "no",
             ])
             item.setData(0, ASSET_ROLE, track.asset_id)
+            asset = assets_by_id.get(track.asset_id)
+            analysis = describe(
+                asset.manual.get("media_info", {}).get("channel_analysis") if asset else None)
+            if analysis:
+                for column in range(item.columnCount()):
+                    item.setToolTip(column, f"Channels: {analysis}")
         self.cameras.clear()
         for speaker, camera in sorted(project.speaker_cameras.items()):
             label = "Wide shot" if speaker == WIDE_SHOT else speaker

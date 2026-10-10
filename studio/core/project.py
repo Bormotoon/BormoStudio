@@ -59,6 +59,9 @@ class RecorderTrack:
     speaker: str | None = None
     name: str = ""
     enabled: bool = True
+    # Set by an explicit user edit (uvf tracks / the material screen): a rescan
+    # never replaces such a lane with its own proposal.
+    manual: bool = False
 
     def __post_init__(self) -> None:
         self.channels = tuple(self.channels)
@@ -181,6 +184,7 @@ class Project:
                     speaker=item.get("speaker"),
                     name=str(item.get("name", "")),
                     enabled=bool(item.get("enabled", True)),
+                    manual=bool(item.get("manual", False)),
                 )
                 for item in data.get("recorder_tracks", [])
             ],

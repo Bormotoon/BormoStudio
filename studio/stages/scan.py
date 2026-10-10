@@ -28,7 +28,7 @@ class ScanStage:
     title = "Material scan"
     after: tuple[str, ...] = ()
     # Settings that can change this stage's result; they alone enter its fingerprint.
-    settings_keys: tuple[str, ...] = ("scan.grouping",)
+    settings_keys: tuple[str, ...] = ("scan.grouping", "scan.channel_analysis")
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
@@ -54,12 +54,15 @@ class ScanStage:
             for asset in project.assets
             if asset.manual.get("overrides")
         }
-        return stable_fingerprint("scan-v4", identities, overrides,
+        return stable_fingerprint("scan-v5", identities, overrides,
                                   select_settings(settings, self.settings_keys))
 
     def run(self, context: StageContext) -> StageOutput:
         assets, warnings = scan(context.project.source_dir)
         assets = apply_manual_overrides(context.project.assets, assets)
+        conf = context.settings.get("scan", {})
+        if not isinstance(conf, dict) or conf.get("channel_analysis", "auto") != "off":
+            analyze_assets(context.project.source_dir, assets)
         report = context.work_dir / "stages" / "scan" / "report.json"
         report.parent.mkdir(parents=True, exist_ok=True)
         import json
@@ -119,6 +122,30 @@ def scan(source_dir: Path) -> tuple[list[Asset], list[str]]:
         if kind is AssetKind.VIDEO and not info.audio_codec:
             warnings.append(f"{relative}: video has no audio; acoustic sync is unavailable")
     return assets, warnings
+
+
+def analyze_assets(source_dir: Path, assets: list[Asset]) -> None:
+    """Add ``media_info.channel_analysis`` to audio files with two or more channels."""
+    from studio.core.channels import analyze_channels
+
+    candidates = [
+        asset for asset in assets
+        if asset.kind is AssetKind.AUDIO
+        and int(asset.manual.get("media_info", {}).get("audio_channels") or 0) >= 2
+    ]
+
+    def analyze(asset: Asset) -> None:
+        info = asset.manual["media_info"]
+        analysis = analyze_channels(
+            source_dir / asset.path, channels=int(info["audio_channels"]),
+            duration_s=float(info.get("duration_s") or 0.0),
+            stream_index=info.get("audio_stream_index"),
+        )
+        if analysis is not None:
+            info["channel_analysis"] = analysis
+
+    with ThreadPoolExecutor(max_workers=min(4, max(1, len(candidates)))) as pool:
+        list(pool.map(analyze, candidates))
 
 
 def apply_manual_overrides(previous: list[Asset], scanned: list[Asset]) -> list[Asset]:

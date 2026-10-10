@@ -16,7 +16,21 @@ def channel_count(asset: Asset) -> int:
 
 
 def default_tracks(asset: Asset) -> list[RecorderTrack]:
-    return [RecorderTrack(asset.id, (channel,)) for channel in range(channel_count(asset))]
+    """One lane per distinct sound: identical or linked channels share a lane,
+    a silent input gets a disabled lane (see ``channel_analysis``)."""
+    analysis = asset.manual.get("media_info", {}).get("channel_analysis")
+    if not isinstance(analysis, dict) or not analysis.get("groups"):
+        return [RecorderTrack(asset.id, (channel,)) for channel in range(channel_count(asset))]
+    names = {"dual_mono": "mono: {n} identical channels",
+             "linked": "mono: main + safety copy"}
+    tracks = [
+        RecorderTrack(asset.id, tuple(group["channels"]),
+                      name=names.get(group["relation"], "").format(n=len(group["channels"])))
+        for group in analysis["groups"]
+    ]
+    tracks.extend(RecorderTrack(asset.id, (channel,), name="silent input", enabled=False)
+                  for channel in analysis.get("silent", []))
+    return sorted(tracks, key=lambda track: track.channels)
 
 
 def refresh_tracks(assets: list[Asset], previous: list[RecorderTrack]) -> list[RecorderTrack]:
@@ -25,6 +39,7 @@ def refresh_tracks(assets: list[Asset], previous: list[RecorderTrack]) -> list[R
     kept = [
         track for track in previous
         if track.asset_id in by_id and max(track.channels) < channel_count(by_id[track.asset_id])
+        and not _untouched_split(track, previous, by_id[track.asset_id])
     ]
     covered = {track.asset_id for track in kept}
     result = list(kept)
@@ -62,6 +77,7 @@ def set_track(
         None,
     )
     track = existing or RecorderTrack(asset_id, channels)
+    track.manual = True
     if speaker is not None:
         track.speaker = speaker.strip() or None
     if name is not None:
@@ -77,7 +93,7 @@ def set_track(
             remaining = tuple(item for item in other.channels if item not in channels)
             if remaining:
                 updated.append(RecorderTrack(
-                    asset_id, remaining, other.speaker, other.name, other.enabled
+                    asset_id, remaining, other.speaker, other.name, other.enabled, manual=True
                 ))
             continue
         updated.append(other)
@@ -110,3 +126,16 @@ def project_speakers(project: Project) -> list[str]:
     names = {track.speaker for track in project.recorder_tracks if track.speaker}
     names.update(project.speaker_cameras)
     return sorted(names)
+
+
+def _untouched_split(track: RecorderTrack, previous: list[RecorderTrack], asset: Asset) -> bool:
+    """A per-channel proposal nobody edited, for a file whose channels now group.
+
+    Such lanes predate channel analysis; the new proposal replaces them, while
+    any named, disabled or merged lane is a user choice and stays.
+    """
+    lanes = [item for item in previous if item.asset_id == asset.id]
+    plain = all(len(item.channels) == 1 and item.enabled and not item.speaker and not item.name
+                and not item.manual for item in lanes)
+    return plain and len(lanes) == channel_count(asset) and (
+        [item.channels for item in default_tracks(asset)] != [item.channels for item in lanes])

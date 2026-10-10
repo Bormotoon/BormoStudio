@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from studio.core.channels import effective_audio
 from studio.core.project import AssetRole, Project, describe_artifact, stable_fingerprint
 from studio.core.timeline import AudioWarpMap, SourcePlacement, TimeDomain
 from studio.core.transcript import Transcript, Word
@@ -277,10 +278,11 @@ def microphone_tracks(project: Project, conf: dict[str, object]) -> dict[str, st
         if named_assets and not _separate_session(asset.id, named_assets, placements, conf):
             # Unnamed files beside named ones (a backup recorder) stay out.
             continue
-        channels = int(asset.manual.get("media_info", {}).get("audio_channels") or 1)
-        if channels > 1 and conf.get("method", "auto") == "auto":
+        # Identical or linked channels are one microphone, not two speakers.
+        distinct = effective_audio(asset).channels or (0,)
+        if len(distinct) > 1 and conf.get("method", "auto") == "auto":
             continue
-        for channel in range(channels):
+        for channel in distinct:
             if f"{asset.id}:{channel}" not in disabled:
                 tracks[f"{asset.id}:{channel}"] = f"{asset.id}-ch{channel + 1}"
     for key, speaker in tracks.items():
