@@ -51,3 +51,52 @@ def test_main_window_has_native_subtitle_page() -> None:
     assert window.pages.widget(7) is window.modules_page
     window.close()
     app.processEvents()
+
+
+def test_per_reel_framing_and_instant_crop_preview(tmp_path: Path) -> None:
+    import json
+    import subprocess
+
+    from studio.core.framing import load_reel_overrides
+    from studio.gui.subtitles import crop_rect
+
+    app = QApplication.instance() or QApplication([])
+    folder = tmp_path / "work" / "stages" / "reel_render"
+    folder.mkdir(parents=True)
+    video = folder / "reel-001.mp4"
+    video.touch()
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=blue:s=320x180", "-frames:v", "1",
+                    str(folder / "reel-001-frame.jpg")], check=True)
+    path = video.with_suffix(".json")
+    Transcript(video, "en", 5, [Segment(1, 3, (Word("hello", 1, 3),))]).save(path)
+    report = folder / "render.json"
+    report.write_text(json.dumps({"schema_version": 1, "reels": [
+        {"video": "reel-001.mp4", "reel_key": "cand-1", "frame": "reel-001-frame.jpg"}]}))
+    project = Project(tmp_path, tmp_path / "work",
+                      outputs={"reel_render": [video, path, report]})
+    editor = SubtitleEditor()
+    editor.load_project(project)
+    assert not editor.frame_preview.image.isNull()
+    editor.framing.setCurrentText("crop")
+    editor.crop_x.setValue(0)
+    # The preview follows the controls before anything is rendered or saved.
+    assert editor.frame_preview.kept_rect() == crop_rect((320, 180), (1080, 1920), "crop", 0)
+    assert editor.frame_preview.kept_rect()[0] == 0
+    editor.crop_x.setValue(100)
+    x, _y, w, _h = editor.frame_preview.kept_rect()
+    assert round(x + w) == 320
+    editor.scope.setCurrentIndex(1)
+    editor.framing.setCurrentText("crop")
+    editor.crop_x.setValue(25)
+    editor.reel_title.setText("My hook")
+    assert editor.save()
+    assert load_reel_overrides(project.work_dir) == {
+        "cand-1": {"framing": "crop", "crop_x": 0.25, "tracking": False, "title": "My hook"}}
+    assert load_settings([project.work_dir / "settings.yaml"]).reels.framing == "source"
+    editor.scope.setCurrentIndex(0)
+    editor.reel_title.setText("")
+    assert editor.save()
+    assert load_reel_overrides(project.work_dir) == {}
+    editor.close()
+    app.processEvents()

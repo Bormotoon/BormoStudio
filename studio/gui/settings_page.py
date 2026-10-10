@@ -49,6 +49,7 @@ class SettingsPage(QWidget):
             ("transcribe", "device", "Whisper device", ["auto", "cpu", "cuda"]),
             ("speakers", "method", "Speakers", ["auto", "mics", "pyannote", "off"]),
             ("program", "encoder", "Video encoder", ["auto", "cpu", "nvenc"]),
+            ("reels", "layout", "Reel layout", ["video", "title", "audiogram"]),
         ):
             combo = QComboBox()
             combo.addItems(choices)

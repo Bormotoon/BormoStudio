@@ -12,7 +12,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from studio.core.framing import load_reel_overrides, overrides_path, reel_settings
 from studio.core.launch import frozen_root
+from studio.core.media import probe
 from studio.core.proc import run_logged
 from studio.core.project import Project, stable_fingerprint
 from studio.core.subtitles import load_edits, to_ass
@@ -21,6 +23,12 @@ from studio.core.transcript import Segment, Transcript, Word, to_srt
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 from studio.stages.program import render_project_program
 from studio.stages.reel_finish import normalize_loudness, render_cover
+from studio.stages.reel_layout import (
+    compose_title,
+    reel_title,
+    render_audiogram,
+    title_band_height,
+)
 from studio.stages.reels import _settings, _transcript_path
 
 
@@ -69,6 +77,9 @@ class ReelRenderStage:
         transcript = _transcript_path(project)
         if transcript:
             inputs.append(transcript)
+        overrides = overrides_path(project.work_dir)
+        if overrides.is_file():
+            inputs.append(overrides)
         saved = project.work_dir / "subtitles"
         if saved.is_dir():
             inputs.extend(sorted(saved.glob("*.json")))
@@ -83,7 +94,7 @@ class ReelRenderStage:
                 for name in ("face_detection_yunet_2023mar.onnx", "light_asd_talkset.model")
             )
         return stable_fingerprint(
-            "reel-render-v5",
+            "reel-render-v6",
             _settings(settings),
             settings.get("program", {}), project.speaker_cameras,
             project.to_dict()["assets"],
@@ -124,69 +135,50 @@ class ReelRenderStage:
         directory.mkdir(parents=True, exist_ok=True)
         artifacts: list[Path] = []
         entries = []
+        overrides = load_reel_overrides(context.project.work_dir)
+        fps = str(settings.get("render_fps", "25"))
         for number, moment in enumerate(moments, 1):
             start, end = float(moment["start"]), float(moment["end"])
             if not 0 <= start < end <= transcript.duration:
                 raise ValueError("moment is outside its transcript")
             stem = f"reel-{number:03d}"
+            key = str(moment.get("candidate_id") or stem)
+            override = overrides.get(key, overrides.get(stem))
+            reel = reel_settings(settings, override)
+            layout = str(reel.get("layout", "video"))
+            title_override = (override or {}).get("title")
+            title = reel_title(moment, reel, str(title_override) if title_override else None)
             video = directory / f"{stem}.mp4"
-            if transcript.time_domain is TimeDomain.TIMELINE:
-                render_project_program(
-                    context.project,
-                    reel_camera_plan(context.project, context.settings,
-                                     EditMap(stem, (KeepRange(start, end),))),
-                    video,
-                    encoder="cpu",
-                    fps=str(settings.get("render_fps", "25")),
-                )
-            elif transcript.time_domain is TimeDomain.EDITED:
-                sources = context.project.outputs.get("program", [])
-                if not sources:
-                    raise ValueError("edited moments require a rendered program")
-                result = run_logged(
-                    [
-                        "ffmpeg",
-                        "-nostdin",
-                        "-v",
-                        "error",
-                        "-y",
-                        "-ss",
-                        str(start),
-                        "-i",
-                        str(sources[0]),
-                        "-t",
-                        str(end - start),
-                        "-map",
-                        "0:v:0",
-                        "-map",
-                        "0:a:0?",
-                        "-vf",
-                        f"fps={settings.get('render_fps', '25')}",
-                        "-c:v",
-                        "libx264",
-                        "-preset",
-                        "fast",
-                        "-pix_fmt",
-                        "yuv420p",
-                        "-c:a",
-                        "aac",
-                        "-movflags",
-                        "+faststart",
-                        str(video),
-                    ],
-                    timeout=max(120, (end - start) * 20),
-                )
-                if result.returncode:
-                    raise RuntimeError(result.stderr)
+            frame, source_size = None, None
+            framing_report: dict[str, object] = {"tracking": "disabled"}
+            if layout == "audiogram":
+                with tempfile.TemporaryDirectory(prefix="uvf-reel-audio-") as folder:
+                    audio = Path(folder) / "audio.wav"
+                    reel_audio(context.project, transcript, start, end, audio)
+                    render_audiogram(audio, video, title, end - start, reel)
+                framing = "audiogram"
             else:
-                raise ValueError("reels require timeline or edited transcript times")
-            framing = str(settings.get("framing", "source"))
-            if framing != "source":
+                render_reel_source(context.project, context.settings, transcript,
+                                   start, end, stem, video, fps)
+                # The unframed still lets the editor preview any crop instantly.
+                frame = directory / f"{stem}-frame.jpg"
+                render_cover(video, frame, (end - start) / 3)
+                artifacts.append(frame)
+                info = probe(video)
+                source_size = [info.width, info.height]
+                framing = str(reel.get("framing", "source"))
                 framed = directory / f"{stem}-framed.mp4"
-                framing_report = reframe_video(video, framed, settings)
-                framed.replace(video)
-            else:
-                framing_report = {"tracking": "disabled"}
+                if layout == "title":
+                    area = {**reel, "height": int(reel.get("height", 1920))
+                            - title_band_height(reel)}
+                    if framing == "source":
+                        area["framing"] = "fit"
+                    framing_report = reframe_video(video, framed, area)
+                    compose_title(framed, video, title, end - start, reel)
+                    framed.unlink()
+                elif framing != "source":
+                    framing_report = reframe_video(video, framed, reel)
+                    framed.replace(video)
             lufs = float(settings.get("loudness_lufs", -14.0))
             loudness = normalize_loudness(video, lufs) if lufs else {"status": "source"}
             cover = None
@@ -210,7 +202,7 @@ class ReelRenderStage:
                 to_ass(
                     cues,
                     style,
-                    portrait=framing != "source"
+                    portrait=(framing != "source" or layout != "video")
                     and int(settings.get("height", 1920)) > int(settings.get("width", 1080)),
                 ),
                 encoding="utf-8",
@@ -233,9 +225,15 @@ class ReelRenderStage:
                     "source_start": start,
                     "source_end": end,
                     "source_time_domain": transcript.time_domain.value,
+                    "reel_key": key,
+                    "layout": layout,
+                    "title": title if layout != "video" else None,
                     "framing": framing,
                     "framing_report": framing_report,
-                    "crop_x": settings.get("crop_x", 0.5) if framing == "crop" else None,
+                    "crop_x": reel.get("crop_x", 0.5) if framing == "crop" else None,
+                    "frame": frame.name if frame else None,
+                    "source_size": source_size,
+                    "override": bool(override),
                     "loudness": loudness,
                     "cover": cover.name if cover else None,
                 }
@@ -249,6 +247,86 @@ class ReelRenderStage:
                 "outputs": {**context.project.outputs, "reel_render": artifacts},
             },
         )
+
+
+def render_reel_source(
+    project: Project, all_settings: dict[str, Any], transcript: Transcript,
+    start: float, end: float, stem: str, video: Path, fps: str,
+) -> None:
+    """The reel's unframed picture and sound from its transcript's time domain."""
+    if transcript.time_domain is TimeDomain.TIMELINE:
+        render_project_program(
+            project,
+            reel_camera_plan(project, all_settings,
+                             EditMap(stem, (KeepRange(start, end),))),
+            video,
+            encoder="cpu",
+            fps=fps,
+        )
+    elif transcript.time_domain is TimeDomain.EDITED:
+        sources = project.outputs.get("program", [])
+        if not sources:
+            raise ValueError("edited moments require a rendered program")
+        result = run_logged(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-ss",
+                str(start),
+                "-i",
+                str(sources[0]),
+                "-t",
+                str(end - start),
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-vf",
+                f"fps={fps}",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(video),
+            ],
+            timeout=max(120, (end - start) * 20),
+        )
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+    else:
+        raise ValueError("reels require timeline or edited transcript times")
+
+
+def reel_audio(
+    project: Project, transcript: Transcript, start: float, end: float, output: Path
+) -> None:
+    """The reel's sound alone, for layouts that need no camera."""
+    if transcript.time_domain is TimeDomain.TIMELINE:
+        from studio.core.preview import render_preview
+
+        render_preview(project, [(start, end)], output)
+        return
+    if transcript.time_domain is not TimeDomain.EDITED:
+        raise ValueError("reels require timeline or edited transcript times")
+    sources = project.outputs.get("program", [])
+    if not sources:
+        raise ValueError("edited moments require a rendered program")
+    result = run_logged(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", str(start), "-i", str(sources[0]),
+         "-t", str(end - start), "-map", "0:a:0", "-ar", "48000", str(output)],
+        timeout=max(120, (end - start) * 10),
+    )
+    if result.returncode:
+        raise RuntimeError(result.stderr)
 
 
 def clip_transcript(source: Transcript, start: float, end: float, video: Path) -> Transcript:

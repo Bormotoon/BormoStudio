@@ -242,3 +242,19 @@ def test_discovery_and_batch_pre_cancel(tmp_path: Path, capsys) -> None:
     assert report["status"] == "cancelled"
     assert all(item["status"] == "not_started" for item in report["projects"])
     assert not other.exists()
+
+
+def test_reel_command_edits_and_clears_overrides(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    import json as _json
+
+    assert main(["reel", str(tmp_path), "--reel", "c1", "--framing", "crop",
+                 "--crop-x", "0.3", "--title", "Hook"]) == 0
+    assert main(["reel", str(tmp_path), "--reel", "c1", "--tracking"]) == 0
+    capsys.readouterr()
+    assert main(["reel", str(tmp_path)]) == 0
+    assert _json.loads(capsys.readouterr().out) == {"reels": {"c1": {
+        "framing": "crop", "crop_x": 0.3, "title": "Hook", "tracking": True}}}
+    assert main(["reel", str(tmp_path), "--reel", "c1", "--crop-x", "4"]) == 2
+    capsys.readouterr()
+    assert main(["reel", str(tmp_path), "--reel", "c1", "--clear"]) == 0
+    assert _json.loads(capsys.readouterr().out) == {"reels": {}}

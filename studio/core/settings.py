@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import types
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
@@ -194,6 +195,16 @@ class ReelsSettings:
     replay: bool = True
     # Timeline reels switch to each speaker's camera (program camera policy).
     speaker_angles: bool = True
+    # "video" keeps the picture; "title" adds a top band with the hook/title;
+    # "audiogram" draws a waveform under the title (works without cameras).
+    layout: str = "video"
+    title_field: str = "hook"
+    title_band: float = 0.22
+    title_seconds: float = 0.0
+    title_font: str = "Montserrat Black"
+    title_color: str = "#FFFFFF"
+    background_color: str = "#111114"
+    waveform_color: str = "#FFFFFF"
 
 
 @dataclass(slots=True)
@@ -412,6 +423,7 @@ def validate_settings(settings: Settings) -> None:
             raise SettingsError(f"reels.{name} must be an even integer between 64 and 4096")
     if not math.isfinite(settings.reels.crop_x) or not 0 <= settings.reels.crop_x <= 1:
         raise SettingsError("reels.crop_x must be between 0 and 1")
+    _validate_reel_layout(settings.reels)
     if not settings.reels.base_url.strip() or not settings.reels.model.strip():
         raise SettingsError("reels.base_url and reels.model must not be empty")
     for name in (
@@ -505,6 +517,19 @@ def validate_settings(settings: Settings) -> None:
     unknown = set(settings.export.targets) - {"fcpxml", "xmeml", "multicam", "otio"}
     if unknown:
         raise SettingsError(f"export.targets contains unsupported values: {sorted(unknown)}")
+
+
+def _validate_reel_layout(reels: ReelsSettings) -> None:
+    _one_of("reels.layout", reels.layout, {"video", "title", "audiogram"})
+    _one_of("reels.title_field", reels.title_field, {"hook", "title"})
+    if not math.isfinite(reels.title_band) or not 0.1 <= reels.title_band <= 0.5:
+        raise SettingsError("reels.title_band must be between 0.1 and 0.5")
+    _non_negative("reels.title_seconds", reels.title_seconds)
+    if not reels.title_font.strip() or any(char in reels.title_font for char in ",\n\r"):
+        raise SettingsError("reels.title_font must be a font family name")
+    for name in ("title_color", "background_color", "waveform_color"):
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", getattr(reels, name)):
+            raise SettingsError(f"reels.{name} must be #RRGGBB")
 
 
 def _validate_roughcut_llm(roughcut: RoughcutSettings) -> None:

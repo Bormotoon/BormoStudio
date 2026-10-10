@@ -302,6 +302,24 @@ def _update_cameras(source: Path, args: argparse.Namespace) -> dict[str, Any]:
     return _tracks_document(project)
 
 
+def _update_reel(source: Path, args: argparse.Namespace) -> dict[str, Any]:
+    from studio.core.framing import load_reel_overrides, save_reel_override
+
+    project, _project_path, _settings_path = _project(source)
+    if args.reel is not None:
+        current = load_reel_overrides(project.work_dir).get(args.reel, {})
+        if args.clear:
+            values: dict[str, object] = {}
+        else:
+            changes = {"framing": args.framing, "crop_x": args.crop_x,
+                       "tracking": args.tracking, "title": args.title}
+            values = {**current, **{k: v for k, v in changes.items() if v is not None}}
+            if values.get("title") == "":
+                values.pop("title")
+        save_reel_override(project.work_dir, args.reel, values or None)
+    return {"reels": load_reel_overrides(project.work_dir)}
+
+
 def _suggest_cameras(
     project: Project, project_path: Path, settings_path: Path, *, apply: bool,
 ) -> dict[str, Any]:
@@ -485,6 +503,14 @@ def build_parser() -> argparse.ArgumentParser:
     cameras.add_argument("--apply", action="store_true",
                          help="with --suggest: save suggestions for speakers without a choice")
     cameras.add_argument("--json", action="store_true")
+    reel = commands.add_parser("reel", help="list or edit per-reel framing and titles")
+    reel.add_argument("source", type=Path)
+    reel.add_argument("--reel", help="candidate_id or reel-NNN stem")
+    reel.add_argument("--framing", choices=("source", "crop", "fit"))
+    reel.add_argument("--crop-x", type=float)
+    reel.add_argument("--tracking", action=argparse.BooleanOptionalAction, default=None)
+    reel.add_argument("--title")
+    reel.add_argument("--clear", action="store_true", help="return the reel to project settings")
     preset = commands.add_parser("preset", help="list or apply packaged settings presets")
     preset.add_argument("source", type=Path, nargs="?")
     preset.add_argument("--apply", metavar="NAME")
@@ -635,6 +661,9 @@ def _main(argv: Sequence[str] | None = None) -> int:
         ]
         material: object = documents[0] if len(documents) == 1 else {"assets": documents}
         print(json.dumps(material, ensure_ascii=False, indent=2) if args.json else material)
+        return 0
+    if args.command == "reel":
+        print(json.dumps(_update_reel(args.source, args), ensure_ascii=False, indent=2))
         return 0
     if args.command in {"tracks", "cameras"}:
         handler = _update_tracks if args.command == "tracks" else _update_cameras

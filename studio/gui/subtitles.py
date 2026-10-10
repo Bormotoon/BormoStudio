@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QFontMetricsF, QPainter, QPainterPath, QPen
+from PyQt6.QtCore import QRectF, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QFontMetricsF, QImage, QPainter, QPainterPath, QPen
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
@@ -26,7 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from studio.core.framing import save_framing
+from studio.core.framing import load_reel_overrides, save_framing, save_reel_override
 from studio.core.project import Project
 from studio.core.settings import load_settings
 from studio.core.subtitles import PRESETS, Cue, SubtitleStyle, load_edits, save_edits, validate
@@ -84,6 +85,84 @@ class CaptionOverlay(QLabel):
             )
             painter.drawPath(path)
         painter.fillPath(path, QColor(self.caption_style.color))
+        painter.end()
+
+
+def crop_rect(
+    source: tuple[int, int], output: tuple[int, int], mode: str, crop_x: float
+) -> tuple[float, float, float, float]:
+    """The part of the source frame a reel keeps, as x, y, width, height."""
+    width, height = source
+    if mode != "crop":
+        return 0.0, 0.0, float(width), float(height)
+    aspect = output[0] / output[1]
+    if width / height > aspect:
+        kept = height * aspect
+        return (width - kept) * crop_x, 0.0, kept, float(height)
+    kept = width / aspect
+    return 0.0, (height - kept) / 2, float(width), kept
+
+
+class FramePreview(QWidget):
+    """An unframed still of the reel with the chosen crop drawn over it.
+
+    Redrawn on every control change, so the crop is visible before rendering.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.image = QImage()
+        self.mode, self.crop_x, self.output = "source", 0.5, (1080, 1920)
+        self.tracking = False
+        self.setMinimumSize(160, 120)
+        self.setAccessibleName("Reel frame preview")
+
+    def set_image(self, path: Path | None) -> None:
+        self.image = QImage(str(path)) if path is not None and path.is_file() else QImage()
+        self.update()
+
+    def set_framing(
+        self, mode: str, crop_x: float, output: tuple[int, int], tracking: bool
+    ) -> None:
+        self.mode, self.crop_x, self.output, self.tracking = mode, crop_x, output, tracking
+        self.update()
+
+    def kept_rect(self) -> tuple[float, float, float, float] | None:
+        if self.image.isNull():
+            return None
+        return crop_rect((self.image.width(), self.image.height()), self.output,
+                         self.mode, self.crop_x)
+
+    def paintEvent(self, event: object) -> None:
+        painter = QPainter(self)
+        if self.image.isNull():
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "Render reels once to preview framing")
+            painter.end()
+            return
+        scale = min(self.width() / self.image.width(), self.height() / self.image.height())
+        left = (self.width() - self.image.width() * scale) / 2
+        top = (self.height() - self.image.height() * scale) / 2
+        target = QRectF(left, top, self.image.width() * scale, self.image.height() * scale)
+        painter.drawImage(target, self.image)
+        rect = self.kept_rect()
+        if rect is not None and self.mode == "crop":
+            x, y, w, h = (value * scale for value in rect)
+            kept = QRectF(left + x, top + y, w, h)
+            shade = QColor(0, 0, 0, 150)
+            painter.fillRect(QRectF(target.left(), target.top(), kept.left() - target.left(),
+                                    target.height()), shade)
+            painter.fillRect(QRectF(kept.right(), target.top(), target.right() - kept.right(),
+                                    target.height()), shade)
+            painter.fillRect(QRectF(kept.left(), target.top(), kept.width(),
+                                    kept.top() - target.top()), shade)
+            painter.fillRect(QRectF(kept.left(), kept.bottom(), kept.width(),
+                                    target.bottom() - kept.bottom()), shade)
+            painter.setPen(QPen(QColor("#FFD400"), 2))
+            painter.drawRect(kept)
+            if self.tracking:
+                painter.drawText(kept.adjusted(6, 6, -6, -6), Qt.AlignmentFlag.AlignTop,
+                                 "Tracking moves this window")
         painter.end()
 
 
@@ -159,6 +238,16 @@ class SubtitleEditor(QWidget):
         self.crop_x.setRange(0, 100)
         self.crop_x.setValue(50)
         self.crop_x.setToolTip("0: left edge; 50: center; 100: right edge")
+        self.scope = QComboBox()
+        self.scope.addItems(["All reels (project)", "This reel only"])
+        self.scope.setToolTip("Save framing for the whole project or only this reel")
+        self.reel_title = QLineEdit()
+        self.reel_title.setPlaceholderText("Hook from reels selection")
+        self.reel_title.setToolTip("Text of the title band in title and audiogram layouts")
+        self.frame_preview = FramePreview()
+        self.reel_entries: dict[str, dict[str, object]] = {}
+        self.overrides: dict[str, dict[str, object]] = {}
+        self.project_framing: tuple[str, float, bool] = ("source", 0.5, False)
         form = QFormLayout()
         for name, control in (
             ("Preset", self.preset),
@@ -168,11 +257,13 @@ class SubtitleEditor(QWidget):
             ("Outline", self.outline),
             ("Vertical margin", self.margin),
             ("Position", self.alignment),
+            ("Framing for", self.scope),
             ("Reels framing", self.framing),
             ("Automatic tracking", self.tracking),
             ("Output width", self.frame_width),
             ("Output height", self.frame_height),
             ("Crop position", self.crop_x),
+            ("Reel title", self.reel_title),
         ):
             form.addRow(name, control)
             control.setAccessibleName(name)
@@ -186,6 +277,8 @@ class SubtitleEditor(QWidget):
         self.frame_height.valueChanged.connect(self._changed)
         self.crop_x.valueChanged.connect(self._changed)
         self.tracking.toggled.connect(self._changed)
+        self.scope.currentIndexChanged.connect(self._scope_changed)
+        self.reel_title.textChanged.connect(self._changed)
         save = QPushButton("Save subtitles")
         save.clicked.connect(self.save)
         render = QPushButton("Save and render captions")
@@ -209,7 +302,10 @@ class SubtitleEditor(QWidget):
         layout.addLayout(actions)
         lower = QHBoxLayout()
         lower.addWidget(self.table, 3)
-        lower.addLayout(form, 1)
+        side = QVBoxLayout()
+        side.addLayout(form)
+        side.addWidget(self.frame_preview, 1)
+        lower.addLayout(side, 1)
         layout.addLayout(lower, 2)
         layout.addWidget(self.status)
         self._set_style(SubtitleStyle())
@@ -244,7 +340,15 @@ class SubtitleEditor(QWidget):
             self.frame_height.setValue(framing.height)
             self.crop_x.setValue(round(framing.crop_x * 100))
             self.tracking.setChecked(framing.tracking)
-        except (ValueError, OSError) as exc:
+            self.project_framing = (framing.framing, framing.crop_x, framing.tracking)
+            self.overrides = load_reel_overrides(project.work_dir)
+            self.reel_entries = {}
+            for report in project.outputs.get("reel_render", []):
+                if report.name == "render.json" and report.is_file():
+                    for entry in json.loads(report.read_text(encoding="utf-8"))["reels"]:
+                        self.reel_entries[Path(str(entry["video"])).stem] = {
+                            **entry, "folder": str(report.parent)}
+        except (ValueError, OSError, KeyError) as exc:
             self.loading = False
             self.status.setText(str(exc))
             return
@@ -291,9 +395,12 @@ class SubtitleEditor(QWidget):
             self.frame_height,
             self.crop_x,
             self.tracking,
+            self.scope,
+            self.reel_title,
         ):
             control.setEnabled(identity != "program")
         self.loading = True
+        self._show_reel_framing(identity)
         self.table.setRowCount(len(cues))
         for row, cue in enumerate(cues):
             for column, value in enumerate((f"{cue.start:.3f}", f"{cue.end:.3f}", cue.text)):
@@ -303,6 +410,63 @@ class SubtitleEditor(QWidget):
         self.dirty = False
         self.player.setSource(QUrl.fromLocalFile(str(video.resolve())))
         self.status.setText("Click a cue to seek. Edit its text or times, then save.")
+
+    def _reel_key(self, identity: str) -> str:
+        return str(self.reel_entries.get(identity, {}).get("reel_key") or identity)
+
+    def _show_reel_framing(self, identity: str) -> None:
+        """Fill framing controls with this reel's override, else the project values."""
+        entry = self.reel_entries.get(identity, {})
+        frame = entry.get("frame")
+        self.frame_preview.set_image(
+            Path(str(entry["folder"])) / str(frame) if frame and "folder" in entry else None
+        )
+        override = self.overrides.get(self._reel_key(identity), {})
+        mode, crop_x, tracking = self.project_framing
+        self.scope.setCurrentIndex(1 if override else 0)
+        self.framing.setCurrentText(str(override.get("framing", mode)))
+        self.crop_x.setValue(round(float(override.get("crop_x", crop_x)) * 100))  # type: ignore[arg-type]
+        self.tracking.setChecked(bool(override.get("tracking", tracking)))
+        self.reel_title.setText(str(override.get("title", "")))
+        self._update_frame_preview()
+
+    def _scope_changed(self, index: int) -> None:
+        if self.loading:
+            return
+        if index == 0:
+            # Back to the project framing; saving removes this reel's override.
+            mode, crop_x, tracking = self.project_framing
+            self.loading = True
+            self.framing.setCurrentText(mode)
+            self.crop_x.setValue(round(crop_x * 100))
+            self.tracking.setChecked(tracking)
+            self.loading = False
+        self._changed()
+
+    def _update_frame_preview(self) -> None:
+        self.frame_preview.set_framing(
+            self.framing.currentText(), self.crop_x.value() / 100,
+            (self.frame_width.value(), self.frame_height.value()), self.tracking.isChecked(),
+        )
+
+    def _save_framing(self) -> None:
+        assert self.project is not None
+        mode, crop_x, tracking = (
+            self.framing.currentText(), self.crop_x.value() / 100, self.tracking.isChecked()
+        )
+        key = self._reel_key(self.identity)
+        override: dict[str, object] = {}
+        if self.scope.currentIndex() == 1:
+            override = {"framing": mode, "crop_x": crop_x, "tracking": tracking}
+            mode, crop_x, tracking = self.project_framing
+        if self.reel_title.text().strip():
+            override["title"] = self.reel_title.text().strip()
+        save_framing(self.project.work_dir, mode, self.frame_width.value(),
+                     self.frame_height.value(), crop_x, tracking=tracking)
+        self.project_framing = (mode, crop_x, tracking)
+        if override or key in self.overrides:
+            save_reel_override(self.project.work_dir, key, override or None)
+        self.overrides = load_reel_overrides(self.project.work_dir)
 
     def _style(self) -> SubtitleStyle:
         return SubtitleStyle(
@@ -342,6 +506,7 @@ class SubtitleEditor(QWidget):
         ]
 
     def _changed(self, *_args: object) -> None:
+        self._update_frame_preview()
         if not self.loading:
             self.dirty = True
             self.status.setText("Unsaved subtitle changes.")
@@ -404,14 +569,7 @@ class SubtitleEditor(QWidget):
             cues, style = self._cues(), self._style()
             validate(cues, style, self.transcript.duration)
             if self.identity != "program":
-                save_framing(
-                    self.project.work_dir,
-                    self.framing.currentText(),
-                    self.frame_width.value(),
-                    self.frame_height.value(),
-                    self.crop_x.value() / 100,
-                    tracking=self.tracking.isChecked(),
-                )
+                self._save_framing()
             save_edits(self.project.work_dir, self.identity, self.transcript, cues, style)
         except (ValueError, OSError, RuntimeError) as exc:
             self.status.setText(str(exc))
