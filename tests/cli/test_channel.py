@@ -33,3 +33,37 @@ def test_channel_resumes_and_reports_failed_acquisition(tmp_path, monkeypatch):
     assert sources == [tmp_path / "abcdefghijk"]
     assert [item["status"] for item in results] == ["reused", "failed"]
     assert json.loads((tmp_path / "channel-acquisition.json").read_text())["videos"] == results
+
+
+def test_channel_filters_apply_before_the_limit(monkeypatch):
+    calls = []
+
+    def listing(command, *args, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"entries": [
+            {"id": "excludedvid", "duration": 3000},
+            {"id": "livestream1", "duration": 3000, "live_status": "is_live"},
+            {"id": "shortvideo1", "duration": 30},
+            {"id": "unknownlen1"},
+            {"id": "goodvideo01", "duration": 3000},
+            {"id": "goodvideo02", "duration": 3000},
+        ]}))
+
+    monkeypatch.setattr(channel, "run_cancellable", listing)
+    found = channel.discover_channel("url", 2, filters={
+        "exclude": ["excludedvid"], "skip_live": True, "min_duration_s": 60,
+    })
+    assert found == ["unknownlen1", "goodvideo01"]
+    assert calls[0][calls[0].index("--playlist-end") + 1] == "10"
+
+
+def test_fetch_settings_become_yt_dlp_options():
+    from studio.stages.fetch import yt_dlp_options
+
+    assert yt_dlp_options({"download": "audio", "retries": 5}) == [
+        "--format", "bestaudio/best", "--retries", "5",
+    ]
+    assert yt_dlp_options({"max_height": 720, "cookies_file": "c.txt", "rate_limit": "5M"}) == [
+        "--format", "bv*[height<=720]+ba/b[height<=720]/b", "--cookies", "c.txt",
+        "--limit-rate", "5M",
+    ]

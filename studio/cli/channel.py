@@ -13,17 +13,23 @@ from studio.stages.fetch import _yt_dlp_command
 
 
 def discover_channel(
-    url: str, limit: int, cancelled: Callable[[], bool] = lambda: False
+    url: str, limit: int, cancelled: Callable[[], bool] = lambda: False,
+    filters: dict[str, Any] | None = None,
 ) -> list[str]:
     if not 1 <= limit <= 1000:
         raise ValueError("channel limit must be between 1 and 1000")
+    filters = filters or {}
+    filtered = bool(filters.get("exclude") or filters.get("skip_live", False)
+                    or filters.get("min_duration_s") or filters.get("max_duration_s"))
+    # Filters apply before the limit, so look further when they can drop videos.
+    depth = min(1000, limit * 5) if filtered else limit
     result = run_cancellable(
         [
             *_yt_dlp_command(),
             "--flat-playlist",
             "--dump-single-json",
             "--playlist-end",
-            str(limit),
+            str(depth),
             "--",
             url,
         ],
@@ -37,9 +43,25 @@ def discover_channel(
     ids = []
     for entry in payload.get("entries", []):
         if isinstance(entry, dict) and re.fullmatch(r"[A-Za-z0-9_-]{11}", str(entry.get("id", ""))):
-            if entry["id"] not in ids:
+            if entry["id"] not in ids and _wanted(entry, filters):
                 ids.append(entry["id"])
     return ids[:limit]
+
+
+def _wanted(entry: dict[str, Any], filters: dict[str, Any]) -> bool:
+    if entry["id"] in set(filters.get("exclude", [])):
+        return False
+    live = entry.get("live_status") in {"is_live", "is_upcoming", "post_live"}
+    if filters.get("skip_live", False) and (live or entry.get("is_live")):
+        return False
+    # Zero or missing duration means unknown, not short: keep it.
+    duration = entry.get("duration")
+    if isinstance(duration, (int, float)) and duration > 0:
+        minimum = float(filters.get("min_duration_s", 0) or 0)
+        maximum = float(filters.get("max_duration_s", 0) or 0)
+        if (minimum and duration < minimum) or (maximum and duration > maximum):
+            return False
+    return True
 
 
 def acquire_channel(
@@ -48,12 +70,13 @@ def acquire_channel(
     limit: int,
     fetch: Callable[[str, Path, Callable[[], bool]], Any],
     cancelled: Callable[[], bool] = lambda: False,
+    filters: dict[str, Any] | None = None,
 ) -> tuple[list[Path], list[dict[str, str]]]:
     destination.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, str]] = []
     sources: list[Path] = []
     with project_lock(destination):
-        for video_id in discover_channel(url, limit, cancelled):
+        for video_id in discover_channel(url, limit, cancelled, filters):
             check_cancelled(cancelled)
             folder = destination / video_id
             try:

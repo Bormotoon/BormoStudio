@@ -200,6 +200,30 @@ class LlmSettings:
 
 
 @dataclass(slots=True)
+class FetchSettings:
+    url: str = ""
+    download: str = "video"  # "video" or "audio"
+    max_height: int = 0  # 0 = best available
+    cookies_file: str = ""
+    retries: int = 3
+    rate_limit: str = ""  # yt-dlp --limit-rate, e.g. "5M"
+    # Channel discovery filters; 0 disables a duration bound.
+    min_duration_s: float = 0.0
+    max_duration_s: float = 0.0
+    skip_live: bool = True
+    exclude: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class BatchSettings:
+    notify_when: str = "failure"
+    notify_webhook: str = ""
+    notify_desktop: bool = False
+    # Stop starting projects when the source volume has less free space (0 = off).
+    min_free_disk_gb: float = 0.0
+
+
+@dataclass(slots=True)
 class Settings:
     llm: LlmSettings = field(default_factory=LlmSettings)
     scan: ScanSettings = field(default_factory=ScanSettings)
@@ -212,6 +236,8 @@ class Settings:
     speakers: SpeakerSettings = field(default_factory=SpeakerSettings)
     text: TextSettings = field(default_factory=TextSettings)
     reels: ReelsSettings = field(default_factory=ReelsSettings)
+    fetch: FetchSettings = field(default_factory=FetchSettings)
+    batch: BatchSettings = field(default_factory=BatchSettings)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -308,6 +334,19 @@ def validate_settings(settings: Settings) -> None:
     _one_of("program.encoder", settings.program.encoder, {"auto", "nvenc", "libx264", "cpu"})
     _non_negative("program.min_shot_s", settings.program.min_shot_s)
     _non_negative("program.crossfade_ms", settings.program.crossfade_ms)
+    if settings.fetch.download not in {"video", "audio"}:
+        raise SettingsError("fetch.download must be video or audio")
+    for name in ("max_height", "retries", "min_duration_s", "max_duration_s"):
+        _non_negative(f"fetch.{name}", getattr(settings.fetch, name))
+    if 0 < settings.fetch.max_duration_s < settings.fetch.min_duration_s:
+        raise SettingsError("fetch.max_duration_s must not be below min_duration_s")
+    if settings.batch.notify_when not in {"always", "failure", "never"}:
+        raise SettingsError("batch.notify_when must be always, failure or never")
+    if settings.batch.notify_webhook and not settings.batch.notify_webhook.startswith(
+        ("http://", "https://")
+    ):
+        raise SettingsError("batch.notify_webhook must be an http(s) URL")
+    _non_negative("batch.min_free_disk_gb", settings.batch.min_free_disk_gb)
     for name in ("cut_lead_s", "max_switches", "switch_window_s", "max_shot_s"):
         _non_negative(f"program.{name}", getattr(settings.program, name))
     _positive("program.wide_insert_s", settings.program.wide_insert_s)
@@ -497,6 +536,8 @@ def _construct(data: dict[str, Any]) -> Settings:
             speakers=SpeakerSettings(**_section(data, "speakers")),
             text=TextSettings(**_section(data, "text")),
             reels=ReelsSettings(**_section(data, "reels")),
+            fetch=FetchSettings(**_section(data, "fetch")),
+            batch=BatchSettings(**_section(data, "batch")),
         )
     except TypeError as exc:
         raise SettingsError(str(exc)) from exc

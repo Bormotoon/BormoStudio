@@ -264,6 +264,15 @@ on Linux or `osascript` on macOS, and `--notify-when always|failure|never`
 (default `failure`) selects when. Delivery results go into the report; a failed
 notification never changes the run status. Arbitrary shell hooks stay disabled.
 
+Defaults live in settings: `batch.notify_when`, `batch.notify_webhook`,
+`batch.notify_desktop` (flags override them) and `batch.min_free_disk_gb`, which
+stops the queue before a project when the source volume has less free space.
+Download options are the `fetch` section: `download` (`video` or `audio`),
+`max_height`, `cookies_file`, `retries`, `rate_limit`; channel discovery also
+applies `exclude` (video IDs), `skip_live` and `min_duration_s`/`max_duration_s`
+before `--limit` (unknown durations are kept). `uvf channel` reads
+`<channel folder>/settings.yaml` and `--set`; `uvf fetch` accepts `--set`.
+
 Cancellation (`--cancel-file`) now stops yt-dlp during discovery and during a
 download. The partial file stays in the episode folder with a `.fetch-incomplete`
 marker; the next run for the same URL resumes it. A cancelled channel run records

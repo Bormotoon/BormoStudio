@@ -319,6 +319,7 @@ def _run_batch(
     skip: set[str] | None,
     stream: bool,
     cancel_file: Path | None = None,
+    min_free_gb: float = 0.0,
 ) -> tuple[int, list[dict[str, str]]]:
     results: list[dict[str, str]] = []
     owner = BatchLlamaSession(lambda: cancel_file is not None and cancel_file.exists())
@@ -329,6 +330,15 @@ def _run_batch(
                     {"source": str(path), "status": "not_started"} for path in sources[index:]
                 )
                 return 130, results
+            free_gb = shutil.disk_usage(source).free / 1e9 if source.exists() else None
+            if min_free_gb and free_gb is not None and free_gb < min_free_gb:
+                # Starting another project risks a half-written one on a full disk.
+                error = f"{free_gb:.1f} GB free, batch.min_free_disk_gb is {min_free_gb:g}"
+                results.append({"source": str(source), "status": "failed", "error": error})
+                results.extend(
+                    {"source": str(path), "status": "not_started"} for path in sources[index + 1 :]
+                )
+                return 1, results
             try:
                 options: dict[str, Any] = {"batch_session": owner}
                 if cancel_file is not None:
@@ -351,9 +361,10 @@ def _run_batch(
 
 
 def _fetch_project(
-    url: str, destination: Path, cancelled: Callable[[], bool] = lambda: False
+    url: str, destination: Path, cancelled: Callable[[], bool] = lambda: False,
+    conf: dict[str, Any] | None = None,
 ) -> tuple[Project, dict[str, Any]]:
-    from studio.stages.fetch import resumable_fetch
+    from studio.stages.fetch import resumable_fetch, yt_dlp_options
 
     destination = destination.resolve()
     if (destination.exists() and any(destination.iterdir())
@@ -363,7 +374,8 @@ def _fetch_project(
             "or an interrupted download of the same URL"
         )
     destination.mkdir(parents=True, exist_ok=True)
-    media, info = fetch_to_directory(url, destination, cancelled)
+    media, info = fetch_to_directory(url, destination, cancelled,
+                                     options=yt_dlp_options(conf or {}))
     project = _run_discovery(destination, include_prepare=False)
     report_path = project.work_dir / "stages" / "fetch" / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -452,10 +464,10 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--cancel-file", type=Path)
     batch.add_argument("--report", type=Path)
     batch.add_argument("--notify-when", choices=("always", "failure", "never"),
-                        default="failure")
-    batch.add_argument("--notify-webhook", default="", metavar="URL",
+                        help="default: batch.notify_when")
+    batch.add_argument("--notify-webhook", metavar="URL",
                         help="POST the JSON run summary here (Slack/Discord/ntfy compatible)")
-    batch.add_argument("--notify-desktop", action="store_true",
+    batch.add_argument("--notify-desktop", action="store_true", default=None,
                         help="show a desktop notification when the run ends")
     channel = commands.add_parser("channel")
     channel.add_argument("url")
@@ -468,16 +480,17 @@ def build_parser() -> argparse.ArgumentParser:
     channel.add_argument("--cancel-file", type=Path)
     channel.add_argument("--report", type=Path)
     channel.add_argument("--notify-when", choices=("always", "failure", "never"),
-                        default="failure")
-    channel.add_argument("--notify-webhook", default="", metavar="URL",
+                        help="default: batch.notify_when")
+    channel.add_argument("--notify-webhook", metavar="URL",
                         help="POST the JSON run summary here (Slack/Discord/ntfy compatible)")
-    channel.add_argument("--notify-desktop", action="store_true",
+    channel.add_argument("--notify-desktop", action="store_true", default=None,
                         help="show a desktop notification when the run ends")
     fetch = commands.add_parser("fetch")
     fetch.add_argument("url")
     fetch.add_argument("destination", type=Path)
     fetch.add_argument("--json", action="store_true")
     fetch.add_argument("--cancel-file", type=Path)
+    fetch.add_argument("--set", action="append", default=[])
     return parser
 
 
@@ -609,7 +622,16 @@ def _main(argv: Sequence[str] | None = None) -> int:
         from studio.cli.channel import acquire_channel, write_report
         from studio.cli.notify import NotifyOptions, send
 
-        notify = NotifyOptions(args.notify_when, args.notify_webhook, args.notify_desktop)
+        queue_settings = load_settings(
+            [args.destination / "settings.yaml"] if args.command == "channel" else [], args.set
+        )
+        defaults = queue_settings.batch
+        notify = NotifyOptions(
+            args.notify_when or defaults.notify_when,
+            args.notify_webhook if args.notify_webhook is not None else defaults.notify_webhook,
+            args.notify_desktop if args.notify_desktop is not None else defaults.notify_desktop,
+        )
+        fetch_conf = queue_settings.to_dict()["fetch"]
         acquisition: list[dict[str, Any]] = []
         sources = args.sources if args.command == "batch" else []
         status = 0
@@ -620,8 +642,11 @@ def _main(argv: Sequence[str] | None = None) -> int:
                     args.url,
                     args.destination,
                     args.limit,
-                    lambda url, folder, cancelled: _fetch_project(url, folder, cancelled),
+                    lambda url, folder, cancelled: _fetch_project(
+                        url, folder, cancelled, fetch_conf
+                    ),
                     lambda: args.cancel_file is not None and args.cancel_file.exists(),
+                    fetch_conf,
                 )
             except InstallationCancelled:
                 status = 130
@@ -636,6 +661,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
                 skip=set(args.skip or []),
                 stream=args.events,
                 cancel_file=args.cancel_file,
+                min_free_gb=defaults.min_free_disk_gb,
             )
         data = {
             "schema_version": 1,
@@ -668,6 +694,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
         _, report = _fetch_project(
             args.url, args.destination,
             lambda: args.cancel_file is not None and args.cancel_file.exists(),
+            load_settings([], args.set).to_dict()["fetch"],
         )
         print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else report)
         return 0

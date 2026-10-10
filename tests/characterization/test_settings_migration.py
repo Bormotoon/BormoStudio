@@ -45,6 +45,14 @@ def test_frozen_forge_config_migrates_to_valid_studio_settings(tmp_path: Path) -
     assert settings["transcribe"]["language"] is None
     planned = {item["planned"] for item in report["unmapped"]}
     assert {"fetch", "batch", "reels"} <= planned
+    assert settings["fetch"]["download"] == "audio"
+    assert settings["fetch"]["exclude"] == ["PLoXa43IuWqDcGdAQbPvtJy0TzS8cWeIC6"]
+    assert settings["batch"] == {"notify_when": "failure", "notify_webhook": "",
+                                 "min_free_disk_gb": 5.0}
+    reasons = {item["source"]: item["reason"] for item in report["unmapped"]}
+    assert "uvf channel --limit" in reasons["forge:youtube.limit"]
+    assert all(reason != "no Studio setting yet" for source, reason in reasons.items()
+               if source.startswith(("forge:youtube.", "forge:autonomy.", "forge:cli.")))
 
 
 def test_dependencies_are_reconciled_and_invalid_values_rejected() -> None:

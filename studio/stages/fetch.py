@@ -34,15 +34,36 @@ class FetchStage:
         fetch = context.settings.get("fetch", {})
         if not isinstance(fetch, dict) or not fetch.get("url"):
             raise ValueError("fetch.url is required")
-        media, info = fetch_to_directory(str(fetch["url"]), context.work_dir / "fetch")
+        media, info = fetch_to_directory(
+            str(fetch["url"]), context.work_dir / "fetch", options=yt_dlp_options(fetch)
+        )
         return StageOutput((media, info))
+
+
+def yt_dlp_options(conf: object) -> list[str]:
+    """yt-dlp arguments for the `fetch` settings section."""
+    conf = conf if isinstance(conf, dict) else {}
+    options: list[str] = []
+    height = int(conf.get("max_height", 0) or 0)
+    if conf.get("download", "video") == "audio":
+        options += ["--format", "bestaudio/best"]
+    elif height:
+        options += ["--format", f"bv*[height<={height}]+ba/b[height<={height}]/b"]
+    if conf.get("cookies_file"):
+        options += ["--cookies", str(conf["cookies_file"])]
+    if "retries" in conf:
+        options += ["--retries", str(int(conf["retries"]))]
+    if conf.get("rate_limit"):
+        options += ["--limit-rate", str(conf["rate_limit"])]
+    return options
 
 
 INCOMPLETE = ".fetch-incomplete"
 
 
 def fetch_to_directory(
-    url: str, destination: Path, cancelled: Callable[[], bool] = lambda: False
+    url: str, destination: Path, cancelled: Callable[[], bool] = lambda: False,
+    *, options: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """Download one URL without executing a shell or overwriting local media.
 
@@ -58,8 +79,10 @@ def fetch_to_directory(
         "--no-overwrites",
         "--continue",
         "--write-info-json",
+        *(options or []),
         "--output",
         str(output),
+        "--",
         url,
     ]
     result = run_cancellable(command, cancelled)

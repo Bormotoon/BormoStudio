@@ -38,6 +38,16 @@ def _language(value: Any) -> Any:
     return None if value in (None, "", "auto") else value
 
 
+def _text(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _download(value: Any) -> str:
+    # Forge "auto" fetched video whenever cutting could use it; Studio exports
+    # and reels need the picture, so auto keeps video.
+    return "audio" if str(value or "").strip().lower() == "audio" else "video"
+
+
 @dataclass(frozen=True, slots=True)
 class Rule:
     source: str
@@ -80,13 +90,14 @@ WHISPERSYNC_RULES = (
     Rule("phrase_gap_threshold", "roughcut.phrase_gap_threshold"),
     Rule("fcpxml_version", "export.fcpxml_version"),
     Rule("probe_timeout_s", "scan.probe_timeout_s"),
+    Rule("repetition_penalty", "transcribe.repetition_penalty", float),
+    Rule("no_repeat_ngram_size", "transcribe.no_repeat_ngram_size", int),
 )
 
 # Planned section from table 6.3 for WhisperSync keys without a Studio field yet.
 _WHISPERSYNC_PLANNED = {
     "transcribe": ("vad_filter", "best_of", "patience", "condition_on_previous_text",
-                   "repetition_penalty", "no_repeat_ngram_size", "cache_dir",
-                   "cache_max_age_days"),
+                   "cache_dir", "cache_max_age_days"),
     "sync": ("audio_source_camera", "timebase_source", "camera_av_offset_ms",
              "camera_av_offset_ms_by_camera", "crossfade_enabled", "output_audio_format",
              "stretch_method", "seam_snap_max_s", "render_workers", "min_anchors",
@@ -142,6 +153,18 @@ FORGE_RULES = (
     Rule("subtitles.enabled", "reels.burn_subtitles"),
     Rule("video.face_device", "reels.tracking_device"),
     Rule("video.active_speaker", "reels.active_speaker"),
+    Rule("youtube.download", "fetch.download", _download),
+    Rule("youtube.max_height", "fetch.max_height", int),
+    Rule("youtube.cookies_file", "fetch.cookies_file", _text),
+    Rule("youtube.retries", "fetch.retries", int),
+    Rule("youtube.rate_limit", "fetch.rate_limit", _text),
+    Rule("youtube.min_duration", "fetch.min_duration_s", float),
+    Rule("youtube.max_duration", "fetch.max_duration_s", float),
+    Rule("youtube.skip_live", "fetch.skip_live", bool),
+    Rule("youtube.exclude", "fetch.exclude", lambda value: [str(item) for item in value or []]),
+    Rule("autonomy.notify.when", "batch.notify_when"),
+    Rule("autonomy.notify.webhook", "batch.notify_webhook", _text),
+    Rule("autonomy.min_free_disk_gb", "batch.min_free_disk_gb", float),
 )
 
 # Forge sections by their planned Studio home (table 6.3) when not migrated.
@@ -152,6 +175,29 @@ _FORGE_PLANNED = {
     "autonomy": "batch", "cli": "batch", "youtube": "fetch",
     "cache": "transcribe.cache + llm.cache", "host_memory": "contrib/hooks/host_memory + hooks",
     "paths": "project work folder + batch",
+}
+
+# Forge keys whose job Studio does differently; the report names the replacement.
+_FORGE_REPLACED = {
+    "youtube.sources": "pass each channel URL to `uvf channel`",
+    "youtube.limit": "use `uvf channel --limit`",
+    "youtube.download_dir": "each video gets its own project folder under the channel folder",
+    "youtube.archive": "existing channel project folders are reused instead of an archive",
+    "youtube.filename_template": "Studio names downloads source.<ext> per project",
+    "youtube.api_key_env": "Studio lists channels through yt-dlp without an API key",
+    "youtube.self_update": "reinstall the youtube module to update yt-dlp",
+    "youtube.self_update_days": "reinstall the youtube module to update yt-dlp",
+    "youtube.ydl_options": "arbitrary yt-dlp options are not passed through",
+    "youtube.since": "date filters are not supported by flat channel listing",
+    "youtube.until": "date filters are not supported by flat channel listing",
+    "autonomy.lock_file": "Studio locks each project and channel folder itself",
+    "autonomy.scheduling": "Studio runs stages in dependency order per project",
+    "autonomy.log_dir": "logs and report.json live in each project work folder",
+    "autonomy.log_keep_days": "logs live in each project work folder",
+    "autonomy.runs_dir": "use `uvf batch --report` for a queue report",
+    "autonomy.notify.command": "shell hooks are deferred (PROJECT_DECISIONS.md)",
+    "cli.quiet": "Studio prints JSON results; use --events for progress",
+    "cli.verbose": "Studio prints JSON results; use --events for progress",
 }
 
 _FORGE_ROLES = {"scout": "scout", "cleanup_refine": "cleanup", "judge_metadata": "judge",
@@ -252,6 +298,9 @@ def migrate_forge(data: dict[str, Any], migration: Migration) -> None:
             continue
         if key == "video.smart_crop_face":
             migration.put("forge", key, "reels.tracking", bool(value))
+            continue
+        if key in _FORGE_REPLACED:
+            migration.skip("forge", key, _FORGE_PLANNED[section], _FORGE_REPLACED[key])
             continue
         migration.skip("forge", key, _FORGE_PLANNED.get(section, "unknown"),
                        "no Studio setting yet" if section in _FORGE_PLANNED

@@ -88,3 +88,29 @@ def test_channel_cancel_during_download_reports_cancelled(tmp_path, monkeypatch,
     data = json.loads(report.read_text(encoding="utf-8"))
     assert data["status"] == "cancelled" and data["acquisition"][0]["status"] == "cancelled"
     capsys.readouterr()
+
+
+def test_batch_settings_supply_notification_defaults(tmp_path: Path, monkeypatch, capsys) -> None:
+    calls = []
+    monkeypatch.setattr("studio.cli.notify.urllib.request.urlopen",
+                        lambda request, timeout: calls.append(request) or _Response())
+    monkeypatch.setattr("studio.cli.main._run_batch", lambda *args, **kwargs: (
+        0, [{"source": "/b", "status": "ok"}]))
+    code = main(["batch", str(tmp_path), "--set", "batch.notify_when=always",
+                 "--set", "batch.notify_webhook=https://hooks.example/x"])
+    assert code == 0 and len(calls) == 1
+    capsys.readouterr()
+
+
+def test_batch_stops_before_a_project_on_low_disk(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from studio.cli.main import _run_batch
+
+    monkeypatch.setattr("studio.cli.main.shutil.disk_usage",
+                        lambda path: SimpleNamespace(free=2e9))
+    status, results = _run_batch([tmp_path, tmp_path / "next"], [], only=None, skip=None,
+                                 stream=False, min_free_gb=5)
+    assert status == 1
+    assert results[0]["status"] == "failed" and "2.0 GB free" in results[0]["error"]
+    assert results[1]["status"] == "not_started"

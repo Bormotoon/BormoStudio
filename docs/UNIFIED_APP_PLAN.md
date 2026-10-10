@@ -896,7 +896,7 @@ compute:    {allow_cpu: false}
 | 2 | Режимы sync, voice/warp, FCPXML/XMEML, ручные роли, RecorderTrack и drag&drop групп есть | Паритет выбора потоков, раздельные сессии, реальный импорт NLE |
 | 3 | Паузы/дубли, решения, обзор резов на таймлайне, прослушивание без мастера, CFR-мастер с кроссфейдами есть | Реальное прослушивание, проверка слов на стыках, сквозной переэкспорт |
 | 4 | Mics/pyannote facade, выбор камер (GUI/CLI), политика общего плана, дорожки спикеров и multicam есть | Нелинейная mic-карта, модели и NLE приёмка |
-| 5 | Тексты/term-check, role routing, рилсы/аудиокэш, captions/editor, vision, fetch, channel/batch с уведомлениями и отменой загрузок, миграция настроек есть | Raw warp replay, разделы для непереносимых настроек, phase-wide reuse и Forge-регрессия |
+| 5 | Тексты/term-check, role routing, рилсы/аудиокэш, captions/editor, vision, fetch, channel/batch с уведомлениями и отменой загрузок, миграция настроек есть | Raw warp replay, оставшиеся reels/llm ключи, phase-wide reuse и Forge-регрессия |
 | 6 | Модули, загрузка YuNet/Light-ASD/Whisper/GGUF, LLM-детекторы монтажа, мастер настройки и Linux frozen есть | Приёмка LLM-монтажа на модели, измеряемое tuning, production installers |
 | 7 | Последующая дорожная карта | Не блокирует первоначальный локальный выпуск |
 
@@ -1007,7 +1007,7 @@ release-база, её квалификация в этом окружении �
 
 **Задачи:**
 
-- [ ] **Частично:** provider/cache/session/retries/role routing есть; `tools/migrate_settings.py` переносит старые настройки по таблице 6.3 с отчётом по каждому ключу. Не доделано: разделы Studio для ключей, которые пока попадают в отчёт как unmapped (batch/fetch/hooks и часть reels/llm), и phase-wide model reuse.
+- [ ] **Частично:** provider/cache/session/retries/role routing есть; `tools/migrate_settings.py` переносит старые настройки по таблице 6.3 с отчётом по каждому ключу. Разделы `fetch` (формат, качество, cookies, повторы, скорость, фильтры канала) и `batch` (уведомления, минимум свободного места) работают и принимают ключи `youtube.*`/`autonomy.*`; заменённые ключи получают в отчёте конкретную замену. Не доделано: часть reels/llm ключей (llama service tuning, watchdog, clip tiers, subtitle styling) и phase-wide model reuse.
 - [x] Вычитка/realignment, статья и term-check интеграция реализованы: ручные offline fixes, отдельный network opt-in, кэш и отчёт. Реальная приёмка отдельно.
 - [ ] **Частично:** verified selection/refine/judge/ranking/context, role routing и content-based audio probes/cache реализованы. Voice/placement/edited mapping позволяют работать без постоянного мастера/program. Не доделано: raw warp replay без voice artifacts, полный legacy settings и moments golden parity.
 - [ ] **Частично:** source/program reels, captions и isolated tracking/fallback есть. Не доделано: полный render parity, реальные vision/frozen inference и визуальная приёмка.

@@ -192,7 +192,7 @@ def test_fetch_command_creates_a_scanned_project(
 ) -> None:
     destination = tmp_path / "download"
 
-    def download(url: str, directory: Path, cancelled=None) -> tuple[Path, Path]:  # type: ignore[no-untyped-def]
+    def download(url: str, directory: Path, cancelled=None, options=None) -> tuple[Path, Path]:  # type: ignore[no-untyped-def]
         media = directory / "source.mp4"
         info = directory / "source.info.json"
         media.write_bytes(b"media")
