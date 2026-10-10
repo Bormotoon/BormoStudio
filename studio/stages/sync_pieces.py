@@ -86,7 +86,15 @@ def _smoothed_map_at(
     still following genuine non-linear drift. Falls back to the global RANSAC
     line where the neighbourhood is too thin to fit."""
     k = am.k or 1.0
-    near = [(a.rec_time, a.cam_time) for a in am.anchors if abs(a.rec_time - rec_t) <= window_s]
+    candidates = [a for a in am.anchors if abs(a.rec_time - rec_t) <= window_s]
+    # Acoustic anchors carry their regime: a step between regimes must not be
+    # smoothed into a ramp, so only anchors of the regime at ``rec_t`` count.
+    regimes = [(abs(a.rec_time - rec_t), _regime(a)) for a in candidates]
+    tagged = [item for item in regimes if item[1] is not None]
+    if tagged:
+        regime = min(tagged)[1]
+        candidates = [a for a in candidates if _regime(a) in (None, regime)]
+    near = [(a.rec_time, a.cam_time) for a in candidates]
     if len(near) >= 4:
         rec = np.array([p[0] for p in near])
         cam = np.array([p[1] for p in near])
@@ -100,6 +108,13 @@ def _smoothed_map_at(
                 return float(intercept + slope * rec_t), float(slope)
     return am.offset + k * rec_t, k
 
+
+
+def _regime(anchor: object) -> int | None:
+    token = getattr(anchor, "token", "")
+    if isinstance(token, str) and token.startswith("acoustic:"):
+        return int(token.split(":", 1)[1])
+    return None
 
 
 def _sentence_pieces(

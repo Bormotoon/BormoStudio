@@ -32,7 +32,7 @@ def _speech(seconds: float, seed: int = 0) -> tuple[np.ndarray, list[tuple[float
 def _material(click: bool = True, drop_in_word: bool = False):
     original, words = _speech(130.0)
     # A dropout in a pause between phrases, as on the real recorder.
-    drop_at = next((a1 + b0) / 2 for (_a0, a1), (b0, _b1) in zip(words, words[1:])
+    drop_at = next((a1 + b0) / 2 for (_a0, a1), (b0, _b1) in zip(words, words[1:], strict=False)
                    if a1 > DROP_AT - 15 and b0 - a1 > 0.6)
     if drop_in_word:
         drop_at = next((a + b) / 2 for a, b in words if a > DROP_AT)

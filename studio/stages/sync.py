@@ -202,12 +202,39 @@ def _render_complex(context: StageContext) -> StageOutput:
     transcripts = {asset.id: Transcript.load(project.transcripts[asset.id])
                    for asset in [*recorders, *cameras]}
     camera_transcripts = [transcripts[camera.id] for camera in cameras]
-    placements, fits, rejected = plan_sessions(
-        project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
-    )
-    repair_sources = {}
     refine_reports: dict[str, Any] = {}
     stage_warnings: list[str] = []
+    drift_reports: dict[str, Any] = {}
+    constant_only: set[tuple[str, str]] = set()
+
+    def check(target: Asset, source: Asset, alignment: Any) -> Any:
+        refine = refine_settings(sync, target)
+        if target.role is not AssetRole.CAMERA or source.role is not AssetRole.RECORDER or (
+                refine is None):
+            return alignment
+        from studio.stages.sync_drift import check_alignment
+
+        try:
+            checked = check_alignment(
+                alignment, project.source_dir / target.path, project.source_dir / source.path,
+                clip_duration_s=transcripts[target.id].duration,
+                recorder_duration_s=transcripts[source.id].duration, settings=refine,
+            )
+        except (RuntimeError, OSError, ValueError) as exc:
+            drift_reports[f"{target.id}:{source.id}"] = {"used": "text", "reason": str(exc)}
+            return alignment
+        drift_reports[f"{target.id}:{source.id}"] = checked.report
+        if checked.constant_only:
+            constant_only.add((target.id, source.id))
+            if mode == "complex":
+                stage_warnings.append(f"{Path(target.path).name}: {checked.report['complex']}")
+        return checked.alignment
+
+    placements, fits, rejected = plan_sessions(
+        project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
+        check=check,
+    )
+    repair_sources = {}
     for camera, candidate in zip(cameras, camera_transcripts, strict=True):
         available = [asset for asset in recorders if (camera.id, asset.id) in fits]
         recorder = available[0]
@@ -219,6 +246,8 @@ def _render_complex(context: StageContext) -> StageOutput:
             mode, candidate.duration, alignment.k, alignment.residual_ms / 1000,
             max_drift_ms=float(sync.get("max_drift_ms", 20.0)),
         )
+        if (camera.id, recorder.id) in constant_only:
+            selected = "simple"  # the acoustics support only the constant plan
         strategy = int(sync.get("strategy", 3)) if selected == "complex" else 1
         refine = refine_settings(sync, camera)
         plan = render_aligned_clip(
@@ -247,6 +276,8 @@ def _render_complex(context: StageContext) -> StageOutput:
                 mode, candidate.duration, fitted.k, fitted.residual_ms / 1000,
                 max_drift_ms=float(sync.get("max_drift_ms", 20.0)),
             )
+            if (camera.id, extra.id) in constant_only:
+                extra_mode = "simple"
             extra_plan = render_aligned_clip(
                 fitted, PieceConfig(), project.source_dir / extra.path, extra_voice,
                 clip_duration_s=candidate.duration, recorder_duration_s=extra_transcript.duration,
@@ -296,6 +327,7 @@ def _render_complex(context: StageContext) -> StageOutput:
         "padding": "silence is outside invertible source maps",
         "rejected_pairs": rejected,
         "acoustic_refine": refine_reports,
+        "acoustic_fit": drift_reports,
     }, indent=2) + "\n", encoding="utf-8")
     artifacts.append(report)
     if sync.get("voice_enhance", "off") != "off" or sync.get("ambience"):

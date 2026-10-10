@@ -1,5 +1,6 @@
 """Connect independently recorded files through accepted clock maps."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -13,7 +14,13 @@ from studio.stages.sync_models import AlignmentMap
 def plan_sessions(
     project: Project, cameras: list[Asset], recorders: list[Asset],
     transcripts: dict[str, Transcript], conf: dict[str, Any], *, acoustic_first: bool,
+    check: Callable[[Asset, Asset, AlignmentMap], AlignmentMap] | None = None,
 ) -> tuple[list[SourcePlacement], dict[tuple[str, str], AlignmentMap], dict[str, str]]:
+    """Fit every camera to the recorders and place all files on one timeline.
+
+    ``check`` may replace an accepted camera–recorder map (the acoustic drift
+    check) before placements are derived from it.
+    """
     fits: dict[tuple[str, str], AlignmentMap] = {}
     rejected: dict[str, str] = {}
 
@@ -27,6 +34,8 @@ def plan_sessions(
         except ValueError as exc:
             rejected[f"{target.id}:{source.id}"] = str(exc)
             return None
+        if check is not None:
+            result = check(target, source, result)
         # A fitted line must actually put some recorder material inside the camera.
         left = max(0.0, result.offset)
         right = min(transcripts[target.id].duration,
