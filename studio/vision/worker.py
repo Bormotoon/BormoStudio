@@ -21,6 +21,16 @@ def main() -> None:
         device=request["device"],
         active_speaker=request["active_speaker"] and manager.installed("light-asd"),
     )
+    if request.get("mode") == "camera_evidence":
+        from studio.vision.camera_evidence import window_evidence
+
+        evidence = window_evidence(
+            Path(request["video"]),
+            [(float(start), float(end)) for start, end in request["windows"]],
+            settings,
+        )
+        args.result.write_text(json.dumps(evidence), encoding="utf-8")
+        return
     plan = analyze_clip(
         Path(request["video"]),
         0,

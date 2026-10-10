@@ -143,8 +143,17 @@ class MaterialPage(QWidget):
         assign.clicked.connect(self._assign_camera)
         clear = QPushButton("Clear")
         clear.clicked.connect(self._clear_camera)
+        suggest = QPushButton("Suggest from video")
+        suggest.setToolTip(
+            "Find each speaker's camera and the wide shot with face and active-speaker "
+            "detection (vision module). Existing choices are kept."
+        )
+        suggest.clicked.connect(
+            lambda: self.command_requested.emit("cameras", ["--suggest", "--apply"])
+        )
         buttons.addWidget(assign)
         buttons.addWidget(clear)
+        buttons.addWidget(suggest)
         camera_fields.addRow(buttons)
         camera_layout.addLayout(camera_fields)
         lower = QHBoxLayout()

@@ -381,6 +381,38 @@ def reframe_video(video: Path, output: Path, settings: dict[str, Any]) -> dict[s
     return {"tracking": tracking, "width": width, "height": height}
 
 
+def run_vision_worker(request: dict[str, Any], timeout: float = 3600) -> dict[str, Any]:
+    """Run one request through the managed vision interpreter."""
+    from studio.modules.manager import ModuleManager
+
+    manager = ModuleManager()
+    if not manager.installed("vision"):
+        raise ValueError("managed vision module is missing; install it through modules install")
+    with tempfile.TemporaryDirectory(prefix="uvf-vision-") as folder:
+        request_path, output = Path(folder) / "request.json", Path(folder) / "result.json"
+        request_path.write_text(json.dumps(request), encoding="utf-8")
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = (
+            str(
+                frozen_root() / "managed"
+                if getattr(sys, "frozen", False)
+                else Path(__file__).resolve().parents[2]
+            )
+            + os.pathsep
+            + environment.get("PYTHONPATH", "")
+        )
+        result = run_logged(
+            [str(manager.interpreter("vision")), "-m", "studio.vision.worker",
+             str(request_path), str(output)],
+            env=environment,
+            timeout=timeout,
+        )
+        if result.returncode:
+            raise RuntimeError(result.stderr[-4096:])
+        value: dict[str, Any] = json.loads(output.read_text(encoding="utf-8"))
+        return value
+
+
 def tracking_filter(
     video: Path, width: int, height: int, settings: dict[str, Any]
 ) -> str | None:
@@ -388,53 +420,18 @@ def tracking_filter(
 
     try:
         from studio.core.media import probe
-        from studio.modules.manager import ModuleManager
 
-        manager = ModuleManager()
-        if not manager.installed("vision"):
-            raise ValueError("managed vision module is missing; install it through modules install")
-        with tempfile.TemporaryDirectory(prefix="uvf-vision-") as folder:
-            request, output = Path(folder) / "request.json", Path(folder) / "result.json"
-            request.write_text(
-                json.dumps(
-                    {
-                        "video": str(video.resolve()),
-                        "duration": probe(video).duration_s,
-                        "width": width,
-                        "height": height,
-                        "device": str(settings.get("tracking_device", "cuda")),
-                        "active_speaker": bool(settings.get("active_speaker", True)),
-                    }
-                ),
-                encoding="utf-8",
-            )
-            environment = os.environ.copy()
-            environment["PYTHONPATH"] = (
-                str(
-                    frozen_root() / "managed"
-                    if getattr(sys, "frozen", False)
-                    else Path(__file__).resolve().parents[2]
-                )
-                + os.pathsep
-                + environment.get("PYTHONPATH", "")
-            )
-            result = run_logged(
-                [
-                    str(manager.interpreter("vision")),
-                    "-m",
-                    "studio.vision.worker",
-                    str(request),
-                    str(output),
-                ],
-                env=environment,
-                timeout=3600,
-            )
-            if result.returncode:
-                raise RuntimeError(result.stderr[-4096:])
-            value = json.loads(output.read_text(encoding="utf-8"))
-            if value["filter"]:
-                filter_expression: str = value["filter"]
-                return filter_expression + ",setsar=1"
+        value = run_vision_worker({
+            "video": str(video.resolve()),
+            "duration": probe(video).duration_s,
+            "width": width,
+            "height": height,
+            "device": str(settings.get("tracking_device", "cuda")),
+            "active_speaker": bool(settings.get("active_speaker", True)),
+        })
+        if value["filter"]:
+            filter_expression: str = value["filter"]
+            return filter_expression + ",setsar=1"
     except Exception as exc:
         logging.getLogger(__name__).warning("tracking unavailable: %s", exc)
     logging.getLogger(__name__).warning("tracking unavailable; using configured static crop")

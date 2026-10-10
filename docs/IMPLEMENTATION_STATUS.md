@@ -118,6 +118,18 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
   Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
 
+### Vision camera binding — 2026-10-10
+
+- `stages/camera_binding.py` picks up to three windows from each speaker's
+  longest covered turns (file time via placement); `vision/camera_evidence.py`
+  (vision interpreter, worker mode `camera_evidence`) reports per window strong
+  face tracks, largest face height and Light-ASD speaking logit. Decision:
+  greedy unique assignment by speaking contrast ≥ 0.5, wide shot when ≥ 2 people
+  in ≥ 60% of windows; Light-ASD is required. `run_vision_worker` is now shared
+  with reel tracking. CLI `cameras --suggest [--apply]`, Material page button;
+  applying fills only unassigned speakers. Decision and CLI are unit-tested; the
+  worker path has not run with real models here.
+
 ### OTIO export — 2026-10-10
 
 - `export_otio.py` writes OTIO JSON (Timeline/Stack/Track/Clip.1/Gap/Marker.1)

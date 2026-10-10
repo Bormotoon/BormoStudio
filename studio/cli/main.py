@@ -275,7 +275,9 @@ def _update_tracks(source: Path, args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _update_cameras(source: Path, args: argparse.Namespace) -> dict[str, Any]:
-    project, project_path, _ = _project(source)
+    project, project_path, settings_path = _project(source)
+    if getattr(args, "suggest", False):
+        return _suggest_cameras(project, project_path, settings_path, apply=args.apply)
     if args.speaker is None:
         return _tracks_document(project)
     speaker = args.speaker.strip()
@@ -298,6 +300,34 @@ def _update_cameras(source: Path, args: argparse.Namespace) -> dict[str, Any]:
         project.plan_revision += 1
         project.save(project_path)
     return _tracks_document(project)
+
+
+def _suggest_cameras(
+    project: Project, project_path: Path, settings_path: Path, *, apply: bool,
+) -> dict[str, Any]:
+    from studio.stages.camera_binding import collect_evidence, suggest_bindings
+
+    speakers_paths = project.outputs.get("speakers", [])
+    if not speakers_paths or not speakers_paths[0].is_file():
+        raise ValueError("camera suggestions need speaker turns; run the speakers stage first")
+    turns = json.loads(speakers_paths[0].read_text(encoding="utf-8"))
+    names = sorted({str(turn["speaker"]) for turn in turns} - {"unknown", "overlap"})
+    device = load_settings([settings_path]).reels.tracking_device
+    suggestion = suggest_bindings(collect_evidence(project, turns, device=device), names)
+    applied: dict[str, str] = {}
+    if apply:
+        with project_lock(project.work_dir):
+            recover_publications(project.work_dir)
+            project = Project.load(project_path)
+            for speaker, camera in suggestion["speaker_cameras"].items():
+                # Choices the user made stay; suggestions only fill gaps.
+                if speaker not in project.speaker_cameras:
+                    project.speaker_cameras[speaker] = camera
+                    applied[speaker] = camera
+            if applied:
+                project.plan_revision += 1
+                project.save(project_path)
+    return {**_tracks_document(project), "suggestion": suggestion, "applied": applied}
 
 
 def _tracks_document(project: Project) -> dict[str, Any]:
@@ -450,6 +480,10 @@ def build_parser() -> argparse.ArgumentParser:
     target = cameras.add_mutually_exclusive_group()
     target.add_argument("--camera")
     target.add_argument("--clear", action="store_true")
+    target.add_argument("--suggest", action="store_true",
+                        help="suggest bindings from faces and active speakers (vision module)")
+    cameras.add_argument("--apply", action="store_true",
+                         help="with --suggest: save suggestions for speakers without a choice")
     cameras.add_argument("--json", action="store_true")
     preset = commands.add_parser("preset", help="list or apply packaged settings presets")
     preset.add_argument("source", type=Path, nargs="?")

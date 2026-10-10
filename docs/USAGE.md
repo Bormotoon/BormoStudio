@@ -394,6 +394,17 @@ when `program.max_switches` speaker changes (default 3) fall inside
 `program.cut_lead_s` (0.2 s) before the turn. Manual camera choices in the edit
 always win. Without a wide shot, overlaps keep the current camera as before.
 
+### Suggested speaker cameras
+
+After the speakers stage, **Suggest from video** on the Material page (or
+`uvf cameras <folder> --suggest --apply`) samples up to three 4-second windows of
+each speaker's longest turns on every camera. With the vision module, YuNet and
+Light-ASD it measures who is in frame and whether the visible face is speaking:
+the camera whose face speaks during S's turns (by at least 0.5 logit more than
+during other turns) becomes S's camera, and a camera with two or more people in
+60% of windows becomes the wide shot. Without `--apply` it only reports.
+Speakers you already assigned are never changed; weak evidence stays unresolved.
+
 ## Settings migration and legacy comparison
 
 ```bash
