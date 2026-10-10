@@ -37,7 +37,8 @@ class ProgramSubtitlesStage:
         if project.transcripts.get("edited"):
             paths.append(project.transcripts["edited"])
         return stable_fingerprint(
-            "program-captions-v1", [(str(path), _digest(path)) for path in paths if path.is_file()]
+            "program-captions-v1",
+            [(str(path), _digest(path, project.work_dir)) for path in paths if path.is_file()],
         )
 
     def run(self, context: StageContext) -> StageOutput:

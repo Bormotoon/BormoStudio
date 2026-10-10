@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from studio.core.caption_styles import CaptionOptions, TimedWord, build_cues, to_styled_ass
+from studio.core.digest import file_digest
 from studio.core.framing import load_reel_overrides, overrides_path, reel_settings
 from studio.core.launch import frozen_root
 from studio.core.media import probe
@@ -108,7 +108,7 @@ class ReelRenderStage:
                 for key, paths in project.outputs.items()
                 if key.startswith("sync:")
             },
-            [(str(path), _digest(path)) for path in inputs if path.is_file()],
+            [(str(path), _digest(path, project.work_dir)) for path in inputs if path.is_file()],
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -379,12 +379,10 @@ def clip_transcript(source: Transcript, start: float, end: float, video: Path) -
     )
 
 
-def _digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _digest(path: Path, cache_dir: Path | None = None) -> str:
+    # Through the shared digest cache: these inputs include every camera
+    # source, and rereading them on each planning pass took 20 min on 115 GB.
+    return file_digest(path, cache_dir)
 
 
 def burn_subtitles(video: Path, subtitles: Path, output: Path) -> None:

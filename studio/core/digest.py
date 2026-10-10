@@ -69,13 +69,18 @@ def file_digest(path: Path, cache_dir: Path | None = None) -> str:
     identity = _identity(stat)
     with _lock:
         cached = _memory.get(key)
+    # Verified in this process and the identity is unchanged (a rewrite changes
+    # ctime): no need to read the sample again on every planning pass.
+    if cached is not None and cached.get("verified") and cached.get("stat") == identity and (
+            _trusted(cached, stat)):
+        return str(cached["sha256"])
     if cached is None and cache_dir is not None and not _rehash:
         cached = _load(cache_path(cache_dir)).get(key)
     if cached is not None and cached.get("stat") == identity and _trusted(cached, stat):
         sample = _sample(resolved, stat.st_size)
         if cached.get("sample") == sample:
             with _lock:
-                _memory[key] = cached
+                _memory[key] = {**cached, "verified": True}
             return str(cached["sha256"])
     sample = _sample(resolved, stat.st_size)
     digest = _full_hash(resolved)

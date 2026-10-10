@@ -161,3 +161,51 @@ def test_repeated_plan_on_unchanged_project_reads_no_content(
     plan = build_plan(stages, project, {})
     assert all(item.will_reuse for item in plan.stages)
     assert counted == []
+
+
+def test_no_real_stage_rereads_sources_when_fingerprinting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # sony_run: reel_render hashed every 4 GB camera file on each planning pass.
+    import builtins
+
+    from studio.core.project import Asset, AssetKind, AssetRole
+    from studio.core.settings import Settings
+    from studio.stages.worker import stage_registry
+
+    sources = {tmp_path / "cam.mov", tmp_path / "rec.wav"}
+    for path in sources:
+        path.write_bytes(os.urandom(5_000_000))
+    project = Project(tmp_path, tmp_path / "_studio", [
+        Asset("cam", Path("cam.mov"), AssetKind.VIDEO, AssetRole.CAMERA),
+        Asset("rec", Path("rec.wav"), AssetKind.AUDIO, AssetRole.RECORDER),
+    ])
+    settings = Settings().to_dict()
+    for stage in stage_registry().values():
+        stage.fingerprint(project, settings)
+    digest.clear_memory()
+
+    read = [0]
+    real_open = builtins.open
+    path_open = Path.open
+
+    def counting(file, *args, **kwargs):  # type: ignore[no-untyped-def]
+        handle = real_open(file, *args, **kwargs)
+        if Path(file) in sources:
+            original = handle.read
+
+            def reading(*size):  # type: ignore[no-untyped-def]
+                data = original(*size)
+                read[0] += len(data)
+                return data
+
+            handle.read = reading
+        return handle
+
+    monkeypatch.setattr(builtins, "open", counting)
+    monkeypatch.setattr(Path, "open", lambda self, *a, **k: counting(self, *a, **k))
+    for stage in stage_registry().values():
+        stage.fingerprint(project, settings)
+    monkeypatch.setattr(Path, "open", path_open)
+    # Only the 3 x 64 KiB identity sample, once per file, may be read.
+    assert read[0] <= len(sources) * 3 * 64 * 1024
