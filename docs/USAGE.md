@@ -67,6 +67,21 @@ module installs do not publish a successful installation marker. A network read
 may delay cancellation until its timeout. CLI automation can pass `--cancel-file
 PATH` and create that file to request cancellation (exit status 130).
 
+### Whisper and GGUF downloads
+
+The same page and `uvf models install NAME` download pinned Whisper models
+(`whisper-base`, `whisper-small`, `whisper-medium`, `whisper-large-v3`,
+`whisper-large-v3-turbo`; `whisper-tiny` for tests) and Gemma 4 GGUF files
+(`gguf-gemma-4-e4b-it-q4`, `gguf-gemma-4-e4b-it-q8`, `gguf-gemma-4-12b-it-q4`,
+`gguf-gemma-4-26b-a4b-it-q4`). Each entry is fixed to a Hugging Face commit; files
+are checked against the SHA256 (large files) or git blob SHA1 (small files) of that
+commit and published only when they match. Downloads continue from `.part` files
+after cancellation or a dropped connection. Files live under `UVF_MODELS_DIR`
+(default `~/.cache/ultimate-video-forge/models`): Whisper in `whisper/<name>`,
+GGUF in `llm/<repo>`. After a download in the GUI, the Whisper model name or GGUF
+path is filled into project settings; saving applies it. `transcribe` loads a
+downloaded catalog model from disk and otherwise lets faster-whisper fetch it.
+
 ## Packaged executable
 
 The PyInstaller executable exposes `--gui`, `--cli COMMAND ...` and the internal
@@ -230,18 +245,85 @@ Channel discovery is bounded (1–1000 items); projects use validated video IDs.
 Existing project directories resume processing, incomplete nonempty downloads are
 reported rather than overwritten. Acquisition progress is saved atomically in
 `channel-acquisition.json`; batch/channel accept `--report` and emit a structured
-`queue_finished` event with `--events`. No external notification service is configured.
+`queue_finished` event with `--events`.
 The nightly helper accepts extra channel options and `UVF_BIN` for the executable.
-Cancellation is checked between downloads; discovery/download subprocesses are not
-yet cooperatively cancelled mid-request.
+
+Notifications: `--notify-webhook URL` POSTs the JSON summary (`text`/`content`
+fields work with Slack, Discord and ntfy), `--notify-desktop` uses `notify-send`
+on Linux or `osascript` on macOS, and `--notify-when always|failure|never`
+(default `failure`) selects when. Delivery results go into the report; a failed
+notification never changes the run status. Arbitrary shell hooks stay disabled.
+
+Cancellation (`--cancel-file`) now stops yt-dlp during discovery and during a
+download. The partial file stays in the episode folder with a `.fetch-incomplete`
+marker; the next run for the same URL resumes it. A cancelled channel run records
+the interrupted video, writes the report with status `cancelled` and exits 130.
 
 ## Unsaved settings and edit audition
 
 Settings edits survive tab navigation and require confirmation before project
 switch/close or applying compute recommendations. Running with unsaved settings
 is blocked; processing save cannot silently overwrite changed Advanced YAML.
-Edit review now offers audio audition with one-second context on each side using
-the timeline voice master (`sync.master_wav=true`), with a visible stop control.
+
+The Edit page shows the whole timeline above the decision list: kept material,
+accepted cuts (solid, coloured by reason), suggestions that are not applied
+(hatched) and markers; clicking a cut selects it in the list and hovering shows
+its note. The status line gives the resulting program length. **Listen with cut**
+plays two seconds before and after with the removed part skipped and a short
+crossfade; **Listen to original** plays the same span uncut. Previews come from
+the timeline voice master when it exists, otherwise from a synchronized camera
+voice or the transcript source through its placement, so no master is required.
+
+`program` joins pieces with `program.crossfade_ms` (default 10 ms) audio
+crossfades that keep the exact program length: constant-power on edit joins,
+linear where only the camera changes. `0` restores hard joins.
+
+## LLM rough-cut suggestions
+
+`roughcut.llm: true` runs four detectors through the local LLM (role `roughcut`):
+`start` (where the conversation really begins), `slips` (corrected slips of the
+tongue), `fillers` (semantic fillers) and `delivery` (best take of a retake
+group). The model only returns phrase numbers and verbatim quotes; a quote must
+match transcript words exactly, and cut times come from those words. Findings
+below `roughcut.llm_min_confidence`, longer than `llm_max_cut_s`, beyond
+`llm_max_start_s` or not provable are rejected and listed in
+`stages/roughcut/llm-report.json`. With `roughcut.llm_apply: suggest` (default)
+LLM cuts appear unaccepted in the Edit list and delivery choices as markers;
+`cut` applies them. Fillers are always markers.
+
+## Recorder tracks and speaker cameras
+
+The Material page lists assets under their groups; drag assets onto another group
+to regroup them (several at once with multi-select). Scan proposes one lane per
+recorder channel. Select a lane to merge channels (`0,1` for a stereo pair), name
+its speaker or disable it. Named lanes drive microphone speaker attribution ahead
+of `speakers.tracks`; disabled channels are skipped. Speaker cameras chosen there
+are stored in the project and override `program.speaker_cameras` for the same
+speaker. CLI:
+
+```bash
+uvf tracks SOURCE                                   # list lanes and cameras
+uvf tracks SOURCE --asset zoom-h6 --channels 0,1 --speaker Anna
+uvf tracks SOURCE --asset zoom-h6 --channels 3 --disable
+uvf cameras SOURCE --speaker Anna --camera osmo
+uvf material SOURCE --asset cam-a --asset cam-b --group wide
+```
+
+## Settings migration and legacy comparison
+
+```bash
+python -m tools.migrate_settings --whispersync ws.json --forge config.yaml \
+  --output /path/to/material/_studio/settings.yaml --report migration.json
+python -m tools.legacy_suites run --suite whispersync --python /path/to/ws-env/bin/python
+python -m tools.legacy_suites compare old/whispersync.json new/whispersync.json
+```
+
+Migration follows plan table 6.3 and copies only keys set in the old files. The
+report lists every key as migrated or unmapped with its planned Studio section;
+conflicts and dependency fixes (for example tracking without crop framing) are
+listed too, and the output passes Studio validation. The legacy runner executes
+the frozen suites unmodified in their own environment and compares per-test
+outcomes with the 403/620 snapshot and with an earlier report.
 
 ## Linux installation
 

@@ -878,7 +878,7 @@ compute:    {allow_cpu: false}
 
 После каждой фазы есть работающее приложение. Фаза закрыта, когда выполнены все критерии готовности.
 
-### Актуальный срез — 2026-10-09
+### Актуальный срез — 2026-10-10
 
 Галочки ниже относятся к выполнению конкретной задачи, а не к приёмке всей фазы.
 Обозначения: `[x]` — реализация выполнена в указанном объёме; `[ ] Частично` —
@@ -893,15 +893,15 @@ compute:    {allow_cpu: false}
 |---|---|---|
 | 0 | Истории, snapshots/patch, фикстуры и локальные сборки есть | CI/чистая установка, реальная запись, квалификация Python 3.12 |
 | 1 | Каркас и локальный pipeline реализованы | Полная golden-регрессия и сквозная GUI/CLI приёмка |
-| 2 | Режимы sync, voice/warp, FCPXML/XMEML и ручные роли есть | RecorderTrack UI/паритет потоков, раздельные сессии, реальный импорт NLE |
-| 3 | Паузы/дубли, решения, аудиопрослушивание через master и CFR-мастер есть | Полнота cut preview, независимый от master preview, стыки звука и реальная проверка слов |
-| 4 | Mics/pyannote facade, выбор камер и multicam есть | Полнота GUI привязок, нелинейная mic-карта, модели и NLE приёмка |
-| 5 | Тексты/term-check, role routing, рилсы/аудиокэш, captions/editor, vision, fetch и channel/batch есть | Raw warp replay, полная legacy compatibility, внешние уведомления, отмена загрузок, phase-wide reuse и Forge-регрессия |
-| 6 | Модули, YuNet/Light-ASD, мастер настройки, GGUF picker и Linux frozen есть | LLM-монтаж, загрузка Whisper/GGUF, измеряемое tuning, production installers |
+| 2 | Режимы sync, voice/warp, FCPXML/XMEML, ручные роли, RecorderTrack и drag&drop групп есть | Паритет выбора потоков, раздельные сессии, реальный импорт NLE |
+| 3 | Паузы/дубли, решения, обзор резов на таймлайне, прослушивание без мастера, CFR-мастер с кроссфейдами есть | Реальное прослушивание, проверка слов на стыках, сквозной переэкспорт |
+| 4 | Mics/pyannote facade, выбор камер (GUI/CLI), дорожки спикеров и multicam есть | Политика общего плана, нелинейная mic-карта, модели и NLE приёмка |
+| 5 | Тексты/term-check, role routing, рилсы/аудиокэш, captions/editor, vision, fetch, channel/batch с уведомлениями и отменой загрузок, миграция настроек есть | Raw warp replay, разделы для непереносимых настроек, phase-wide reuse и Forge-регрессия |
+| 6 | Модули, загрузка YuNet/Light-ASD/Whisper/GGUF, LLM-детекторы монтажа, мастер настройки и Linux frozen есть | Приёмка LLM-монтажа на модели, загрузка в мастере первого запуска, измеряемое tuning, production installers |
 | 7 | Последующая дорожная карта | Не блокирует первоначальный локальный выпуск |
 
 **Ни одна фаза ещё не закрыта по всем критериям приёмки.** Текущая база —
-410 passed, 2 skipped на Python 3.10.20; Linux installed/frozen smoke проходит, включая
+447 passed, 2 skipped на Python 3.10.20; Linux installed/frozen smoke проходит, включая
 CLI/worker/resources и offscreen GUI startup. Это не все исходные 403 + 620 тестов,
 не реальный ML-прогон, не NLE-приёмка и не чистая установка. Python 3.12 — целевая
 release-база, её квалификация в этом окружении ещё нужна. Linux приоритетен;
@@ -963,8 +963,8 @@ release-база, её квалификация в этом окружении �
 - [x] Timeline transcript строится через placement без повторного Whisper; синхронизированный voice имеет отдельные warp/rendered contracts.
 - [ ] **Частично:** transcript/SRT, confidence и initial_prompt есть. Не доделано: подтверждённый полный sentence/glossary/hotwords parity Forge.
 - [x] Sequence → FCPXML/XMEML, структурные/interval regression tests реализованы. Реальный NLE импорт не закрыт этой отметкой.
-- [ ] **Частично:** роли/группы/device редактируются и переживают rescan. Не доделано: drag/drop групп, полнота naming/channel UX.
-- [ ] **Частично:** stream/channel metadata и явные mic tracks есть. Не доделано: отдельная RecorderTrack модель и полноценный GUI выбора дорожек.
+- [x] Роли/группы/device редактируются и переживают rescan; группы меняются drag&drop на экране «Материал» (несколько файлов сразу). Реальная GUI-приёмка отдельно.
+- [x] `RecorderTrack` в модели проекта (каналы, спикер, имя, включена), предложение дорожек при scan с сохранением ручных, GUI/CLI (`uvf tracks`) объединения каналов, имён спикеров и отключения; `speakers` берёт именованные дорожки. Реальная GUI-приёмка отдельно.
 - [x] Typed warp validation проверяет порядок/перекрытия/покрытие согласно контракту; tests присутствуют.
 
 **Готово, когда:**
@@ -980,9 +980,9 @@ release-база, её квалификация в этом окружении �
 - [x] Общие word-gap/silence span utilities и energy-gated roughcut реализованы.
 - [ ] **Частично:** pauses/head/tail/retakes и filler markers есть. Не доделано: полный набор unknown-sound detectors и реальные preset/listening проверки.
 - [ ] **Приёмка:** cut/markers и XML reasons реализованы; не проверены disable/видимость/семантика в реальном NLE.
-- [x] `program`: placement-aware мастер с выбранными камерами и синхронизированным звуком, CFR и отображением транскрипта на фактические кадровые интервалы. Приёмка стыков/длинного A/V отдельно.
-- [ ] **Частично:** accept/reject и audio audition с контекстом через timeline master реализованы. Не доделано: preview без master, реальное прослушивание и сквозная проверка переэкспорта.
-- [ ] **Не выполнено:** полноценный timeline cut preview; список решений не заменяет его.
+- [x] `program`: placement-aware мастер с выбранными камерами и синхронизированным звуком, CFR и отображением транскрипта на фактические кадровые интервалы; кроссфейды звука на стыках (`program.crossfade_ms`, по умолчанию 10 мс) без изменения длительности. Приёмка стыков на слух/длинного A/V отдельно.
+- [ ] **Частично:** accept/reject и прослушивание «с резом / оригинал» реализованы, в том числе без мастера (синхронизированный голос камеры или исходник транскрипта через placement). Не доделано: реальное прослушивание и сквозная проверка переэкспорта.
+- [x] Обзор резов на всём таймлайне (оставленное, принятые и предложенные резы, маркеры, playhead, длина программы) синхронизирован со списком решений. Видео-предпросмотр стыка не входит; визуальная приёмка отдельно.
 - [ ] **Приёмка:** keep_fillers/initial_prompt на реальной записи не проверены.
 
 **Готово, когда:**
@@ -996,7 +996,7 @@ release-база, её квалификация в этом окружении �
 **Задачи:**
 
 - [ ] **Частично:** mics/smoothing/pyannote facade есть. Не доделано: turns/manual naming parity, cross-file identity, nonlinear mic attribution и real model acceptance.
-- [ ] **Частично:** speaker-camera mapping доступен через настройки. Не доделано: нативные Material controls и отдельная политика общего плана.
+- [ ] **Частично:** speaker-camera mapping задаётся на экране «Материал» и `uvf cameras` (хранится в проекте, перекрывает `program.speaker_cameras`). Не доделано: отдельная политика общего плана.
 - [ ] **Частично:** camera_id, minimum shot, coverage fallback и manual precedence реализованы. Не доделано: полный набор правил 5.6 и реальная оценка переключений.
 - [ ] **Приёмка:** retimed multicam/voice/ambience/speaker selection и XMEML lanes реализованы, generated FCPXML прошёл 1.9 DTD. Не проверены импорт/переключение/playback в NLE.
 - [x] `program` учитывает выбранную камеру, ручные решения и speaker-camera mapping с проверкой покрытия.
@@ -1007,14 +1007,14 @@ release-база, её квалификация в этом окружении �
 
 **Задачи:**
 
-- [ ] **Частично:** provider/cache/session/retries/role routing есть. Не доделано: полная legacy settings/schema compatibility и phase-wide model reuse.
+- [ ] **Частично:** provider/cache/session/retries/role routing есть; `tools/migrate_settings.py` переносит старые настройки по таблице 6.3 с отчётом по каждому ключу. Не доделано: разделы Studio для ключей, которые пока попадают в отчёт как unmapped (batch/fetch/hooks и часть reels/llm), и phase-wide model reuse.
 - [x] Вычитка/realignment, статья и term-check интеграция реализованы: ручные offline fixes, отдельный network opt-in, кэш и отчёт. Реальная приёмка отдельно.
 - [ ] **Частично:** verified selection/refine/judge/ranking/context, role routing и content-based audio probes/cache реализованы. Voice/placement/edited mapping позволяют работать без постоянного мастера/program. Не доделано: raw warp replay без voice artifacts, полный legacy settings и moments golden parity.
 - [ ] **Частично:** source/program reels, captions и isolated tracking/fallback есть. Не доделано: полный render parity, реальные vision/frozen inference и визуальная приёмка.
 - [x] `fetch`: single URL в новую/пустую папку с metadata. Channel discovery/acquisition также реализован; реальная загрузка и night-run — отдельная приёмка.
-- [ ] **Частично:** project/channel queue, atomic reports, queue_finished event, resume и night helper реализованы. Не доделано: внешние уведомления, mid-download cancellation, phase-wide reuse и overnight acceptance. Shell hooks отложены по PROJECT_DECISIONS.md.
+- [ ] **Частично:** project/channel queue, atomic reports, queue_finished event, resume, night helper, внешние уведомления (webhook/desktop) и отмена посреди загрузки с докачкой реализованы. Не доделано: phase-wide reuse и overnight acceptance. Shell hooks отложены по PROJECT_DECISIONS.md.
 - [x] Нативный редактор субтитров внутри PyQt GUI с видео/overlay, правкой текста/таймингов/стилей и публикацией JSON/SRT/ASS. Визуальная приёмка отдельно.
-- [ ] **Частично:** выбранные Forge regressions перенесены. Не доделано: все 620 baseline tests и golden workflow parity; legacy не удаляем до подтверждения.
+- [ ] **Частично:** выбранные Forge regressions перенесены; `tools/legacy_suites.py` гоняет frozen-наборы как сравнительные (по-тестовые отчёты, сравнение со снимком 403/620 и предыдущим прогоном). Не доделано: golden workflow parity Studio против этих наборов; legacy не удаляем до подтверждения.
 
 **Готово, когда:**
 
@@ -1027,9 +1027,9 @@ release-база, её квалификация в этом окружении �
 
 **Задачи:**
 
-- [ ] **Не выполнено:** LLM-детекторы монтажа (подача дубля, оговорки, начало разговора, смысловые паразиты) с JSON/evidence guardrails.
+- [x] LLM-детекторы монтажа (подача дубля, оговорки, начало разговора, смысловые паразиты) с JSON/evidence guardrails: только номера фраз и дословные цитаты, времена из слов транскрипта, отклонённое — в `llm-report.json`, по умолчанию предложения. Приёмка на реальной модели отдельно.
 - [ ] **Частично:** modules manager/recipes/GUI/progress/cancel/locks есть. Не доделано: полнота stage → install navigation и реальные ML установки/запуски.
-- [ ] **Частично:** YuNet/Light-ASD SHA256 downloads и local GGUF picker есть. Не доделано: managed Whisper/GGUF download и first-use workflow.
+- [ ] **Частично:** YuNet/Light-ASD, Whisper (base…large-v3-turbo) и Gemma 4 GGUF загружаются из приложения: закреплённые ревизии, проверка хэшей, докачка, отмена, подстановка в настройки. Не доделано: шаг загрузки в мастере первого запуска.
 - [ ] **Частично:** Linux frozen, setup wizard и local install script (binary/link/desktop entry) есть; same-host installed smoke пройден. Не доделано: dependency bundling, clean-machine/Python 3.12 и Windows/macOS; бинарник требует rebuild после последних guards.
 - [ ] **Частично:** compute probe/recommendations есть. Не доделано: измеряемое memory/performance autotuning Whisper/llama.
 

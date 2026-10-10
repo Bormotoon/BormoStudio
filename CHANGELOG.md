@@ -16,6 +16,17 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- LLM rough-cut detectors (start, slips, semantic fillers, take delivery) with
+  verbatim-quote evidence; suggestions by default, report of rejected findings.
+- Whole-timeline cut overview, with-cut/original audition without a master, and
+  duration-preserving audio crossfades on program joins (`program.crossfade_ms`).
+- Recorder track lanes and project speaker cameras with `uvf tracks`/`uvf cameras`
+  and a grouped Material screen with drag-and-drop regrouping.
+- Pinned, resumable, verified Whisper and Gemma 4 GGUF downloads from the app.
+- `tools/migrate_settings.py` for WhisperSync/Forge settings and
+  `tools/legacy_suites.py` for per-test comparison runs of the frozen suites.
+- Batch/channel webhook and desktop notifications; yt-dlp is cancelled
+  mid-download and interrupted downloads resume.
 - Opt-in text stage: conservative proofreading with word realignment, article with
   faithfulness report, and term check with offline fixes and separate network opt-in.
 - Reels selection with verified quotes, episode overview, cleanup/judge review,

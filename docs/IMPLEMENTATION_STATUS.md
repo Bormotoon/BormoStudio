@@ -4,7 +4,7 @@ This file distinguishes implemented contracts from plan items that still need
 legacy migration or external acceptance. It intentionally does not mark a
 phase complete merely because a similarly named module exists.
 
-## Current snapshot — 2026-10-09
+## Current snapshot — 2026-10-10
 
 This section is the authoritative current inventory. The dated continuation entries
 below are historical evidence: their test counts and remaining-gap lists describe
@@ -14,43 +14,42 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 |---|---|---|
 | 0 — Preparation | Imported histories and preserved source snapshots/patch, fixture generator, locks/CI definitions, local wheel/frozen smoke | Executed CI matrix, clean installed-artifact tests, private acceptance recording, release interpreter qualification |
 | 1 — Contracts and pipeline | Versioned project/manifests, four time domains, planner/worker/events, recoverable publication, scan/prepare/transcribe/complex sync, CLI and Qt shell | Complete legacy golden coverage and real end-to-end GUI/CLI parity |
-| 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, multiple overlapping recorders, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides | Disjoint sessions, explicit recorder-track UI/model, complete source/stream selection parity, NLE import and relinking |
-| 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, master-based audio audition, markers, placement-aware CFR program/transcript | Preview without master, full timeline cut preview, program edit-join crossfades, real word-integrity/listening acceptance |
-| 4 — Speakers/multicam | Microphone attribution/smoothing, isolated pyannote facade, speaker-camera selection, retimed multicam FCPXML | Speaker/camera assignment UI completeness, nonlinear warped mic attribution, cross-file identities, real pyannote and NLE acceptance |
-| 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch, reports/night helper, owned llama lifecycle | Raw recorder warp replay, complete legacy settings/schema parity, external notifications, mid-download cancellation, phase-wide reuse, full Forge golden migration |
-| 6 — Modules/distribution | Managed modules, verified YuNet/Light-ASD downloads, native setup/settings/GGUF picker and dirty guards, compute probe, Linux frozen/local installer | LLM edit detectors, Whisper/GGUF downloads, measured tuning, bundled dependencies, clean-machine/Python 3.12/platform qualification |
+| 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, multiple overlapping recorders, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Disjoint sessions, complete source/stream selection parity, NLE import and relinking |
+| 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, timeline cut overview, with-cut/original audition with or without master, markers, placement-aware CFR program/transcript with duration-preserving join crossfades | Real word-integrity/listening acceptance, end-to-end re-export check |
+| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade, project speaker-camera choices (GUI/CLI), retimed multicam FCPXML | Wide-shot policy, nonlinear warped mic attribution, cross-file identities, real pyannote and NLE acceptance |
+| 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch with webhook/desktop notifications and mid-download cancellation, reports/night helper, owned llama lifecycle, settings migration, legacy comparison runner | Raw recorder warp replay, Studio sections for still-unmapped legacy keys, phase-wide reuse, full Forge golden migration |
+| 6 — Modules/distribution | Managed modules, pinned verified YuNet/Light-ASD/Whisper/GGUF downloads with resume, LLM rough-cut detectors, native setup/settings/GGUF picker and dirty guards, compute probe, Linux frozen/local installer | Real-model LLM edit acceptance, download step in first-run wizard, measured tuning, bundled dependencies, clean-machine/Python 3.12/platform qualification |
 | 7 — Follow-up | Source-video reel rendering and native editor foundations already available | Speaker-angle reels, vision auto-assignment, OTIO, MLX/VideoToolbox, LUFS/covers/audiograms/YouTube replay data |
 
 ### Current verification
 
-- Latest combined source suite: **410 passed, 2 skipped** on Python **3.10.20**,
-  with offscreen Qt; Ruff and whitespace checks pass. Re-run on 2026-10-10 before
-  committing the working tree (see Repository state below). This does not represent the
-  complete 403 + 620 frozen legacy suites or real model acceptance.
-- Current Linux one-file binary rebuilt with PyInstaller **6.22.3** at
-  `/tmp/opencode/uvf-dist/ultimate-video-forge`. CLI/worker help, packaged resources,
-  model listing, fixture plan/scan (four assets) and offscreen GUI startup pass.
-- Python **3.12** remains the intended release baseline, not a qualified installed
-  build in this session. Python 3.14 and non-Linux targets require separate evidence.
+- Latest combined source suite: **447 passed, 2 skipped** on Python **3.10.20**
+  with offscreen Qt (2026-10-10); Ruff passes. `mypy studio tools` still fails
+  (186 errors, down from 195; no new errors in the files added on 2026-10-10), so
+  CI stays red on the type check until the repair task is done.
+- Frozen WhisperSync suite run through `tools/legacy_suites.py` in a Python 3.12
+  environment from its lock file: **403/403**, matching the snapshot. The Forge
+  suite was not run locally (its lock pins torch); CI runs it through the same tool.
+- `whisper-tiny` was downloaded for real through `uvf models install` and matched
+  every pinned checksum. Larger catalog entries were not downloaded here.
+- The Linux one-file binary at `/tmp/opencode/uvf-dist/` predates all 2026-10-10
+  work and must be rebuilt. Python **3.12** remains the intended release baseline.
 - No plan phase is accepted solely on these results. Legacy snapshots remain intact.
 
 ### Prioritized local backlog
 
-1. Extend audio features beyond registered timeline master/edited program inputs;
-   direct raw recorder warp replay without voice artifacts and complete legacy
-   configuration/schema compatibility. Voice/placement/edited mapping, role routing
-   and opt-in term-check are implemented.
-2. External notifications, mid-download cancellation and overnight channel acceptance;
-   phase-wide model ownership/reuse beyond adjacent LLM work. Channel queue, atomic
-   reports, structured completion event and night helper are implemented. Shell hooks
-   remain deferred under the explicit-permission decision in PROJECT_DECISIONS.md.
-3. Explicit recorder/speaker/camera controls and full timeline cut preview;
-   audio audition without master and real listening acceptance. Dirty guards and
-   master-based audition are implemented. Per-reel framing
-   and instant crop preview are follow-ups to the existing shared project controls.
-4. LLM rough-cut detectors, managed Whisper/GGUF acquisition and measured tuning.
-5. Full source parity tests and installed/frozen real-processing checks, then
-   production packaging. Select the private sample and record external acceptance.
+1. Type-check repair so CI is green again.
+2. Real acceptance of the new local pieces: LLM edit suggestions on a real model,
+   listening to with-cut previews and program join crossfades, Material screen
+   interaction (lanes, drag and drop, cameras), an overnight channel run with
+   notifications and a cancelled-then-resumed download.
+3. Raw recorder warp replay without voice artifacts; Studio sections (batch, fetch,
+   hooks, remaining reels/llm options) for keys the migration still reports as
+   unmapped; phase-wide model ownership/reuse.
+4. Wide-shot policy for speaker cameras, download step in the first-run wizard,
+   measured Whisper/llama tuning.
+5. Studio-vs-legacy golden parity on the comparison suites, installed/frozen
+   real-processing checks, production packaging, private sample acceptance.
 
 ### Acceptance still required
 
@@ -63,6 +62,36 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - CI matrix, Python 3.12 qualification and clean Linux installation first;
   Windows/macOS and process-tree cancellation afterward per owner platform priority.
 - Third-party model/font/ffmpeg license inventory before distribution.
+
+### Continuation — 2026-10-10: rough-cut LLM, preview, tracks, models, migration, batch
+
+- **LLM rough-cut detectors** (`stages/roughcut_llm.py`): start of conversation,
+  slips, semantic fillers and take delivery through the routed `roughcut` role.
+  The model names phrase numbers and verbatim quotes only; quotes must match
+  transcript words, cut times come from those words, and rejected or failed
+  findings go to `llm-report.json`. Default `llm_apply: suggest` adds unaccepted
+  cuts and delivery markers; fillers stay markers. Runner ownership of the managed
+  llama server follows `uses_llm`, so a non-LLM roughcut does not start it.
+- **Review**: `gui/cut_timeline.py` overview synced with the decision list;
+  `core/preview.py` renders with-cut/original previews from the master, a synced
+  camera voice or the transcript source via placement. **Program** joins use
+  handled overlap-add crossfades (`program_audio.py`), memory-mapped decoding,
+  exact sample counts, constant-power on edit joins and linear on camera changes.
+- **Material**: `RecorderTrack` and `speaker_cameras` in `project.json`
+  (additive fields, schema 1 loads older projects), `core/recorder_tracks.py`,
+  `uvf tracks` / `uvf cameras`, multi-asset `uvf material`, and `gui/material.py`
+  with grouped tree and drag-and-drop regrouping.
+- **Models**: `modules/catalog.py` (pinned HF commits, per-file SHA256 or git blob
+  SHA1) and `modules/downloads.py` (resume via ranges, cancellation, verified
+  publication); `transcribe` prefers a downloaded catalog model; Modules page lists
+  the catalog and fills settings.
+- **Tools**: `tools/migrate_settings.py` (table 6.3, report of every key, Studio
+  validation) and `tools/legacy_suites.py` (per-test outcomes, snapshot totals,
+  run-to-run comparison; used by CI).
+- **Batch**: `cli/notify.py` webhook/desktop notifications recorded in reports;
+  `run_cancellable` stops yt-dlp mid-download, partial downloads resume by URL,
+  cancelled channel runs write a `cancelled` report and exit 130.
+- Verification: 447 passed, 2 skipped; Ruff passes; mypy 186 (pre-existing).
 
 ### Repository state — 2026-10-10
 
