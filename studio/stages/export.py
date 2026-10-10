@@ -71,7 +71,7 @@ class ExportStage:
 
     def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         inputs = [
-            describe_artifact(project.work_dir, path)
+            describe_artifact(project.work_dir, path, project.work_dir)
             for key, paths in project.outputs.items()
              if key.startswith(("sync:", "sync-tracks:", "ambience:"))
              or key in {"roughcut", "speakers"}
@@ -82,7 +82,8 @@ class ExportStage:
             inputs, settings.get("export", {}), settings.get("roughcut", {}),
             settings.get("program", {}), project.speaker_cameras,
             settings.get("transcribe", {}).get("audio_streams", {}),
-            [describe_artifact(project.source_dir, project.source_dir / asset.path)
+            [describe_artifact(project.source_dir, project.source_dir / asset.path,
+                               project.work_dir)
              for asset in project.assets if asset.role is AssetRole.CAMERA
              and (project.source_dir / asset.path).is_file()],
         )

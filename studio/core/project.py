@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from studio.core.digest import file_digest
 from studio.core.enums import StrEnum
 from studio.core.timeline import AudioWarpMap, AudioWarpPiece, SourcePlacement, TimeDomain
 
@@ -234,10 +235,11 @@ class StageManifest:
         return all(_artifact_matches(root, artifact) for artifact in self.artifacts)
 
 
-def describe_artifact(root: Path, path: Path) -> Artifact:
+def describe_artifact(root: Path, path: Path, cache_dir: Path | None = None) -> Artifact:
+    """Describe ``path``; ``cache_dir`` (the work directory) reuses cached digests."""
     resolved = path if path.is_absolute() else root / path
     relative = resolved.relative_to(root)
-    return Artifact(str(relative), _sha256(resolved), resolved.stat().st_size)
+    return Artifact(str(relative), file_digest(resolved, cache_dir), resolved.stat().st_size)
 
 
 def stable_fingerprint(*parts: Any) -> str:
@@ -250,17 +252,10 @@ def stable_fingerprint(*parts: Any) -> str:
 def _artifact_matches(root: Path, artifact: Artifact) -> bool:
     path = root / artifact.path
     try:
-        return path.stat().st_size == artifact.size and _sha256(path) == artifact.sha256
+        return (path.stat().st_size == artifact.size
+                and file_digest(path, root) == artifact.sha256)
     except OSError:
         return False
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _atomic_json(path: Path, data: dict[str, Any]) -> None:

@@ -35,12 +35,20 @@ def build_plan(
 ) -> Plan:
     ordered = _topological_order(stages)
     registry = {stage.id: stage for stage in ordered}
+    fingerprints: dict[str, str] = {}
+
+    def fingerprint_of(stage: Stage) -> str:
+        # Fingerprints read transcripts and digest sources: compute each once.
+        if stage.id not in fingerprints:
+            fingerprints[stage.id] = stage.fingerprint(project, settings)
+        return fingerprints[stage.id]
+
     planned: list[PlannedStage] = []
     decisions: dict[str, Decision] = {}
     only = only or set()
     skip = skip or set()
     discovery_complete = all(
-        _reusable_manifest(project, stage.id, stage.fingerprint(project, settings))
+        _reusable_manifest(project, stage.id, fingerprint_of(stage))
         for stage in ordered if stage.id in DISCOVERY_STAGES
     )
 
@@ -63,14 +71,14 @@ def build_plan(
                     if decisions[dependency].kind is not DecisionKind.RUN
                     if not (only and dependency not in only and dependency not in skip
                             and _reusable_manifest(project, dependency,
-                                registry[dependency].fingerprint(project, settings)))
+                                fingerprint_of(registry[dependency])))
                 ),
                 None,
             )
             if failed_dependency is not None:
                 decision = Decision.skip(f"dependency {failed_dependency} did not run")
 
-        fingerprint = stage.fingerprint(project, settings)
+        fingerprint = fingerprint_of(stage)
         reuse = (
             decision.kind is DecisionKind.RUN
             and _reusable_manifest(project, stage.id, fingerprint)

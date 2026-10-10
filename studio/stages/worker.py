@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from studio.core.digest import configure_from_settings
 from studio.core.project import Project
 from studio.stages.base import Stage, StageContext
 from studio.stages.events import EventType, StageEvent
@@ -71,6 +72,7 @@ def execute(
             if not isinstance(loaded, dict):
                 raise ValueError("settings root must be a mapping")
             settings = loaded
+    configure_from_settings(settings)
     _emit(StageEvent(EventType.START, stage_id))
     with redirect_stdout(sys.stderr):
         output = stage.run(StageContext(project, settings, output_dir))

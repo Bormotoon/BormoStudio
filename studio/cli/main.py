@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from studio import __version__
+from studio.core.digest import configure_from_settings, set_rehash
 from studio.core.project import AssetRole, Project
 from studio.core.publication import recover_publications
 from studio.core.settings import SettingsError, load_settings
@@ -44,7 +45,9 @@ def _project(source: Path) -> tuple[Project, Path, Path]:
 
 
 def _settings(path: Path, overrides: list[str] | None = None) -> dict[str, Any]:
-    return effective_llm_settings(load_settings([path], overrides).to_dict())
+    settings = effective_llm_settings(load_settings([path], overrides).to_dict())
+    configure_from_settings(settings)
+    return settings
 
 
 def _run_discovery(
@@ -473,6 +476,10 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--only", nargs="+", metavar="STAGE")
             command.add_argument("--skip", nargs="+", metavar="STAGE")
             command.add_argument("--events", action="store_true")
+            command.add_argument(
+                "--rehash", action="store_true",
+                help="recompute source and artifact digests instead of using the cache",
+            )
         command.add_argument("--cancel-file", type=Path)
     commands.add_parser("doctor")
     compute = commands.add_parser("compute")
@@ -842,6 +849,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError("no roughcut decisions to review")
             print(paths[0].read_text(encoding="utf-8"), end="")
         return 0
+    if getattr(args, "rehash", False):
+        set_rehash(True)
     project = (
         _run_pipeline(
             args.source,

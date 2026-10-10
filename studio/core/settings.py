@@ -21,6 +21,9 @@ class SettingsError(ValueError):
 class ScanSettings:
     grouping: str = "auto"
     probe_timeout_s: float = 30.0
+    # "cached" reuses source/artifact digests while (size, mtime, ctime, inode)
+    # and a content sample match; "always" rehashes every file once per run.
+    verify_digests: str = "cached"
 
 
 @dataclass(slots=True)
@@ -349,6 +352,7 @@ def validate_settings(settings: Settings) -> None:
         raise SettingsError("managed llama requires executable and model_path")
     _one_of("scan.grouping", settings.scan.grouping, {"auto", "folders", "names"})
     _positive("scan.probe_timeout_s", settings.scan.probe_timeout_s)
+    _one_of("scan.verify_digests", settings.scan.verify_digests, {"cached", "always"})
     _one_of("sync.mode", settings.sync.mode, {"auto", "camera", "simple", "complex"})
     if settings.sync.strategy not in {1, 2, 3}:
         raise SettingsError("sync.strategy must be 1, 2, or 3")

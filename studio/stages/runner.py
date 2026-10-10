@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -15,6 +16,7 @@ from typing import Any
 
 import yaml
 
+from studio.core.digest import remember_digest
 from studio.core.launch import python_command
 from studio.core.project import Artifact, ArtifactStatus, Project, StageManifest, describe_artifact
 from studio.core.publication import publish_files, recover_publications
@@ -233,6 +235,11 @@ def _run_stage_process(
         publish_files(project.work_dir, replacements, cancelled=cancelled)
     except InterruptedError as exc:
         raise StageProcessError(f"stage {stage_id} was cancelled") from exc
+    # The digests were just computed from the published bytes: record them so
+    # the next manifest check of these artifacts is a stat call.
+    for artifact in artifacts:
+        with contextlib.suppress(OSError):
+            remember_digest(project.work_dir / artifact.path, artifact.sha256, project.work_dir)
     return RunResult(tuple(events), manifest)
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import gc
-import hashlib
 import json
 import os
 import subprocess
@@ -15,6 +14,7 @@ from typing import Any, Protocol
 
 from platformdirs import user_cache_path
 
+from studio.core.digest import file_digest
 from studio.core.project import Project, stable_fingerprint
 from studio.core.transcript import Segment, Transcript, Word, to_srt
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
@@ -273,10 +273,12 @@ class WhisperEngine:
         settings: TranscribeSettings,
         backend: WhisperBackend | None = None,
         cache_dir: Path | None = None,
+        digest_cache: Path | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend or whisper_backend(settings)
         self.cache_dir = cache_dir or user_cache_path("studio") / "transcripts"
+        self.digest_cache = digest_cache
 
     def transcribe(self, path: Path, stream_index: int | None = None) -> Transcript:
         cache_path = self.cache_dir / f"{self._key(path, stream_index)}.json"
@@ -306,7 +308,7 @@ class WhisperEngine:
         return transcript
 
     def _key(self, path: Path, stream_index: int | None) -> str:
-        identity = _sha256(path)
+        identity = _sha256(path, self.digest_cache)
         return stable_fingerprint(
             CACHE_SCHEMA,
             identity,
@@ -375,7 +377,7 @@ class TranscribeStage:
             asset = assets.get(asset_id)
             source = project.source_dir / asset.path if asset else None
             identities[asset_id] = (
-                {"path": str(source), "sha256": _sha256(source)}
+                {"path": str(source), "sha256": _sha256(source, project.work_dir)}
                 if source is not None and source.is_file() else {"missing": True}
             )
         return stable_fingerprint(
@@ -387,7 +389,7 @@ class TranscribeStage:
         requirements = json.loads(requirements_path.read_text(encoding="utf-8"))
         asset_by_id = {asset.id: asset for asset in context.project.assets}
         settings = TranscribeSettings.from_mapping(context.settings.get("transcribe", {}))
-        engine = WhisperEngine(settings)
+        engine = WhisperEngine(settings, digest_cache=context.project.work_dir)
         artifacts: list[Path] = []
         transcripts = dict(context.project.transcripts)
         for asset_id in requirements.get("transcripts", []):
@@ -431,12 +433,8 @@ def _resolve_compute_type(device: str, requested: str) -> str:
     return requested if requested != "auto" else "float16" if device == "cuda" else "float32"
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _sha256(path: Path, cache_dir: Path | None = None) -> str:
+    return file_digest(path, cache_dir)
 
 
 def _optional_float(value: object) -> float | None:

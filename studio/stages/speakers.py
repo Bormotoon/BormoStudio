@@ -92,7 +92,8 @@ class SpeakersStage:
                         project, Transcript.load(transcript))}
                 except ValueError:
                     pass
-        identities = [describe_artifact(project.source_dir, project.source_dir / asset.path)
+        identities = [describe_artifact(project.source_dir, project.source_dir / asset.path,
+                                        project.work_dir)
                       for asset in project.assets if asset.id in selected]
         return stable_fingerprint(
             "speakers-v6", content, tracks, identities, project.placements,

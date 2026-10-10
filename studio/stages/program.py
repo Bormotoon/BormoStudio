@@ -54,14 +54,15 @@ class ProgramStage:
             ],
             [(asset.id, asset.group_id) for asset in project.assets],
             [
-                describe_artifact(project.work_dir, path)
+                describe_artifact(project.work_dir, path, project.work_dir)
                 for key, paths in project.outputs.items()
                 if key.startswith("sync:")
                 for path in paths
                 if path.is_file()
             ],
             [
-                describe_artifact(project.source_dir, project.source_dir / asset.path)
+                describe_artifact(project.source_dir, project.source_dir / asset.path,
+                                  project.work_dir)
                 for asset in project.assets
                 if asset.role is AssetRole.CAMERA
             ],

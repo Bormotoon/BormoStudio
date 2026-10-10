@@ -57,7 +57,7 @@ class SyncStage:
 
         return stable_fingerprint(
             "sync-v4", transcripts, project.assets,
-            {asset.id: _sha256(project.source_dir / asset.path)
+            {asset.id: _sha256(project.source_dir / asset.path, project.work_dir)
              for asset in project.assets if asset.role in {AssetRole.CAMERA, AssetRole.RECORDER}},
             settings.get("sync", {}), settings.get("transcribe", {}).get("audio_streams", {}),
         )
