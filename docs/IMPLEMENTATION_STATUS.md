@@ -17,7 +17,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 | 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, overlapping and explicitly positioned disjoint sessions, reference-camera choice, selected-stream matching/rendering and detached camera PCM for NLE, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Full legacy source-selection workflow parity, NLE import and relinking |
 | 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, timeline cut overview, with-cut/original audition with or without master, markers, placement-aware CFR program/transcript with duration-preserving join crossfades | Real word-integrity/listening acceptance, end-to-end re-export check |
 | 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade, project speaker-camera choices (GUI/CLI), wide-shot policy, retimed multicam FCPXML | Cross-file identities, real pyannote and NLE acceptance |
-| 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch with webhook/desktop notifications and mid-download cancellation, reports/night helper, owned llama lifecycle, settings migration, legacy comparison runner | Raw recorder warp replay, Studio homes for the remaining reels/llm legacy keys, phase-wide reuse, full Forge golden migration |
+| 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch with webhook/desktop notifications and mid-download cancellation, reports/night helper, owned llama lifecycle, settings migration, legacy comparison runner | Studio homes for the remaining reels/llm legacy keys, phase-wide reuse, full Forge golden migration |
 | 6 — Modules/distribution | Managed modules, pinned verified YuNet/Light-ASD/Whisper/GGUF downloads with resume, LLM rough-cut detectors, native setup/settings/GGUF picker and dirty guards, compute probe, Linux frozen/local installer | Real-model LLM edit acceptance, download step in first-run wizard, measured tuning, bundled dependencies, clean-machine/Python 3.12/platform qualification |
 | 7 — Follow-up | Source-video reel rendering and native editor foundations already available | Speaker-angle reels, vision auto-assignment, OTIO, MLX/VideoToolbox, LUFS/covers/audiograms/YouTube replay data |
 
@@ -117,6 +117,14 @@ that point in development, not today's backlog. Plan phase acceptance remains op
   This is a read-only overview, not full audiovisual timeline/simulator parity.
 - Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
   Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
+
+### Raw warp replay for reel audio — 2026-10-10
+
+- When synchronization kept no voice WAVs, reel audio features re-render each
+  camera voice from the raw recorder through its file-domain `AudioWarpMap`
+  (same pieces, factors and lead silence via `render_audio_plan`, 16 kHz mono in
+  a temporary folder) and continue through the usual master/edited mapping. The
+  audio identity covers the warps and recorder digests.
 
 ### Warped microphone attribution — 2026-10-10
 

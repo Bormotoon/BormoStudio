@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from studio.core.project import Project, stable_fingerprint
-from studio.core.timeline import SourcePlacement, TimeDomain
+from studio.core.timeline import AudioWarpMap, SourcePlacement, TimeDomain
 from studio.core.transcript import Transcript
 from studio.core.workspace import published
 from studio.modules.models import digest
@@ -46,10 +46,62 @@ def audio_identity(project: Project, transcript: Transcript) -> str:
                 project.audio_warp_maps,
                 report.read_text() if report and report.is_file() else "",
             )
+        warps = replayable_warps(project)
+        if warps:
+            assets = {asset.id: asset for asset in project.assets}
+            report = next(iter(project.outputs.get("program_report", [])), None)
+            return stable_fingerprint(
+                "replay", warps, project.placements,
+                [digest(project.source_dir / assets[warp.source_asset_id].path)
+                 for warp in warps],
+                report.read_text() if report and report.is_file() else "",
+            )
         placed = resolve_placed_audio(project, transcript)
         if placed is not None:
             return stable_fingerprint(str(placed[0]), digest(placed[0]), placed[1], placed[2])
     return stable_fingerprint(str(path), digest(path)) if path else "unavailable"
+
+
+def replayable_warps(project: Project) -> list[AudioWarpMap]:
+    """File-domain warps onto placed cameras whose recorder file is present."""
+    placed = {item.asset_id for item in project.placements}
+    assets = {asset.id: asset for asset in project.assets}
+    return [
+        warp for warp in project.audio_warp_maps
+        if warp.source_domain is TimeDomain.FILE and warp.target_asset_id in placed
+        and warp.source_asset_id in assets
+        and (project.source_dir / assets[warp.source_asset_id].path).is_file()
+    ]
+
+
+def replay_voices(project: Project, directory: Path) -> dict[str, Path]:
+    """Re-render camera voices from raw recorder files through their warp maps.
+
+    Used when synchronization kept no voice WAVs: analysis then hears the same
+    pieces, stretch factors and lead silence the sync render would produce.
+    """
+    from studio.stages.sync_render import render_audio_plan
+
+    assets = {asset.id: asset for asset in project.assets}
+    placements = {item.asset_id: item for item in project.placements}
+    voices: dict[str, Path] = {}
+    for warp in replayable_warps(project):
+        target = str(warp.target_asset_id)
+        if target in voices:
+            continue
+        pieces = [(piece.source_start_s, piece.source_duration_s,
+                   piece.source_duration_s / piece.rendered_duration_s)
+                  for piece in warp.pieces]
+        output = directory / f"replay-{target}.wav"
+        render_audio_plan(
+            project.source_dir / assets[warp.source_asset_id].path, output, pieces,
+            lead_silence_s=warp.pieces[0].rendered_start_s,
+            duration_s=placements[target].duration_s, map_id=warp.id,
+            source_asset_id=warp.source_asset_id, target_asset_id=target,
+            strategy=warp.strategy, sample_rate=16000, channels=1, codec="pcm_s16le",
+        )
+        voices[target] = output
+    return voices
 
 
 def synchronized_voices(project: Project) -> dict[str, Path]:
@@ -70,10 +122,13 @@ def analysis_audio(project: Project, transcript: Transcript) -> Iterator[AudioIn
         yield source, None, "0:a:0"
         return
     voices = synchronized_voices(project)
-    if voices and transcript.time_domain in {TimeDomain.TIMELINE, TimeDomain.EDITED}:
+    replay = not voices and bool(replayable_warps(project))
+    if (voices or replay) and transcript.time_domain in {TimeDomain.TIMELINE, TimeDomain.EDITED}:
         from studio.stages.sync_outputs import render_voice_master
 
         with tempfile.TemporaryDirectory(prefix="uvf-analysis-audio-") as temporary:
+            if replay:
+                voices = replay_voices(project, Path(temporary))
             master = render_voice_master(project.placements, voices, Path(temporary) / "master.wav")
             if transcript.time_domain is TimeDomain.TIMELINE:
                 yield master, None, "0:a:0"

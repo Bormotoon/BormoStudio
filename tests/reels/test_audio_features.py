@@ -144,3 +144,38 @@ def test_synchronized_voice_and_edited_cut_audio_without_program(tmp_path):
     with audio.analysis_audio(project, transcript) as (path, _, _):
         with wave.open(str(path)) as output:
             assert output.getnframes() / output.getframerate() == 1
+
+
+def test_raw_recorder_is_replayed_through_its_warp_without_voice_files(tmp_path):
+    from pathlib import Path
+
+    from studio.core.project import Asset, AssetRole
+    from studio.core.timeline import AudioWarpMap, AudioWarpPiece, SourcePlacement
+
+    recorder = tmp_path / "rec.wav"
+    with wave.open(str(recorder), "wb") as output:
+        output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        # Two seconds of silence, then two seconds of tone.
+        output.writeframes(b"\x00\x00" * 32000 + struct.pack("<h", 8000) * 32000)
+    project = Project(tmp_path, tmp_path / "work")
+    project.assets = [Asset("rec", Path("rec.wav"), "audio", AssetRole.RECORDER)]
+    project.placements = [SourcePlacement("camera", 0, 0, 3)]
+    # The camera hears recorder seconds 1-4 starting at its own second 0.
+    project.audio_warp_maps = [AudioWarpMap("w", "rec", "camera", (
+        AudioWarpPiece(1, 1, 0, 1, "copy"), AudioWarpPiece(2, 2, 1, 2, "copy"),
+    ), TimeDomain.FILE, 3)]
+    transcript = Transcript(recorder, "en", 3, [], time_domain=TimeDomain.TIMELINE)
+    assert audio_identity(project, transcript) != "unavailable"
+    with audio.analysis_audio(project, transcript) as (path, placement, _stream):
+        assert placement is None
+        import subprocess
+
+        rate = 16000
+        frames = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-ar", str(rate),
+             "-f", "s16le", "-"], check=True, capture_output=True,
+        ).stdout
+        values = struct.unpack(f"<{len(frames) // 2}h", frames)
+        first = max(abs(v) for v in values[: rate // 2])
+        tone = max(abs(v) for v in values[int(rate * 1.5): int(rate * 2.5)])
+        assert first < 100 < tone
