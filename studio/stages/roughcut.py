@@ -9,7 +9,7 @@ from typing import Any
 
 from studio.core.audio_spans import Span, detect_silence, unknown_sound_spans, word_gaps
 from studio.core.project import Project, stable_fingerprint
-from studio.core.timeline import file_to_timeline
+from studio.core.timeline import file_to_timeline, timeline_to_file
 from studio.core.transcript import Transcript, Word
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 from studio.stages.retake_models import RetakeGroup, RetakeSettings
@@ -126,10 +126,24 @@ class RoughcutStage:
         source = transcript.source_audio
         if not source.is_file():
             raise ValueError("roughcut energy source is missing")
-        silence = detect_silence(
-            source, threshold_db=float(conf.get("silence_threshold_db", -40.0)),
-            duration_s=placement.duration_s if placement else transcript.duration,
-        )
+        threshold = float(conf.get("silence_threshold_db", -40.0))
+        coverage = [Span(float(a), float(b)) for a, b in transcript.metadata.get("coverage", [])]
+        if coverage and placement is not None:
+            # Only the transcribed parts of the recorder are read: elsewhere there
+            # are no words, so silence there would only feed false sound markers.
+            silence = [
+                span for part in coverage
+                for span in detect_silence(
+                    source, threshold_db=threshold,
+                    start_s=max(0.0, timeline_to_file(part.start_s, placement)),
+                    duration_s=(part.end_s - part.start_s) / placement.k,
+                )
+            ]
+        else:
+            silence = detect_silence(
+                source, threshold_db=threshold,
+                duration_s=placement.duration_s if placement else transcript.duration,
+            )
         if placement is not None:
             silence = [Span(file_to_timeline(span.start_s, placement),
                             file_to_timeline(span.end_s, placement)) for span in silence]
@@ -164,6 +178,7 @@ class RoughcutStage:
                                  placement.offset_s + placement.duration_s * placement.k)
                             if placement else None),
             head_tail_sound=str(conf.get("head_tail_sound", "cut")),
+            coverage=coverage or None,
         )
         overrides = context.project.work_dir / "edit-overrides.json"
         if overrides.is_file():
@@ -282,15 +297,37 @@ def build_edit_list(
     unknown_sound_min_s: float = 0.3,
     audio_coverage: Span | None = None,
     head_tail_sound: str = "cut",
+    coverage: list[Span] | None = None,
 ) -> EditList:
+    """Cuts and markers for ``transcript``.
+
+    ``coverage`` lists the transcribed parts of a partly transcribed recorder:
+    untranscribed sound, head and tail are looked for only inside them.
+    """
     if mode not in {"cut", "markers"}:
         raise ValueError("roughcut mode must be cut or markers")
+    if coverage:
+        parts = [Span(max(part.start_s, audio_coverage.start_s),
+                      min(part.end_s, audio_coverage.end_s)) if audio_coverage else part
+                 for part in coverage]
+        parts = [part for part in parts if part.end_s > part.start_s]
+        if parts:
+            audio_coverage = Span(parts[0].start_s, parts[-1].end_s)
+    else:
+        parts = [audio_coverage] if audio_coverage else []
+
+    def sound_spans(words: list[Word]) -> list[Span]:
+        if silence is None:
+            return []
+        if not parts:
+            return unknown_sound_spans(words, silence, duration_s=transcript.duration,
+                                       minimum_s=unknown_sound_min_s)
+        return [span for part in parts for span in unknown_sound_spans(
+            words, silence, duration_s=transcript.duration, minimum_s=unknown_sound_min_s,
+            coverage=part)]
     words = transcript.words
     if not words:
-        sounds = unknown_sound_spans(
-            [], silence, duration_s=transcript.duration,
-            minimum_s=unknown_sound_min_s, coverage=audio_coverage,
-        ) if silence is not None else []
+        sounds = sound_spans([])
         return EditList(mode, ((0.0, transcript.duration),), (), tuple(
             Marker(span.start_s, "unknown-sound", f"untranscribed audio {span.duration_s:.2f}s")
             for span in sounds
@@ -380,10 +417,7 @@ def build_edit_list(
         *llm_markers,
         *(Marker(span.start_s, "unknown-sound",
                  f"untranscribed audio {span.duration_s:.2f}s")
-          for span in (unknown_sound_spans(
-              words, silence, duration_s=transcript.duration,
-              minimum_s=unknown_sound_min_s, coverage=audio_coverage,
-          ) if silence is not None else [])),
+          for span in sound_spans(words)),
     ), key=lambda marker: marker.at))
     keep = (
         _complement(transcript.duration, cuts)

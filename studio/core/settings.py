@@ -47,6 +47,8 @@ class SyncSettings:
     # "auto" refines the plan acoustically when the camera has sound.
     acoustic_refine: str = "auto"
     step_min_ms: float = 10.0
+    # locate: search other cameras of a group this far around their predicted place.
+    locate_search_s: float = 120.0
     voice_segment_minutes: float = 0.0
     master_wav: bool = False
     master_crossfade_ms: float = 10.0
@@ -78,6 +80,15 @@ class TranscribeSettings:
     vad_merge_gap_s: float = 1.5
     # Segments split at longer word gaps; 1-2 word series beyond them are checked.
     max_word_gap_s: float = 2.0
+    # "auto"/"cameras" transcribe a recorder only around located cameras (whole
+    # file when they cover most of it); "full" always transcribes everything.
+    recorder_scope: str = "auto"
+    window_margin_s: float = 60.0
+    # Manual recorder ranges in seconds: {asset_id: [[start, end], ...]}.
+    ranges: dict[str, list[list[float]]] = field(default_factory=dict)
+    # "auto": camera transcripts only where needed (not located, self-check,
+    # camera mode, no recorder); "always": every camera.
+    camera_transcripts: str = "auto"
 
 
 @dataclass(slots=True)
@@ -399,6 +410,16 @@ def validate_settings(settings: Settings) -> None:
     _positive("transcribe.repetition_penalty", settings.transcribe.repetition_penalty)
     _positive("transcribe.vad_merge_gap_s", settings.transcribe.vad_merge_gap_s)
     _positive("transcribe.max_word_gap_s", settings.transcribe.max_word_gap_s)
+    _one_of("transcribe.recorder_scope", settings.transcribe.recorder_scope,
+            {"auto", "full", "cameras"})
+    _one_of("transcribe.camera_transcripts", settings.transcribe.camera_transcripts,
+            {"auto", "always"})
+    _non_negative("transcribe.window_margin_s", settings.transcribe.window_margin_s)
+    _positive("sync.locate_search_s", settings.sync.locate_search_s)
+    for asset_id, spans in settings.transcribe.ranges.items():
+        if not asset_id.strip() or any(
+                len(span) != 2 or not 0 <= span[0] < span[1] for span in spans):
+            raise SettingsError("transcribe.ranges maps assets to [start, end] seconds")
     if any(not key.strip() or value < 0
            for key, value in settings.transcribe.audio_streams.items()):
         raise SettingsError("transcribe.audio_streams requires names and non-negative indices")

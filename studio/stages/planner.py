@@ -19,7 +19,7 @@ from studio.stages.base import (
 )
 from studio.stages.requirements import MissingRequirement, missing_requirements
 
-DISCOVERY_STAGES = ("discover", "scan", "prepare")
+DISCOVERY_STAGES = ("discover", "scan", "locate", "prepare")
 
 
 @dataclass(frozen=True, slots=True)

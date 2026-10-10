@@ -191,9 +191,9 @@ class MaterialPage(QWidget):
                 track.speaker or "", "yes" if track.enabled else "no",
             ])
             item.setData(0, ASSET_ROLE, track.asset_id)
-            asset = assets_by_id.get(track.asset_id)
+            owner = assets_by_id.get(track.asset_id)
             analysis = describe(
-                asset.manual.get("media_info", {}).get("channel_analysis") if asset else None)
+                owner.manual.get("media_info", {}).get("channel_analysis") if owner else None)
             if analysis:
                 for column in range(item.columnCount()):
                     item.setToolTip(column, f"Channels: {analysis}")

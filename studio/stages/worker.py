@@ -17,6 +17,7 @@ from studio.core.project import Project
 from studio.stages.base import Stage, StageContext
 from studio.stages.events import EventType, StageEvent
 from studio.stages.export import ExportStage
+from studio.stages.locate import LocateStage
 from studio.stages.prepare import PrepareStage
 from studio.stages.program import ProgramStage
 from studio.stages.program_subtitles import ProgramSubtitlesStage
@@ -34,6 +35,7 @@ from studio.stages.transcribe import TranscribeStage
 def stage_registry() -> dict[str, Stage]:
     stages: list[Stage] = [
         ScanStage(),
+        LocateStage(),
         PrepareStage(),
         TranscribeStage(),
         SyncStage(),

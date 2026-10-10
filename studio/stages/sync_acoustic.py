@@ -370,6 +370,7 @@ def acoustic_coarse_align(
     gcc_eps: float = 1e-8,
     max_k_deviation: float = 0.05,
     min_points: int = 3,
+    rec_range: tuple[float, float] | None = None,
 ) -> AcousticFit | None:  # noqa: PLR0913
     """Acoustic fallback offset/K estimate when there's no usable transcript
     match (too little speech, music, a foreign language Whisper garbles, or
@@ -405,7 +406,14 @@ def acoustic_coarse_align(
     much of the recorder is looked at.
     """
     cam_track = load_mono16k_track(cam_audio_wav)
-    rec_track = load_mono16k_track(rec_audio_path)
+    # ``rec_range`` (from ``locate``) bounds the search: decoding hours of
+    # recorder to place a five-minute clip that is known to sit in one place
+    # costs far more than the correlation itself.
+    rec_origin = max(0.0, rec_range[0]) if rec_range else 0.0
+    rec_track = load_mono16k_track(
+        rec_audio_path, start_s=rec_origin or None,
+        duration_s=(rec_range[1] - rec_origin) if rec_range else None,
+    )
     if rec_track.size < 8 or cam_track.size < 8:
         return None
 
@@ -439,6 +447,7 @@ def acoustic_coarse_align(
         )
         if found is not None:
             rec_time, _sharp = found
+            rec_time += rec_origin
             if 0.0 <= rec_time <= rec_duration + window_s:
                 points.append((t_cam, rec_time))
         t_cam += grid_s
@@ -516,6 +525,7 @@ def refine_piece_boundaries(
     tmp_dir: Path | None = None,
     workers: int = 1,
     rec_track: np.ndarray | None = None,
+    rec_origin_s: float = 0.0,
 ) -> tuple[float, list[Piece]]:
     """Acoustically nudge each piece's onset so its speech lands under the
     picture, independent of Whisper's word timings ("Boundary Flex").
@@ -585,7 +595,13 @@ def refine_piece_boundaries(
     # caller hands one in (see `rec_track`).
     cam_track = load_mono16k_track(cam_audio_wav)
     if rec_track is None:
-        rec_track = load_mono16k_track(rec_audio_path)
+        # Only the stretch the pieces read (plus a window) is decoded, not the
+        # whole multi-hour recorder.
+        rec_origin_s = max(0.0, min(p[0] for p in pieces) - win)
+        end = min(rec_duration, max(p[0] + p[1] for p in pieces) + win)
+        rec_track = load_mono16k_track(rec_audio_path, start_s=rec_origin_s or None,
+                                       duration_s=end - rec_origin_s)
+    jobs = [(idx, cam_mid, rec_mid - rec_origin_s) for idx, cam_mid, rec_mid in jobs]
 
     args = (
         win,

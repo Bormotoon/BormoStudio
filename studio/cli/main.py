@@ -61,7 +61,7 @@ def _run_discovery(
     settings = _settings(settings_path, overrides)
     selected = [stage_registry()["scan"]]
     if include_prepare:
-        selected.append(stage_registry()["prepare"])
+        selected.extend((stage_registry()["locate"], stage_registry()["prepare"]))
     with project_lock(project.work_dir):
         recover_publications(project.work_dir)
         for stage in selected:
@@ -108,7 +108,7 @@ def _run_pipeline(
     def forward(event: StageEvent) -> None:
         print(event.to_json(), flush=True)
 
-    def report(event: StageEvent) -> None:
+    def relay(event: StageEvent) -> None:
         if stream:
             forward(event)
         elif event.type is EventType.WARNING:
@@ -178,7 +178,7 @@ def _run_pipeline(
                     fingerprint_parts=fingerprint_parts(
                         registry[candidate.stage_id], project, settings
                     ),
-                    on_event=report,
+                    on_event=relay,
                     cancelled=lambda: cancel_file is not None and cancel_file.exists(),
                 )
             except StageProcessError as exc:

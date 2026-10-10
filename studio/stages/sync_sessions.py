@@ -15,6 +15,7 @@ def plan_sessions(
     project: Project, cameras: list[Asset], recorders: list[Asset],
     transcripts: dict[str, Transcript], conf: dict[str, Any], *, acoustic_first: bool,
     check: Callable[[Asset, Asset, AlignmentMap], AlignmentMap] | None = None,
+    search_ranges: dict[tuple[str, str], tuple[float, float]] | None = None,
 ) -> tuple[list[SourcePlacement], dict[tuple[str, str], AlignmentMap], dict[str, str]]:
     """Fit every camera to the recorders and place all files on one timeline.
 
@@ -30,9 +31,14 @@ def plan_sessions(
                 transcripts[target.id], transcripts[source.id],
                 project.source_dir / target.path, project.source_dir / source.path,
                 conf, acoustic_first=acoustic_first,
+                source_range=(search_ranges or {}).get((target.id, source.id)),
             )
         except ValueError as exc:
-            rejected[f"{target.id}:{source.id}"] = str(exc)
+            reason = str(exc)
+            if transcripts[source.id].metadata.get("coverage"):
+                reason += ("; the camera may be outside the transcribed window: "
+                           "set transcribe.recorder_scope=full")
+            rejected[f"{target.id}:{source.id}"] = reason
             return None
         if check is not None:
             result = check(target, source, result)

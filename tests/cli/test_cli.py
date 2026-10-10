@@ -20,6 +20,7 @@ def test_scan_and_plan_fixture_through_workers(tmp_path: Path, capsys) -> None: 
     plan = json.loads(capsys.readouterr().out)
     assert [stage["id"] for stage in plan["stages"]] == [
         "scan",
+        "locate",
         "prepare",
         "transcribe",
         "sync",
@@ -33,8 +34,8 @@ def test_scan_and_plan_fixture_through_workers(tmp_path: Path, capsys) -> None: 
         "export",
         "program_subtitles",
     ]
-    assert all(stage["reuse"] for stage in plan["stages"][:2])
-    assert plan["stages"][2]["decision"] == "run"
+    assert all(stage["reuse"] for stage in plan["stages"][:3])
+    assert plan["stages"][3]["decision"] == "run"
 
 
 def test_overrides_reach_worker_without_rewriting_project_yaml(
@@ -67,7 +68,11 @@ def test_overrides_reach_worker_without_rewriting_project_yaml(
     assert main(["plan", str(source), "--json"]) == 0
     capsys.readouterr()
     requirements = json.loads(requirements_path.read_text(encoding="utf-8"))
-    assert len(requirements["transcripts"]) == 4
+    positions = json.loads((work / "stages" / "locate" / "positions.json").read_text())
+    cameras = {"camera-a-dji-0001", "camera-b-gx010024", "camera-b-gx020024"}
+    # Located cameras need no transcript; the recorder is always transcribed.
+    assert set(requirements["transcripts"]) == (
+        {"recorder-zoom0001-tr1"} | (cameras - set(positions["positions"])))
     assert settings_path.read_text(encoding="utf-8") == original
 
 

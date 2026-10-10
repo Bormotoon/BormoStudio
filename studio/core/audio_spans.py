@@ -81,10 +81,17 @@ def parse_silencedetect(stderr: str, duration_s: float | None = None) -> list[Sp
 
 def detect_silence(
     source: Path, *, threshold_db: float = -40.0, minimum_s: float = 0.1,
-    duration_s: float | None = None,
+    duration_s: float | None = None, start_s: float | None = None,
 ) -> list[Span]:
+    """Silent spans of ``source`` in file time.
+
+    With ``start_s`` only ``[start_s, start_s + duration_s]`` is read; otherwise
+    ``duration_s`` just closes a silence still open at the end of the file.
+    """
+    window = [] if start_s is None else ["-ss", f"{start_s:.3f}"] + (
+        ["-t", f"{duration_s:.3f}"] if duration_s is not None else [])
     result = subprocess.run(
-        ["ffmpeg", "-nostdin", "-hide_banner", "-i", str(source),
+        ["ffmpeg", "-nostdin", "-hide_banner", *window, "-i", str(source),
          "-map", "0:a:0", "-vn", "-af",
          f"silencedetect=noise={threshold_db}dB:d={minimum_s}:mono=0",
          "-f", "null", "-"],
@@ -92,7 +99,10 @@ def detect_silence(
     )
     if result.returncode:
         raise RuntimeError(f"silence analysis failed: {result.stderr.strip()}")
-    return parse_silencedetect(result.stderr, duration_s)
+    spans = parse_silencedetect(result.stderr, duration_s)
+    if start_s is None:
+        return spans
+    return [Span(span.start_s + start_s, span.end_s + start_s) for span in spans]
 
 
 def intersect(left: list[Span], right: list[Span]) -> list[Span]:

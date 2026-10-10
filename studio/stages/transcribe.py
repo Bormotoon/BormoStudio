@@ -358,6 +358,64 @@ class WhisperEngine:
             self._save(cache_path, transcript)
         return transcript
 
+    def transcribe_ranges(
+        self, path: Path, ranges: list[list[float]], duration_s: float,
+        stream_index: int | None = None, audio_filter: str | None = None,
+    ) -> Transcript:
+        """Transcribe only the tiles of ``path`` that ``ranges`` touch.
+
+        Tiles follow a fixed grid of the file (``TILE_S`` with ``TILE_OVERLAP_S``
+        on each side), so a later camera reuses every tile already recognized.
+        A word belongs to the tile whose core holds its middle. The transcript
+        keeps the file's whole ``duration`` and lists the recognized cores in
+        ``metadata.coverage``.
+        """
+        tiles = tiles_for(ranges, duration_s)
+        segments: list[Segment] = []
+        language = ""
+        suspects: list[Any] = []
+        for index in tiles:
+            core_start, core_end = index * TILE_S, min(duration_s, (index + 1) * TILE_S)
+            start = max(0.0, core_start - TILE_OVERLAP_S)
+            end = min(duration_s, core_end + TILE_OVERLAP_S)
+            tile = self._tile(path, start, end - start, stream_index, audio_filter)
+            language = language or tile.language
+            suspects.extend(tile.metadata.get("suspect_words", []))
+            segments.extend(_core_segments(tile, start, core_start, core_end))
+        segments.sort(key=lambda segment: segment.start)
+        coverage = _merge_spans([[index * TILE_S, min(duration_s, (index + 1) * TILE_S)]
+                                 for index in tiles])
+        metadata: dict[str, Any] = {"coverage": coverage, "segmentation": SEGMENTATION_VERSION}
+        if suspects:
+            metadata["suspect_words"] = suspects
+        return Transcript(path, language, duration_s, segments, self.settings.model,
+                          self.backend.device, self.backend.compute_type, self.settings.mode,
+                          metadata=metadata)
+
+    def _tile(self, path: Path, start: float, duration: float, stream_index: int | None,
+              audio_filter: str | None) -> Transcript:
+        key = stable_fingerprint(self._key(path, stream_index, audio_filter), "tile",
+                                 round(start, 3), round(duration, 3))
+        cache_path = self.cache_dir / f"{key}.json"
+        if self.settings.use_cache:
+            cached = self._load(cache_path)
+            if cached is not None:
+                return cached
+        with tempfile.TemporaryDirectory(prefix="uvf-tile-") as temporary:
+            decoded = Path(temporary) / "tile.wav"
+            mono = ["-af", audio_filter] if audio_filter else ["-ac", "1"]
+            stream = f"0:{stream_index}" if stream_index is not None else "0:a:0"
+            subprocess.run(
+                ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{start:.3f}", "-t",
+                 f"{duration:.3f}", "-i", str(path), "-map", stream, "-vn", *mono,
+                 "-ar", "16000", "-c:a", "pcm_s16le", str(decoded)],
+                check=True, capture_output=True,
+            )
+            tile = self._sane(self.backend.transcribe(decoded, self.settings), decoded)
+        if self.settings.use_cache:
+            self._save(cache_path, tile)
+        return tile
+
     def _sane(self, transcript: Transcript, audio: Path) -> Transcript:
         """Repair words torn from their phrase (any backend); see ``transcript_sanity``."""
         return repair_detached_words(transcript, energy_probe(audio),
@@ -469,8 +527,13 @@ class TranscribeStage:
             source = context.project.source_dir / asset.path
             stream = requirements.get("audio_streams", {}).get(asset_id)
             pan = effective_audio(asset).pan
-            transcript = engine.transcribe(source, stream, pan) if pan else engine.transcribe(
-                source, stream)
+            ranges = requirements.get("transcribe_ranges", {}).get(asset_id)
+            if ranges:
+                duration = float(asset.manual.get("media_info", {}).get("duration_s") or 0.0)
+                transcript = engine.transcribe_ranges(source, ranges, duration, stream, pan)
+            else:
+                transcript = engine.transcribe(source, stream, pan) if pan else (
+                    engine.transcribe(source, stream))
             output = context.work_dir / "stages" / "transcribe" / f"{asset_id}.json"
             srt = output.with_suffix(".srt")
             transcript.save(output)
@@ -482,6 +545,55 @@ class TranscribeStage:
                                   for item in transcript.metadata["suspect_words"][:5])
                 warnings.append(f"{asset.path}: words placed in silence, check them: {words}")
         return StageOutput(tuple(artifacts), {"transcripts": transcripts}, tuple(warnings))
+
+
+# Recorder tiles: a fixed grid of the file with overlap so words at a tile edge
+# are recognized in context; each word is kept by the tile whose core holds it.
+TILE_S = 300.0
+TILE_OVERLAP_S = 10.0
+
+
+def tiles_for(ranges: list[list[float]], duration_s: float) -> list[int]:
+    """Indices of the grid tiles whose core intersects any of ``ranges``."""
+    count = max(1, int(-(-duration_s // TILE_S)))
+    return [
+        index for index in range(count)
+        if any(start < (index + 1) * TILE_S and end > index * TILE_S for start, end in ranges)
+    ]
+
+
+def _core_segments(tile: Transcript, offset: float, core_start: float,
+                   core_end: float) -> list[Segment]:
+    """Segments of a tile in file time, keeping words whose middle is in the core."""
+    result = []
+    for segment in tile.segments:
+        words = tuple(
+            Word(word.text, word.start + offset, word.end + offset, word.probability)
+            for word in segment.words
+            if core_start <= (word.start + word.end) / 2 + offset < core_end
+        )
+        if segment.words and not words:
+            continue
+        middle = (segment.start + segment.end) / 2 + offset
+        if not segment.words and not core_start <= middle < core_end:
+            continue
+        trimmed = len(words) != len(segment.words)
+        result.append(Segment(
+            words[0].start if words else segment.start + offset,
+            words[-1].end if words else segment.end + offset, words, segment.confidence,
+            segment.avg_logprob, None if trimmed else segment.text_override,
+        ))
+    return result
+
+
+def _merge_spans(spans: list[list[float]]) -> list[list[float]]:
+    merged: list[list[float]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1] + 1e-6:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
 
 
 def mlx_available() -> bool:

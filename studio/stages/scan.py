@@ -9,6 +9,7 @@ from typing import Any
 
 from studio.core.media import MediaInfo, probe
 from studio.core.project import Asset, AssetKind, AssetRole, Project, stable_fingerprint
+from studio.core.recorded_at import recorded_at
 from studio.stages.base import (
     Decision,
     GpuUse,
@@ -54,7 +55,7 @@ class ScanStage:
             for asset in project.assets
             if asset.manual.get("overrides")
         }
-        return stable_fingerprint("scan-v5", identities, overrides,
+        return stable_fingerprint("scan-v6", identities, overrides,
                                   select_settings(settings, self.settings_keys))
 
     def run(self, context: StageContext) -> StageOutput:
@@ -116,7 +117,11 @@ def scan(source_dir: Path) -> tuple[list[Asset], list[str]]:
             _device_name(info),
             group,
             chapter_of,
-            {"media_info": info.to_dict()},
+            {"media_info": {
+                **info.to_dict(),
+                "recorded_at": recorded_at(path, info.tags, info.duration_s,
+                                           info.audio_sample_rate),
+            }},
         )
         assets.append(asset)
         if kind is AssetKind.VIDEO and not info.audio_codec:

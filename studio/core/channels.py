@@ -83,7 +83,7 @@ def classify(excerpts: list[np.ndarray], channels: int) -> dict[str, Any]:
     for channel in range(channels):
         if channel not in silent:
             groups.setdefault(find(channel), []).append(channel)
-    result_groups = []
+    result_groups: list[dict[str, Any]] = []
     for members in groups.values():
         kinds = {relation.get((a, b)) for a in members for b in members if a < b}
         kind = "single" if len(members) == 1 else "dual_mono" if kinds == {"dual_mono"} else (

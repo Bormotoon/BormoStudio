@@ -32,7 +32,7 @@ class _Stage:
 def _project(tmp_path: Path) -> Project:
     work = tmp_path / "_studio"
     (work / "manifests").mkdir(parents=True)
-    for name in ("discover", "scan", "prepare"):
+    for name in ("discover", "scan", "locate", "prepare"):
         artifact = work / f"{name}.json"
         artifact.write_text("{}")
         StageManifest(
@@ -160,7 +160,7 @@ def test_unrelated_setting_does_not_make_prepare_stale(tmp_path: Path) -> None:
     before = {"sync": {"mode": "auto"}, "reels": {"layout": "video"}}
     project, prepare = _real_discovery(tmp_path, before)
     after = {"sync": {"mode": "auto"}, "reels": {"layout": "title"}}
-    plan = build_plan([_Stage("scan"), prepare, _Stage("reels", ("prepare",))],
+    plan = build_plan([_Stage("scan"), _Stage("locate"), prepare, _Stage("reels", ("prepare",))],
                       project, after, only={"reels"})
     by_id = {item.stage_id: item for item in plan.stages}
     assert by_id["prepare"].decision.reason == "disabled by --only"
@@ -169,7 +169,7 @@ def test_unrelated_setting_does_not_make_prepare_stale(tmp_path: Path) -> None:
 
 def test_stale_prepare_runs_automatically_with_named_setting(tmp_path: Path) -> None:
     project, prepare = _real_discovery(tmp_path, {"sync": {"mode": "auto"}})
-    stages = [_Stage("scan"), prepare, _Stage("sync", ("prepare",))]
+    stages = [_Stage("scan"), _Stage("locate"), prepare, _Stage("sync", ("prepare",))]
     plan = build_plan(stages, project, {"sync": {"mode": "complex"}}, only={"sync"})
     by_id = {item.stage_id: item for item in plan.stages}
     assert by_id["prepare"].decision.kind.value == "run"
@@ -199,7 +199,8 @@ def test_dependency_outside_only_names_missing_transcript(tmp_path: Path) -> Non
     _save_manifest(project, transcribe, settings, "stages/transcribe/rec.json")
     requirements.write_text(json.dumps({"transcripts": ["rec", "cam"]}))
     _save_manifest(project, prepare, settings, "stages/prepare/requirements.json")
-    stages = [_Stage("scan"), prepare, transcribe, _Stage("sync", ("transcribe",))]
+    stages = [_Stage("scan"), _Stage("locate"), prepare, transcribe,
+              _Stage("sync", ("transcribe",))]
     plan = build_plan(stages, project, settings, only={"sync"})
     sync = next(item for item in plan.stages if item.stage_id == "sync")
     assert sync.decision.kind.value == "skip"
@@ -215,7 +216,7 @@ def test_gui_subtitle_render_command_is_planned(tmp_path: Path) -> None:
     project, prepare = _real_discovery(tmp_path, defaults)
     changed = Settings().to_dict()
     changed["program"]["burn_subtitles"] = True
-    stages = [_Stage("scan"), prepare, _Stage("program_subtitles", ("prepare",))]
+    stages = [_Stage("scan"), _Stage("locate"), prepare, _Stage("program_subtitles", ("prepare",))]
     plan = build_plan(stages, project, changed, only={"program_subtitles"})
     target = next(item for item in plan.stages if item.stage_id == "program_subtitles")
     assert target.decision.kind.value == "run"

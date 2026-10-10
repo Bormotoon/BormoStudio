@@ -47,6 +47,10 @@ class SettingsPage(QWidget):
         form = QFormLayout()
         for section, key, label, choices in (
             ("sync", "mode", "Synchronization", ["auto", "camera", "simple", "complex"]),
+            ("sync", "acoustic_refine", "Acoustic sync refinement", ["auto", "off"]),
+            ("transcribe", "recorder_scope", "Recorder transcription",
+             ["auto", "cameras", "full"]),
+            ("roughcut", "head_tail_sound", "Noisy head/tail", ["cut", "suggest", "keep"]),
             ("transcribe", "device", "Whisper device", ["auto", "cpu", "cuda", "mlx"]),
             ("speakers", "method", "Speakers", ["auto", "mics", "pyannote", "off"]),
             ("program", "encoder", "Video encoder", ["auto", "cpu", "nvenc", "videotoolbox"]),
@@ -69,6 +73,7 @@ class SettingsPage(QWidget):
             field.setAccessibleName(label)
         for section, key, label in (
             ("roughcut", "enabled", "Remove pauses / retakes"),
+            ("sync", "verify", "Measure sync after rendering"),
             ("roughcut", "llm", "Suggest LLM edits (slips, start, delivery)"),
             ("program", "enabled", "Render review master"),
             ("text", "proofread", "Proofread transcript"),

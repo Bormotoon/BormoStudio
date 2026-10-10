@@ -199,8 +199,18 @@ def _render_complex(context: StageContext) -> StageOutput:
     mode = _sync_mode(context.settings)
     from studio.stages.sync_sessions import plan_sessions
 
-    transcripts = {asset.id: Transcript.load(project.transcripts[asset.id])
+    # A camera located acoustically needs no transcript: its length comes from probe.
+    transcripts = {asset.id: _transcript_or_probe(project, asset)
                    for asset in [*recorders, *cameras]}
+    from studio.stages.locate import load_positions
+
+    located = load_positions(project).get("positions", {})
+    search_ranges = {
+        (camera.id, recorder_id): (max(0.0, entry["position_s"] - 30.0),
+                                   entry["position_s"] + transcripts[camera.id].duration + 30.0)
+        for camera in cameras
+        for recorder_id, entry in located.get(camera.id, {}).items()
+    }
     camera_transcripts = [transcripts[camera.id] for camera in cameras]
     refine_reports: dict[str, Any] = {}
     stage_warnings: list[str] = []
@@ -232,7 +242,7 @@ def _render_complex(context: StageContext) -> StageOutput:
 
     placements, fits, rejected = plan_sessions(
         project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
-        check=check,
+        check=check, search_ranges=search_ranges,
     )
     repair_sources = {}
     for camera, candidate in zip(cameras, camera_transcripts, strict=True):
@@ -485,6 +495,13 @@ def _place_cameras(context: StageContext) -> StageOutput:
     return StageOutput((output,), {"placements": placements, "audio_warp_maps": [],
                                   "outputs": {key: paths for key, paths in project.outputs.items()
                                               if not key.startswith("sync:")}})
+
+
+def _transcript_or_probe(project: Project, asset: Asset) -> Transcript:
+    path = project.transcripts.get(asset.id)
+    if path is not None and path.is_file():
+        return Transcript.load(path)
+    return Transcript(project.source_dir / asset.path, "", _duration(asset), [])
 
 
 def refine_settings(sync: dict[str, Any], camera: Asset) -> RefineSettings | None:

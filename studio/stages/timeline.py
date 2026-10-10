@@ -96,8 +96,13 @@ class TimelineStage:
             source.mode,
             TimeDomain.TIMELINE,
             f"placement:{source_id}",
-            metadata={**source.metadata, "source_asset_id": source_id},
+            metadata={key: value for key, value in source.metadata.items()
+                      if key != "coverage"} | {"source_asset_id": source_id},
         )
+        # Recorder transcripts made from tiles cover only part of their file:
+        # consumers (roughcut) must not read the rest as untranscribed sound.
+        coverage = [_mapped_coverage(source, placement)]
+        used_placements = [placement]
         # Add disjoint recorder coverage without duplicating overlapping microphone speech.
         occupied = [(placement.offset_s,
                      placement.offset_s + placement.duration_s * placement.k)]
@@ -125,10 +130,20 @@ class TimelineStage:
                 ), segment.confidence, segment.avg_logprob, segment.text_override))
             occupied.append((mapped.offset_s, mapped.offset_s + mapped.duration_s * mapped.k))
             source_ids.append(asset.id)
+            coverage.append(_mapped_coverage(extra, mapped))
+            used_placements.append(mapped)
         segments.sort(key=lambda item: item.start)
         transcript.duration = max((segment.end for segment in segments), default=0.0)
         if len(source_ids) > 1:
             transcript.metadata["source_asset_ids"] = source_ids
+        if any(item is not None for item in coverage):
+            spans = [span for item in coverage if item is not None for span in item]
+            # A whole-file source among partial ones covers its whole placement.
+            spans += [(item.offset_s, item.offset_s + item.duration_s * item.k)
+                      for item, mapped in zip(used_placements, coverage, strict=True)
+                      if mapped is None]
+            transcript.metadata["coverage"] = [[round(a, 3), round(b, 3)]
+                                               for a, b in sorted(spans)]
         output = context.work_dir / "stages" / "timeline" / "transcript.json"
         transcript.save(output)
         transcripts = {**context.project.transcripts, "timeline": output}
@@ -137,6 +152,17 @@ class TimelineStage:
         if len(cameras) == 1 and not context.project.placements and source_id == cameras[0].id:
             changes["placements"] = [placement]
         return StageOutput((output,), changes)
+
+
+def _mapped_coverage(
+    transcript: Transcript, placement: SourcePlacement
+) -> list[tuple[float, float]] | None:
+    """A file transcript's ``metadata.coverage`` on the timeline (``None``: whole file)."""
+    spans = transcript.metadata.get("coverage")
+    if not spans:
+        return None
+    return [(file_to_timeline(float(a), placement), file_to_timeline(float(b), placement))
+            for a, b in spans]
 
 
 def _primary_source_id(project: Project) -> str | None:
