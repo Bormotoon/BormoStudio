@@ -61,6 +61,7 @@ class SettingsPage(QWidget):
             field.setAccessibleName(label)
         for section, key, label in (
             ("roughcut", "enabled", "Remove pauses / retakes"),
+            ("roughcut", "llm", "Suggest LLM edits (slips, start, delivery)"),
             ("program", "enabled", "Render review master"),
             ("text", "proofread", "Proofread transcript"),
             ("text", "article", "Generate article"),

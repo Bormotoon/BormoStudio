@@ -20,6 +20,7 @@ from studio.core.workspace import project_lock
 from studio.llm.session import BatchLlamaSession, ManagedLlamaSession, effective_llm_settings
 from studio.modules.cancellation import InstallationCancelled
 from studio.modules.manager import ModuleManager, module_names
+from studio.stages.base import stage_uses_llm
 from studio.stages.events import StageEvent
 from studio.stages.fetch import fetch_to_directory
 from studio.stages.planner import build_plan
@@ -139,7 +140,7 @@ def _run_pipeline(
             if candidate is None:
                 break
             try:
-                if registry[candidate.stage_id].gpu.value == "llm":
+                if stage_uses_llm(registry[candidate.stage_id], settings):
                     session.ensure()
                 else:
                     session.close()

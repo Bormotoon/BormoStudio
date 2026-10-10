@@ -11,8 +11,9 @@ from studio.core.project import Project, stable_fingerprint
 from studio.core.timeline import file_to_timeline
 from studio.core.transcript import Transcript
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
-from studio.stages.retake_models import RetakeSettings
+from studio.stages.retake_models import RetakeGroup, RetakeSettings
 from studio.stages.retakes import detect_retakes
+from studio.stages.roughcut_llm import LlmOptions, LlmResult, run_detectors
 
 FILLERS = {"ну", "вот", "типа", "короче", "ээ", "эээ", "мм", "um", "uh"}
 
@@ -68,7 +69,13 @@ class RoughcutStage:
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, object]) -> list[Requirement]:
-        return []
+        conf = _conf(settings)
+        if not conf.get("llm", False):
+            return []
+        return [Requirement("llama", str(conf.get("model", "local")), "LLM rough-cut detectors")]
+
+    def uses_llm(self, settings: dict[str, object]) -> bool:
+        return bool(_conf(settings).get("llm", False))
 
     def decide(self, project: Project, settings: dict[str, object]) -> Decision:
         roughcut = settings.get("roughcut", {})
@@ -85,10 +92,24 @@ class RoughcutStage:
         source = Transcript.load(path).source_audio if path and path.is_file() else None
         from studio.stages.transcribe import _sha256
 
+        conf = _conf(settings)
+        llm_identity: object = None
+        if conf.get("llm", False):
+            from studio.llm.session import model_identity
+            from studio.stages.roughcut_llm import prompt_text
+
+            llm = settings.get("llm", {})
+            roles = llm.get("roles", {}) if isinstance(llm, dict) else {}
+            llm_identity = (
+                model_identity(settings),
+                roles.get("roughcut", {}),
+                [prompt_text(name, language) for name in ("roughcut_chunk", "roughcut_delivery")
+                 for language in ("ru", "en")],
+            )
         return stable_fingerprint(
-            "roughcut-v3", content, project.placements,
+            "roughcut-v4", content, project.placements,
             _sha256(source) if source and source.is_file() else "missing",
-            settings.get("roughcut", {}),
+            settings.get("roughcut", {}), llm_identity,
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -109,6 +130,22 @@ class RoughcutStage:
         if placement is not None:
             silence = [Span(file_to_timeline(span.start_s, placement),
                             file_to_timeline(span.end_s, placement)) for span in silence]
+        retakes = RetakeSettings(
+            detect_retakes=bool(conf.get("detect_retakes", True)),
+            retake_min_words=int(conf.get("retake_min_words", 4)),
+            retake_max_gap_s=float(conf.get("retake_max_gap_s", 6.0)),
+            phrase_gap_threshold=float(conf.get("phrase_gap_threshold", 0.6)),
+        )
+        llm = None
+        artifacts: list[Path] = []
+        if conf.get("llm", False):
+            llm = _run_llm(context, transcript, detect_retakes(transcript.words, retakes), conf)
+            report = context.work_dir / "stages" / "roughcut" / "llm-report.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(
+                json.dumps(llm.report(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            artifacts.append(report)
         edit = build_edit_list(
             transcript,
             mode=str(conf.get("mode", "cut")),
@@ -116,12 +153,9 @@ class RoughcutStage:
             keep_pause_s=float(conf.get("pause_keep_s", 0.4)),
             edge_pad_s=float(conf.get("head_tail_pad_s", 0.2)),
             silence=silence,
-            retakes=RetakeSettings(
-                detect_retakes=bool(conf.get("detect_retakes", True)),
-                retake_min_words=int(conf.get("retake_min_words", 4)),
-                retake_max_gap_s=float(conf.get("retake_max_gap_s", 6.0)),
-                phrase_gap_threshold=float(conf.get("phrase_gap_threshold", 0.6)),
-            ),
+            retakes=retakes,
+            llm=llm,
+            llm_apply=str(conf.get("llm_apply", "suggest")),
         )
         overrides = context.project.work_dir / "edit-overrides.json"
         if overrides.is_file():
@@ -130,7 +164,42 @@ class RoughcutStage:
         output = context.work_dir / "stages" / "roughcut" / "edit.json"
         edit.save(output)
         outputs = {**context.project.outputs, "roughcut": [output]}
-        return StageOutput((output,), {"outputs": outputs})
+        return StageOutput((output, *artifacts), {"outputs": outputs})
+
+
+def _conf(settings: dict[str, object]) -> dict:
+    roughcut = settings.get("roughcut", {})
+    return roughcut if isinstance(roughcut, dict) else {}
+
+
+def _run_llm(
+    context: StageContext, transcript: Transcript, groups: list[RetakeGroup], conf: dict
+) -> LlmResult:
+    from studio.llm.providers import LlamaProvider
+    from studio.llm.retries import JsonRequestBudget
+    from studio.llm.roles import role_provider
+
+    provider = role_provider(
+        context.settings, "roughcut", "roughcut",
+        context.project.work_dir / "cache" / "llm", LlamaProvider,
+    )
+    budget = JsonRequestBudget(
+        int(conf.get("llm_json_retries", 1)), int(conf.get("llm_retry_budget", 5)),
+    )
+    language = str(conf.get("llm_prompt_language", "auto"))
+    if language not in {"ru", "en"}:
+        language = "en" if transcript.language.lower().startswith("en") else "ru"
+    options = LlmOptions(
+        detectors=tuple(conf.get("llm_detectors", ("start", "slips", "fillers", "delivery"))),
+        language=language,
+        min_confidence=float(conf.get("llm_min_confidence", 0.6)),
+        max_cut_s=float(conf.get("llm_max_cut_s", 8.0)),
+        max_start_s=float(conf.get("llm_max_start_s", 600.0)),
+        chunk_chars=int(conf.get("llm_chunk_chars", 6000)),
+    )
+    return run_detectors(
+        transcript, groups, lambda prompt: budget.request(provider, prompt), options
+    )
 
 
 def apply_cut_overrides(edit: EditList, duration: float, decisions: dict[str, bool]) -> EditList:
@@ -200,6 +269,8 @@ def build_edit_list(
     edge_pad_s: float,
     silence: list[Span] | None = None,
     retakes: RetakeSettings | None = None,
+    llm: LlmResult | None = None,
+    llm_apply: str = "suggest",
 ) -> EditList:
     words = transcript.words
     if not words:
@@ -226,21 +297,59 @@ def build_edit_list(
         cuts.append(
             Cut(start, start + trim, "pause", 0.95, f"pause {gap.duration_s:.2f}s")
         )
-    for group in detect_retakes(words, retakes or RetakeSettings()):
+    def inside_word(at: float) -> bool:
+        return any(word.start < at < word.end for word in words)
+
+    llm_markers: list[Marker] = []
+    delivery = llm.delivery if llm is not None else {}
+    for index, group in enumerate(detect_retakes(words, retakes or RetakeSettings())):
+        count = len(group.takes)
+        choice = delivery.get(index)
+        if choice is not None and choice[0] != count - 1 and llm_apply == "cut":
+            take, reason, confidence = choice
+            chosen = group.takes[take]
+            spans = [(group.takes[0].start, chosen.start)]
+            if take + 1 < count:
+                spans.append((group.takes[take + 1].start, group.takes[-1].end))
+            note = f"delivery: keep take {take + 1} of {count}: {chosen.text} — {reason}"
+            for start, end in spans:
+                if end > start and not inside_word(start) and not inside_word(end):
+                    cuts.append(Cut(start, end, "llm", confidence, note))
+            continue
+        if choice is not None and choice[0] != count - 1:
+            llm_markers.append(Marker(
+                group.takes[choice[0]].start, "llm-delivery",
+                f"LLM prefers take {choice[0] + 1} of {count}: {choice[1]}",
+            ))
         start, end = group.takes[0].start, group.keeper.start
         # Malformed/overlapping word timestamps must not turn a restart into
         # a cut through unrelated speech.
-        if end > start and not any(word.start < end < word.end for word in words):
+        if end > start and not inside_word(end):
             cuts.append(Cut(
                 start, end, "retake", 0.8,
-                f"keep take {len(group.takes)} of {len(group.takes)}: {group.keeper.text}",
+                f"keep take {count} of {count}: {group.keeper.text}",
             ))
+    deterministic = list(cuts)
+    for finding in llm.findings if llm is not None else []:
+        if finding.detector == "fillers":
+            llm_markers.append(Marker(
+                finding.start, "llm-filler", f"{finding.quote} — {finding.reason}"
+            ))
+            continue
+        if any(cut.start <= finding.start and finding.end <= cut.end for cut in deterministic):
+            continue
+        cuts.append(Cut(
+            finding.start, finding.end, "llm", finding.confidence,
+            f"{finding.detector}: {finding.quote} — {finding.reason}",
+            accepted=llm_apply == "cut",
+        ))
     cuts.sort(key=lambda cut: cut.start)
-    markers = tuple(
-        Marker(word.start, "filler", word.text)
-        for word in words
-        if word.text.casefold().strip(".,!?…") in FILLERS
-    )
+    markers = tuple(sorted((
+        *(Marker(word.start, "filler", word.text)
+          for word in words
+          if word.text.casefold().strip(".,!?…") in FILLERS),
+        *llm_markers,
+    ), key=lambda marker: marker.at))
     keep = (
         _complement(transcript.duration, cuts)
         if mode == "cut"

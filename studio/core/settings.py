@@ -70,6 +70,21 @@ class RoughcutSettings:
     retake_min_words: int = 4
     retake_max_gap_s: float = 6.0
     phrase_gap_threshold: float = 0.6
+    llm: bool = False
+    llm_detectors: list[str] = field(
+        default_factory=lambda: ["start", "slips", "fillers", "delivery"]
+    )
+    llm_apply: str = "suggest"
+    llm_min_confidence: float = 0.6
+    llm_max_cut_s: float = 8.0
+    llm_max_start_s: float = 600.0
+    llm_chunk_chars: int = 6000
+    llm_prompt_language: str = "auto"
+    llm_json_retries: int = 1
+    llm_retry_budget: int = 5
+    base_url: str = "http://127.0.0.1:8080"
+    model: str = "local"
+    request_timeout_s: float = 600.0
 
 
 @dataclass(slots=True)
@@ -253,6 +268,7 @@ def validate_settings(settings: Settings) -> None:
     ):
         raise SettingsError("transcribe.glossary must be a list of strings")
     _one_of("roughcut.mode", settings.roughcut.mode, {"cut", "markers"})
+    _validate_roughcut_llm(settings.roughcut)
     _one_of("speakers.method", settings.speakers.method, {"auto", "mics", "pyannote", "off"})
     _one_of("speakers.device", settings.speakers.device, {"cpu", "cuda"})
     _non_negative("speakers.margin_db", settings.speakers.margin_db)
@@ -343,7 +359,9 @@ def validate_settings(settings: Settings) -> None:
     _positive("reels.request_timeout_s", settings.reels.request_timeout_s)
     for role, config in settings.llm.roles.items():
         if (
-            role not in {"proofread", "article", "context", "scout", "cleanup", "judge"}
+            role not in {
+                "proofread", "article", "context", "scout", "cleanup", "judge", "roughcut",
+            }
             or not isinstance(config, dict)
             or not config
             or set(config) - {"model", "base_url"}
@@ -401,6 +419,29 @@ def validate_settings(settings: Settings) -> None:
     unknown = set(settings.export.targets) - {"fcpxml", "xmeml", "multicam"}
     if unknown:
         raise SettingsError(f"export.targets contains unsupported values: {sorted(unknown)}")
+
+
+def _validate_roughcut_llm(roughcut: RoughcutSettings) -> None:
+    unknown = set(roughcut.llm_detectors) - {"start", "slips", "fillers", "delivery"}
+    if unknown or len(set(roughcut.llm_detectors)) != len(roughcut.llm_detectors):
+        raise SettingsError(
+            "roughcut.llm_detectors must be unique values of start, slips, fillers, delivery"
+        )
+    _one_of("roughcut.llm_apply", roughcut.llm_apply, {"suggest", "cut"})
+    _one_of("roughcut.llm_prompt_language", roughcut.llm_prompt_language, {"auto", "ru", "en"})
+    if not math.isfinite(roughcut.llm_min_confidence) or not (
+        0 <= roughcut.llm_min_confidence <= 1
+    ):
+        raise SettingsError("roughcut.llm_min_confidence must be between 0 and 1")
+    for name in ("llm_max_cut_s", "llm_max_start_s", "request_timeout_s"):
+        _positive(f"roughcut.{name}", getattr(roughcut, name))
+    if roughcut.llm_chunk_chars < 500:
+        raise SettingsError("roughcut.llm_chunk_chars must be an integer of at least 500")
+    for name in ("llm_json_retries", "llm_retry_budget"):
+        if not 0 <= getattr(roughcut, name) <= 100:
+            raise SettingsError(f"roughcut.{name} must be an integer between 0 and 100")
+    if not roughcut.base_url.strip() or not roughcut.model.strip():
+        raise SettingsError("roughcut.base_url and roughcut.model must not be empty")
 
 
 def _construct(data: dict[str, Any]) -> Settings:

@@ -65,7 +65,7 @@ def effective_llm_settings(settings: dict) -> dict:
 
     settings = deepcopy(settings)
     if settings.get("llm", {}).get("managed"):
-        for section in ("text", "reels"):
+        for section in ("text", "reels", "roughcut"):
             settings.setdefault(section, {})["base_url"] = (
                 f"http://127.0.0.1:{settings['llm']['port']}"
             )

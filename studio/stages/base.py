@@ -75,3 +75,9 @@ class Stage(Protocol):
     def decide(self, project: Project, settings: dict[str, Any]) -> Decision: ...
     def fingerprint(self, project: Project, settings: dict[str, Any]) -> str: ...
     def run(self, context: StageContext) -> StageOutput: ...
+
+
+def stage_uses_llm(stage: Stage, settings: dict[str, Any]) -> bool:
+    """Whether a run needs the owned llama server; optional for non-LLM stages."""
+    uses = getattr(stage, "uses_llm", None)
+    return bool(uses(settings)) if callable(uses) else stage.gpu == GpuUse.LLM
