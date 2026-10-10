@@ -42,7 +42,7 @@ class ProgramStage:
         edit_path = _edit_path(project)
         edit = edit_path.read_text(encoding="utf-8") if edit_path.is_file() else ""
         return stable_fingerprint(
-            "program-v7",
+            "program-v8",
             edit,
             project.placements,
             project.outputs.get("sync"),
@@ -106,6 +106,7 @@ class ProgramStage:
             output,
             encoder=str(conf.get("encoder", "auto")),
             fps=str(conf.get("fps", "auto")),
+            crossfade_ms=float(conf.get("crossfade_ms", 10.0)),
         )
         transcript_ranges = []
         for item in edit.keep:
@@ -165,6 +166,7 @@ class ProgramPiece:
     audio_in_s: float
     duration_s: float
     rate: float
+    timeline_start_s: float = 0.0
 
 
 def program_pieces(project: Project, edit: EditMap) -> list[ProgramPiece]:
@@ -205,7 +207,7 @@ def program_pieces(project: Project, edit: EditMap) -> list[ProgramPiece]:
             audio = voice or (source if has_audio else None)
             source_in = timeline_to_file(start, placement)
             result.append(
-                ProgramPiece(source, audio, source_in, source_in, end - start, placement.k)
+                ProgramPiece(source, audio, source_in, source_in, end - start, placement.k, start)
             )
     if not result:
         raise ValueError("cannot render empty retained ranges")
@@ -219,6 +221,7 @@ def render_project_program(
     *,
     encoder: str = "auto",
     fps: str = "auto",
+    crossfade_ms: float = 0.0,
 ) -> dict[str, object]:
     pieces = program_pieces(project, edit)
     first = next(
@@ -301,7 +304,8 @@ def render_project_program(
                 # Regenerate every part to avoid joining different H.264
                 # parameter sets when hardware fails halfway through a job.
                 retry = render_project_program(
-                    project, edit, output, encoder="cpu", fps=requested_fps
+                    project, edit, output, encoder="cpu", fps=requested_fps,
+                    crossfade_ms=crossfade_ms,
                 )
                 retry.update(
                     {
@@ -321,6 +325,8 @@ def render_project_program(
             ),
             encoding="utf-8",
         )
+        audio_report = _mix_join_audio(pieces, frame_counts, rate, directory, crossfade_ms)
+        mixed = ["-i", str(directory / "audio.wav"), "-map", "0:v", "-map", "1:a"]
         _run_ffmpeg(
             [
                 "ffmpeg",
@@ -334,6 +340,7 @@ def render_project_program(
                 "0",
                 "-i",
                 str(listing),
+                *(mixed if audio_report["audio_crossfade_ms"] else []),
                 "-c:v",
                 "copy",
                 "-c:a",
@@ -344,6 +351,7 @@ def render_project_program(
             ]
         )
     return {
+        **audio_report,
         "schema_version": 1,
         "requested_encoder": encoder,
         "initial_codec": choice.codec,
@@ -362,6 +370,32 @@ def render_project_program(
         "requested_duration_s": sum(piece.duration_s for piece in pieces),
         "duration_s": float(Fraction(previous_frame) / rate),
     }
+
+
+def _mix_join_audio(
+    pieces: list[ProgramPiece], frame_counts: list[int], rate: Fraction,
+    directory: Path, crossfade_ms: float,
+) -> dict[str, object]:
+    """Replace hard audio joins with handled crossfades when requested."""
+    from studio.stages.program_audio import SAMPLE_RATE, PartAudio, mix_parts
+
+    parts: list[PartAudio] = []
+    cumulative = 0
+    previous: ProgramPiece | None = None
+    for piece, frames in zip(pieces, frame_counts, strict=True):
+        if not frames:
+            continue
+        start = round(Fraction(cumulative) / rate * SAMPLE_RATE)
+        cumulative += frames
+        samples = round(Fraction(cumulative) / rate * SAMPLE_RATE) - start
+        continuous = previous is not None and abs(
+            previous.timeline_start_s + previous.duration_s - piece.timeline_start_s
+        ) < 1e-6
+        parts.append(PartAudio(piece.audio, piece.audio_in_s, piece.rate, samples, continuous))
+        previous = piece
+    if crossfade_ms <= 0 or len(parts) < 2:
+        return {"audio_crossfade_ms": 0.0, "audio_join_policy": "hard cut"}
+    return mix_parts(parts, directory / "audio.wav", crossfade_ms)
 
 
 def rendered_timeline_map(edit: EditMap, report: dict) -> list[dict]:

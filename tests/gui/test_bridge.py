@@ -29,7 +29,10 @@ def test_review_page_displays_persisted_edit_decisions(tmp_path: Path) -> None:
 
     assert app is not None
     assert window.review.topLevelItemCount() == 1
-    assert window.review.topLevelItem(0).text(4) == "Rejected"
+    assert window.review.topLevelItem(0).text(4) == "Not applied"
+    assert window.cut_timeline.cuts[0].id == "cut-1"
+    window.cut_timeline.cut_selected.emit("cut-1")
+    assert window.review.currentItem() is window.review.topLevelItem(0)
 
 
 def test_bridge_delivers_multiline_document(tmp_path: Path) -> None:

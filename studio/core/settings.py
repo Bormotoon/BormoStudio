@@ -101,6 +101,7 @@ class ProgramSettings:
     fps: str = "auto"
     speaker_cameras: dict[str, str] = field(default_factory=dict)
     min_shot_s: float = 1.0
+    crossfade_ms: float = 10.0
 
 
 @dataclass(slots=True)
@@ -283,6 +284,9 @@ def validate_settings(settings: Settings) -> None:
         raise SettingsError("speakers.silence_floor_db must be between -100 and 0")
     _one_of("program.encoder", settings.program.encoder, {"auto", "nvenc", "libx264", "cpu"})
     _non_negative("program.min_shot_s", settings.program.min_shot_s)
+    _non_negative("program.crossfade_ms", settings.program.crossfade_ms)
+    if settings.program.crossfade_ms > 200:
+        raise SettingsError("program.crossfade_ms must not exceed 200")
     if any(
         not key.strip() or not value.strip()
         for key, value in settings.program.speaker_cameras.items()

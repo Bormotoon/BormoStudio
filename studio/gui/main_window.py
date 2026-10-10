@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from studio.core.project import Project
 from studio.gui.bridge import RunnerBridge
+from studio.gui.cut_timeline import CutTimeline, TimelineCut
 from studio.gui.modules import ModulesPage
 from studio.gui.settings_page import SettingsPage
 from studio.gui.setup_wizard import SetupWizard
@@ -69,8 +70,13 @@ class MainWindow(QMainWindow):
         self.review_timer = QTimer(self)
         self.review_timer.setSingleShot(True)
         self.review_timer.timeout.connect(self.review_player.pause)
-        self.review_seek = None
+        self.review_seek: float | None = None
+        self.review_ranges: list[tuple[float, float]] = []
         self.review_player.mediaStatusChanged.connect(self._review_ready)
+        self.review_player.positionChanged.connect(self._review_position)
+        self.cut_timeline = CutTimeline()
+        self.cut_timeline.cut_selected.connect(self._select_cut_from_timeline)
+        self.review.currentItemChanged.connect(self._select_cut_from_list)
         self.plan_label = QLabel("Scan a folder to build the plan.")
         self.log = QLabel("")
         self.log.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -158,6 +164,7 @@ class MainWindow(QMainWindow):
     def _review_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.addWidget(self.cut_timeline)
         layout.addWidget(self.review)
         layout.addWidget(self.review_status)
         actions = QHBoxLayout()
@@ -167,41 +174,78 @@ class MainWindow(QMainWindow):
         reject.clicked.connect(lambda: self._review_cut(False))
         actions.addWidget(accept)
         actions.addWidget(reject)
-        listen = QPushButton("Listen to selected cut")
-        listen.clicked.connect(self._listen_cut)
+        listen = QPushButton("Listen with cut")
+        listen.clicked.connect(lambda: self._listen_cut(applied=True))
+        original = QPushButton("Listen to original")
+        original.clicked.connect(lambda: self._listen_cut(applied=False))
         stop = QPushButton("Stop preview")
         stop.clicked.connect(self.review_player.stop)
         actions.addWidget(listen)
+        actions.addWidget(original)
         actions.addWidget(stop)
         layout.addLayout(actions)
         return page
 
-    def _listen_cut(self):
+    def _select_cut_from_timeline(self, cut_id: str) -> None:
+        for index in range(self.review.topLevelItemCount()):
+            item = self.review.topLevelItem(index)
+            if item is not None and item.data(0, Qt.ItemDataRole.UserRole) == cut_id:
+                self.review.setCurrentItem(item)
+                return
+
+    def _select_cut_from_list(self, item: QTreeWidgetItem | None, _previous: object) -> None:
+        self.cut_timeline.select(
+            str(item.data(0, Qt.ItemDataRole.UserRole)) if item is not None else None
+        )
+
+    def _listen_cut(self, applied: bool = True) -> None:
+        from studio.core.preview import preview_ranges, render_preview
+
         item = self.review.currentItem()
         if item is None or self.source is None:
             return
         project = Project.load(self.source / "_studio" / "project.json")
-        paths = project.outputs.get("master_wav", [])
-        if not paths or not paths[0].is_file():
-            self.review_status.setText(
-                "Render timeline voice master (sync.master_wav) for audio preview."
-            )
+        cut_id = str(item.data(0, Qt.ItemDataRole.UserRole))
+        ranges = preview_ranges(
+            float(item.text(2)), float(item.text(3)), context_s=2.0, applied=applied,
+            duration=self.cut_timeline.duration or float(item.text(3)) + 2.0,
+        )
+        target = project.work_dir / "cache" / "preview" / (
+            f"{cut_id}-{'cut' if applied else 'original'}.wav"
+        )
+        try:
+            path, kind = render_preview(project, ranges, target)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.review_status.setText(f"Preview unavailable: {exc}")
             return
+        self.review_status.setText(
+            f"Playing {'with cut' if applied else 'original'} from {kind}"
+        )
         self.review_timer.stop()
-        self.review_seek = (max(0, float(item.text(2)) - 1), float(item.text(3)) + 1)
-        self.review_player.setSource(QUrl.fromLocalFile(str(paths[0].resolve())))
+        self.review_ranges = ranges
+        self.review_seek = 0.0
+        self.review_player.setSource(QUrl())
+        self.review_player.setSource(QUrl.fromLocalFile(str(path.resolve())))
         self._review_ready(self.review_player.mediaStatus())
 
-    def _review_ready(self, status):
+    def _review_ready(self, status: QMediaPlayer.MediaStatus) -> None:
         if self.review_seek is not None and status in {
             QMediaPlayer.MediaStatus.LoadedMedia,
             QMediaPlayer.MediaStatus.BufferedMedia,
         }:
-            start, end = self.review_seek
             self.review_seek = None
-            self.review_player.setPosition(round(start * 1000))
+            self.review_player.setPosition(0)
             self.review_player.play()
-            self.review_timer.start(round((end - start) * 1000))
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self.cut_timeline.set_playhead(None)
+
+    def _review_position(self, position: int) -> None:
+        elapsed = position / 1000
+        for start, end in self.review_ranges:
+            if elapsed <= end - start:
+                self.cut_timeline.set_playhead(start + elapsed)
+                return
+            elapsed -= end - start
 
     def _page(self, content: QWidget, action: str, callback: object) -> QWidget:
         page = QWidget()
@@ -382,6 +426,22 @@ class MainWindow(QMainWindow):
             self.review_status.setText("No edit decisions available.")
             return
         data = json.loads(paths[0].read_text(encoding="utf-8"))
+        timeline_cuts = [
+            TimelineCut(
+                str(cut.get("id", "")), float(cut.get("start", 0.0)), float(cut.get("end", 0.0)),
+                str(cut.get("reason", "")), str(cut.get("note", "")),
+                bool(cut.get("accepted", True)),
+            )
+            for cut in data.get("cuts", [])
+        ]
+        duration = max(
+            [float(item.get("end", 0.0)) for item in data.get("keep", [])]
+            + [cut.end for cut in timeline_cuts] + [0.0]
+        )
+        self.cut_timeline.set_edit(duration, timeline_cuts, [
+            (float(marker.get("at", 0.0)), str(marker.get("text", "")))
+            for marker in data.get("markers", [])
+        ])
         for cut in data.get("cuts", []):
             accepted = bool(cut.get("accepted", True))
             item = QTreeWidgetItem(
@@ -391,11 +451,15 @@ class MainWindow(QMainWindow):
                     str(cut.get("reason", "")),
                     f"{float(cut.get('start', 0.0)):.2f}",
                     f"{float(cut.get('end', 0.0)):.2f}",
-                    "Accepted" if accepted else "Rejected",
+                    "Accepted" if accepted else "Not applied",
                 ],
             )
             item.setData(0, Qt.ItemDataRole.UserRole, str(cut.get("id", "")))
-        self.review_status.setText(f"{self.review.topLevelItemCount()} edit decisions")
+        kept = self.cut_timeline.kept_duration()
+        self.review_status.setText(
+            f"{self.review.topLevelItemCount()} edit decisions; "
+            f"program {kept / 60:.1f} of {duration / 60:.1f} min"
+        )
 
     def _review_cut(self, accepted: bool) -> None:
         item = self.review.currentItem()
