@@ -48,7 +48,13 @@ that point in development, not today's backlog. Plan phase acceptance remains op
    unmapped; phase-wide model ownership/reuse.
 4. Real-GPU `uvf tune` run with the GPU free; visual review of reel layouts,
    caption looks and the whole-edit preview; real pyannote identity check.
-5. Studio-vs-legacy golden parity on the comparison suites, installed/frozen
+5. Defects from the first real-material run (pos17v2, 2026-10-10), listed with
+   evidence and done-criteria in UNIFIED_APP_PLAN.md ("Исправления по реальному
+   прогону"): verify passes on median despite a −88 ms first minute, an in-clip
+   sync step is not detected, complex mode fits a false drift, the whole recorder
+   is transcribed, the rough cut keeps the pre-speech setup, a misplaced Whisper
+   word, a confusing `--only` block, dual-mono not detected, slow source hashing.
+6. Studio-vs-legacy golden parity on the comparison suites, installed/frozen
    real-processing checks, production packaging, private sample acceptance.
 
 ### Acceptance still required
