@@ -50,7 +50,7 @@ def test_topological_order_is_independent_of_registration_order(tmp_path: Path) 
 def test_main_plan_is_blocked_until_discovery_manifests_exist(tmp_path: Path) -> None:
     project = Project(tmp_path, tmp_path / "_studio")
     plan = build_plan([_Stage("scan"), _Stage("sync", ("scan",))], project, {})
-    assert plan.stages[1].decision.reason == "discovery inputs are not finalized"
+    assert plan.stages[1].decision.reason.startswith("discovery inputs are not finalized")
 
 
 def test_user_skip_propagates_to_required_dependency(tmp_path: Path) -> None:
@@ -110,7 +110,7 @@ def test_invalid_discovery_blocks_main_plan(tmp_path: Path, damage: str) -> None
         manifest.save(path)
     plan = build_plan([_Stage("scan"), _Stage("sync", ("scan",))], project, {})
     assert not plan.stages[0].will_reuse
-    assert plan.stages[1].decision.reason == "discovery inputs are not finalized"
+    assert plan.stages[1].decision.reason.startswith("discovery inputs are not finalized")
 
 
 class _Needs(_Stage):
@@ -127,3 +127,95 @@ def test_plan_reports_missing_only_for_stages_that_will_run(tmp_path: Path) -> N
     skipped = build_plan([_Stage("discover"), _Stage("scan"), _Stage("prepare"),
                           _Needs("needs")], project, {}, skip={"needs"})
     assert not next(item for item in skipped.stages if item.stage_id == "needs").missing
+
+
+def _save_manifest(project: Project, stage, settings: dict, artifact_name: str) -> None:
+    from studio.stages.planner import fingerprint_parts
+
+    artifact = project.work_dir / artifact_name
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    if not artifact.exists():
+        artifact.write_text("{}")
+    StageManifest(
+        stage.id, stage.fingerprint(project, settings),
+        {"effective_settings": settings,
+         "fingerprint_parts": fingerprint_parts(stage, project, settings)},
+        [describe_artifact(project.work_dir, artifact)], ArtifactStatus.OK, "test",
+    ).save(project.work_dir / "manifests" / f"{stage.id}.json")
+
+
+def _real_discovery(tmp_path: Path, settings: dict):
+    from studio.core.project import Asset, AssetKind, AssetRole
+    from studio.stages.prepare import PrepareStage
+
+    project = _project(tmp_path)
+    project.assets = [Asset("cam", Path("cam.mov"), AssetKind.VIDEO, AssetRole.CAMERA),
+                      Asset("rec", Path("rec.wav"), AssetKind.AUDIO, AssetRole.RECORDER)]
+    prepare = PrepareStage()
+    _save_manifest(project, prepare, settings, "stages/prepare/requirements.json")
+    return project, prepare
+
+
+def test_unrelated_setting_does_not_make_prepare_stale(tmp_path: Path) -> None:
+    before = {"sync": {"mode": "auto"}, "reels": {"layout": "video"}}
+    project, prepare = _real_discovery(tmp_path, before)
+    after = {"sync": {"mode": "auto"}, "reels": {"layout": "title"}}
+    plan = build_plan([_Stage("scan"), prepare, _Stage("reels", ("prepare",))],
+                      project, after, only={"reels"})
+    by_id = {item.stage_id: item for item in plan.stages}
+    assert by_id["prepare"].decision.reason == "disabled by --only"
+    assert by_id["reels"].decision.kind.value == "run"
+
+
+def test_stale_prepare_runs_automatically_with_named_setting(tmp_path: Path) -> None:
+    project, prepare = _real_discovery(tmp_path, {"sync": {"mode": "auto"}})
+    stages = [_Stage("scan"), prepare, _Stage("sync", ("prepare",))]
+    plan = build_plan(stages, project, {"sync": {"mode": "complex"}}, only={"sync"})
+    by_id = {item.stage_id: item for item in plan.stages}
+    assert by_id["prepare"].decision.kind.value == "run"
+    assert "sync.mode auto \u2192 complex" in by_id["prepare"].decision.reason
+    assert by_id["prepare"].decision.reason.startswith("runs automatically")
+    assert "sync.mode auto \u2192 complex" in by_id["sync"].decision.reason
+
+    skipped = build_plan(stages, project, {"sync": {"mode": "complex"}},
+                         only={"sync"}, skip={"prepare"})
+    sync = next(item for item in skipped.stages if item.stage_id == "sync")
+    assert sync.decision.kind.value == "blocked"
+    assert "sync.mode auto \u2192 complex" in sync.decision.reason
+    assert sync.decision.fix == "remove --skip prepare"
+
+
+def test_dependency_outside_only_names_missing_transcript(tmp_path: Path) -> None:
+    import json
+
+    from studio.stages.transcribe import TranscribeStage
+
+    settings = {"sync": {"mode": "auto"}}
+    project, prepare = _real_discovery(tmp_path, settings)
+    requirements = project.work_dir / "stages" / "prepare" / "requirements.json"
+    requirements.write_text(json.dumps({"transcripts": ["rec"]}))
+    _save_manifest(project, prepare, settings, "stages/prepare/requirements.json")
+    transcribe = TranscribeStage()
+    _save_manifest(project, transcribe, settings, "stages/transcribe/rec.json")
+    requirements.write_text(json.dumps({"transcripts": ["rec", "cam"]}))
+    _save_manifest(project, prepare, settings, "stages/prepare/requirements.json")
+    stages = [_Stage("scan"), prepare, transcribe, _Stage("sync", ("transcribe",))]
+    plan = build_plan(stages, project, settings, only={"sync"})
+    sync = next(item for item in plan.stages if item.stage_id == "sync")
+    assert sync.decision.kind.value == "skip"
+    assert "transcribe is stale" in sync.decision.reason
+    assert "needs transcript cam" in sync.decision.reason
+    assert sync.decision.reason.endswith("add transcribe to --only")
+
+
+def test_gui_subtitle_render_command_is_planned(tmp_path: Path) -> None:
+    from studio.core.settings import Settings
+
+    defaults = Settings().to_dict()
+    project, prepare = _real_discovery(tmp_path, defaults)
+    changed = Settings().to_dict()
+    changed["program"]["burn_subtitles"] = True
+    stages = [_Stage("scan"), prepare, _Stage("program_subtitles", ("prepare",))]
+    plan = build_plan(stages, project, changed, only={"program_subtitles"})
+    target = next(item for item in plan.stages if item.stage_id == "program_subtitles")
+    assert target.decision.kind.value == "run"

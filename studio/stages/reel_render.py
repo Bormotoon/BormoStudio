@@ -38,6 +38,8 @@ class ReelRenderStage:
     id = "reel_render"
     title = "Render reels"
     after: tuple[str, ...] = ("reels", "program")
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("reels", "program")
     optional_after = ("program",)
     gpu = GpuUse.NONE
 

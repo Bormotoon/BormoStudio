@@ -30,6 +30,8 @@ class SpeakersStage:
     id = "speakers"
     title = "Speakers"
     after: tuple[str, ...] = ("timeline",)
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("speakers",)
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:

@@ -41,6 +41,8 @@ class TextStage:
     id = "text"
     title = "Proofread and article"
     after: tuple[str, ...] = ("timeline",)
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("text", "llm.managed", "llm.model_path", "llm.roles")
     gpu = GpuUse.LLM
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:

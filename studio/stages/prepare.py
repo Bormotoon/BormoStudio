@@ -6,13 +6,22 @@ import json
 from typing import Any
 
 from studio.core.project import AssetRole, Project, stable_fingerprint
-from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
+from studio.stages.base import (
+    Decision,
+    GpuUse,
+    Requirement,
+    StageContext,
+    StageOutput,
+    select_settings,
+)
 
 
 class PrepareStage:
     id = "prepare"
     title = "Prepare inputs"
     after: tuple[str, ...] = ("scan",)
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("sync.mode", "transcribe.audio_streams")
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
@@ -25,7 +34,10 @@ class PrepareStage:
 
     def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         inputs = [(asset.id, asset.role.value, asset.manual) for asset in project.assets]
-        return stable_fingerprint("prepare-v1", inputs, settings)
+        return stable_fingerprint(
+            "prepare-v2", inputs, project.plan_revision,
+            select_settings(settings, self.settings_keys),
+        )
 
     def run(self, context: StageContext) -> StageOutput:
         recorders = [

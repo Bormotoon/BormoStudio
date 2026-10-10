@@ -7,13 +7,22 @@ from typing import Any
 from studio.core.project import AssetRole, Project, stable_fingerprint
 from studio.core.timeline import SourcePlacement, TimeDomain, file_to_timeline
 from studio.core.transcript import Segment, Transcript, Word
-from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
+from studio.stages.base import (
+    Decision,
+    GpuUse,
+    Requirement,
+    StageContext,
+    StageOutput,
+    select_settings,
+)
 
 
 class TimelineStage:
     id = "timeline"
     title = "Timeline transcript"
     after: tuple[str, ...] = ("transcribe", "sync")
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("sync.mode", "sync.reference_camera")
     optional_after = ("sync",)
     gpu = GpuUse.NONE
 
@@ -44,8 +53,9 @@ class TimelineStage:
             for asset in project.assets if asset.role is AssetRole.RECORDER
             and asset.id in project.transcripts and project.transcripts[asset.id].is_file()
         }
-        return stable_fingerprint("timeline-v2", source_id, content, placement,
-                                  session_inputs, project.placements, settings.get("sync", {}))
+        return stable_fingerprint("timeline-v3", source_id, content, placement,
+                                  session_inputs, project.placements,
+                                  select_settings(settings, self.settings_keys))
 
     def run(self, context: StageContext) -> StageOutput:
         source_id = _transcript_source_id(context.project, context.settings)

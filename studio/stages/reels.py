@@ -54,6 +54,8 @@ class ReelsStage:
     id = "reels"
     title = "Reels selection"
     after: tuple[str, ...] = ("timeline", "text", "program", "speakers")
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("reels", "llm.managed", "llm.model_path", "llm.roles")
     optional_after = ("text", "program", "speakers")
     gpu = GpuUse.LLM
 

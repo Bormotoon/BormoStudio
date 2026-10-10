@@ -350,6 +350,8 @@ class TranscribeStage:
     id = "transcribe"
     title = "Transcription"
     after: tuple[str, ...] = ("prepare",)
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("transcribe",)
     gpu = GpuUse.WHISPER
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
@@ -383,6 +385,17 @@ class TranscribeStage:
         return stable_fingerprint(
             "transcribe-v3", content, identities, settings.get("transcribe", {}),
         )
+
+    def explain_stale(
+        self, project: Project, settings: dict[str, Any], manifest: Any
+    ) -> str | None:
+        requirements = project.work_dir / "stages" / "prepare" / "requirements.json"
+        if not requirements.is_file():
+            return None
+        requested = json.loads(requirements.read_text(encoding="utf-8")).get("transcripts", [])
+        published = {Path(artifact.path).stem for artifact in manifest.artifacts}
+        missing = [asset_id for asset_id in requested if asset_id not in published]
+        return f"needs transcript {', '.join(missing)}" if missing else None
 
     def run(self, context: StageContext) -> StageOutput:
         requirements_path = context.project.work_dir / "stages" / "prepare" / "requirements.json"

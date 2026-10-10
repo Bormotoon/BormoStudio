@@ -24,7 +24,7 @@ from studio.modules.manager import ModuleManager, module_names
 from studio.stages.base import stage_uses_llm
 from studio.stages.events import EventType, StageEvent
 from studio.stages.fetch import fetch_to_directory
-from studio.stages.planner import build_plan
+from studio.stages.planner import build_plan, fingerprint_parts
 from studio.stages.runner import StageProcessError, run_stage_process
 from studio.stages.worker import stage_registry
 
@@ -76,6 +76,7 @@ def _run_discovery(
                     settings_path,
                     fingerprint,
                     effective_settings=settings,
+                    fingerprint_parts=fingerprint_parts(stage, project, settings),
                     cancelled=lambda: cancel_file is not None and cancel_file.exists(),
                 )
             except StageProcessError:
@@ -119,6 +120,7 @@ def _run_pipeline(
             session = batch_session.select(settings, project.work_dir)
         recover_publications(project.work_dir)
         failures: dict[str, str] = {}
+        stale_reasons: dict[str, str] = {}
         cancelled_run = False
         while True:
             if cancel_file is not None and cancel_file.exists():
@@ -142,6 +144,8 @@ def _run_pipeline(
             )
             if candidate is None:
                 break
+            if candidate.stale_reason:
+                stale_reasons[candidate.stage_id] = candidate.stale_reason
             required = [item for item in candidate.missing if not item.optional]
             if required:
                 failures[candidate.stage_id] = "missing requirements: " + "; ".join(
@@ -165,6 +169,9 @@ def _run_pipeline(
                     settings_path,
                     candidate.fingerprint,
                     effective_settings=settings,
+                    fingerprint_parts=fingerprint_parts(
+                        registry[candidate.stage_id], project, settings
+                    ),
                     on_event=forward if stream else None,
                     cancelled=lambda: cancel_file is not None and cancel_file.exists(),
                 )
@@ -185,9 +192,11 @@ def _run_pipeline(
                     "reason": item.decision.reason,
                     "reuse": item.will_reuse,
                     "missing": [entry.to_dict() for entry in item.missing],
+                    **({"stale": item.stale_reason} if item.stale_reason else {}),
                 }
                 for item in (plan.stages if not cancelled_run else [])
             ],
+            "stale_reasons": stale_reasons,
         }
         (project.work_dir / "report.json").write_text(
             json.dumps(report, indent=2) + "\n",
@@ -882,6 +891,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
                     "reason": item.decision.reason,
                     "reuse": item.will_reuse,
                     "missing": [entry.to_dict() for entry in item.missing],
+                    **({"stale": item.stale_reason} if item.stale_reason else {}),
                 }
                 for item in plan.stages
             ],

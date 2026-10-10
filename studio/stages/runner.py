@@ -41,6 +41,7 @@ def run_stage_process(
     fingerprint: str,
     *,
     effective_settings: dict[str, Any] | None = None,
+    fingerprint_parts: dict[str, Any] | None = None,
     cancelled: Callable[[], bool] = lambda: False,
     terminate_after_s: float = 5.0,
     on_event: Callable[[StageEvent], None] | None = None,
@@ -68,6 +69,7 @@ def run_stage_process(
             cancelled,
             terminate_after_s,
             on_event,
+            fingerprint_parts,
         )
 
 
@@ -81,6 +83,7 @@ def _run_stage_process(
     cancelled: Callable[[], bool],
     terminate_after_s: float,
     on_event: Callable[[StageEvent], None] | None,
+    fingerprint_parts: dict[str, Any] | None = None,
 ) -> RunResult:
     project = Project.load(project_path)
     initial_project = project_path.read_bytes()
@@ -214,6 +217,7 @@ def _run_stage_process(
             "project": str(project_path),
             "settings": str(settings_path),
             "effective_settings": settings,
+            **({"fingerprint_parts": fingerprint_parts} if fingerprint_parts else {}),
         },
         artifacts=artifacts,
         status=ArtifactStatus.OK,

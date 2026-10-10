@@ -58,6 +58,8 @@ class ExportStage:
     id = "export"
     title = "NLE export"
     after: tuple[str, ...] = ("timeline", "roughcut", "speakers")
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("export", "roughcut", "program", "transcribe.audio_streams")
     optional_after = ("roughcut", "speakers")
     gpu = GpuUse.NONE
 

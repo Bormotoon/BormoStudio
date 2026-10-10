@@ -26,6 +26,8 @@ class SyncStage:
     id = "sync"
     title = "Synchronization"
     after: tuple[str, ...] = ("transcribe",)
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("sync", "transcribe.audio_streams")
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:

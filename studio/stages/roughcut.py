@@ -66,6 +66,8 @@ class RoughcutStage:
     id = "roughcut"
     title = "Rough cut"
     after: tuple[str, ...] = ("timeline", "speakers")
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("roughcut", "llm.managed", "llm.model_path", "llm.roles")
     optional_after = ("speakers",)
     gpu = GpuUse.NONE
 

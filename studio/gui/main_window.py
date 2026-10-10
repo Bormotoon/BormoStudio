@@ -405,6 +405,8 @@ class MainWindow(QMainWindow):
                 "\n".join(
                     f"{stage['id']}: {'reuse' if stage.get('reuse') else stage['decision']} — "
                     f"{stage.get('reason', '')}"
+                    + (f"\n  {stage['stale']}" if stage.get("stale")
+                       and stage["stale"] not in stage.get("reason", "") else "")
                     + "".join("\n" + line for line in details[stage["id"]])
                     for stage in stages
                 )

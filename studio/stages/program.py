@@ -28,6 +28,8 @@ class ProgramStage:
     id = "program"
     title = "Review master"
     after: tuple[str, ...] = ("timeline", "roughcut", "speakers")
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("program", "roughcut")
     optional_after = ("roughcut", "speakers")
     gpu = GpuUse.NVENC
 

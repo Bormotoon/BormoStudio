@@ -16,6 +16,8 @@ class ProgramSubtitlesStage:
     id = "program_subtitles"
     title = "Review master captions"
     after: tuple[str, ...] = ("program",)
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ()
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:

@@ -77,6 +77,28 @@ class Stage(Protocol):
     def run(self, context: StageContext) -> StageOutput: ...
 
 
+def select_settings(settings: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    """The part of ``settings`` named by dotted ``keys`` ("sync" or "sync.mode").
+
+    Missing keys are left out, so adding an unrelated default does not change
+    a fingerprint built from the selection.
+    """
+    selected: dict[str, Any] = {}
+    for key in keys:
+        value: Any = settings
+        for part in key.split("."):
+            if not isinstance(value, dict) or part not in value:
+                break
+            value = value[part]
+        else:
+            selected[key] = value
+    return selected
+
+
+def stage_settings_keys(stage: object) -> tuple[str, ...]:
+    return tuple(getattr(stage, "settings_keys", ()))
+
+
 def stage_uses_llm(stage: Stage, settings: dict[str, Any]) -> bool:
     """Whether a run needs the owned llama server; optional for non-LLM stages."""
     uses = getattr(stage, "uses_llm", None)

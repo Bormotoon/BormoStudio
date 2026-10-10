@@ -9,7 +9,14 @@ from typing import Any
 
 from studio.core.media import MediaInfo, probe
 from studio.core.project import Asset, AssetKind, AssetRole, Project, stable_fingerprint
-from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
+from studio.stages.base import (
+    Decision,
+    GpuUse,
+    Requirement,
+    StageContext,
+    StageOutput,
+    select_settings,
+)
 
 MEDIA_SUFFIXES = {".mp4", ".mov", ".mkv", ".avi", ".wav", ".flac", ".mp3", ".m4a"}
 IGNORED_SUFFIXES = {".lrf", ".lrv", ".thm"}
@@ -20,6 +27,8 @@ class ScanStage:
     id = "scan"
     title = "Material scan"
     after: tuple[str, ...] = ()
+    # Settings that can change this stage's result; they alone enter its fingerprint.
+    settings_keys: tuple[str, ...] = ("scan.grouping",)
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
@@ -45,7 +54,8 @@ class ScanStage:
             for asset in project.assets
             if asset.manual.get("overrides")
         }
-        return stable_fingerprint("scan-v3", identities, overrides, settings.get("scan", {}))
+        return stable_fingerprint("scan-v4", identities, overrides,
+                                  select_settings(settings, self.settings_keys))
 
     def run(self, context: StageContext) -> StageOutput:
         assets, warnings = scan(context.project.source_dir)

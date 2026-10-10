@@ -89,13 +89,16 @@ def effective_llm_settings(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 def model_identity(settings: dict[str, Any]) -> str:
-    from studio.modules.models import digest
+    from platformdirs import user_cache_path
+
+    from studio.core.digest import file_digest
 
     config = settings.get("llm", {})
     if not config.get("managed", False):
         return ""
     path = Path(config.get("model_path", "")).expanduser()
-    return digest(path) if path.is_file() else "missing-model"
+    # Multi-gigabyte models: reuse the digest while the file is unchanged.
+    return file_digest(path, user_cache_path("studio")) if path.is_file() else "missing-model"
 
 
 class BatchLlamaSession:
