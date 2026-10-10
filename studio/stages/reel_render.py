@@ -57,7 +57,8 @@ class ReelRenderStage:
         return Decision.run({})
 
     def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
-        inputs = [*project.outputs.get("reels", []), *project.outputs.get("program", [])]
+        inputs = [*project.outputs.get("reels", []), *project.outputs.get("program", []),
+                  *project.outputs.get("speakers", [])]
         inputs.extend(project.source_dir / asset.path for asset in project.assets)
         inputs.extend(
             path
@@ -82,8 +83,9 @@ class ReelRenderStage:
                 for name in ("face_detection_yunet_2023mar.onnx", "light_asd_talkset.model")
             )
         return stable_fingerprint(
-            "reel-render-v4",
+            "reel-render-v5",
             _settings(settings),
+            settings.get("program", {}), project.speaker_cameras,
             project.to_dict()["assets"],
             [str(placement) for placement in project.placements],
             {
@@ -131,7 +133,8 @@ class ReelRenderStage:
             if transcript.time_domain is TimeDomain.TIMELINE:
                 render_project_program(
                     context.project,
-                    EditMap(stem, (KeepRange(start, end),)),
+                    reel_camera_plan(context.project, context.settings,
+                                     EditMap(stem, (KeepRange(start, end),))),
                     video,
                     encoder="cpu",
                     fps=str(settings.get("render_fps", "25")),
@@ -379,6 +382,24 @@ def reframe_video(video: Path, output: Path, settings: dict[str, Any]) -> dict[s
     if result.returncode:
         raise RuntimeError(result.stderr)
     return {"tracking": tracking, "width": width, "height": height}
+
+
+def reel_camera_plan(project: Project, settings: dict[str, Any], edit: EditMap) -> EditMap:
+    """Switch reel angles by speaker with the program's camera policy, when configured."""
+    from studio.core.recorder_tracks import effective_speaker_cameras
+    from studio.stages.camera_selection import CameraPolicy, speaker_camera_edit
+
+    conf = settings.get("program", {})
+    conf = conf if isinstance(conf, dict) else {}
+    if not _settings(settings).get("speaker_angles", True):
+        return edit
+    mapping = effective_speaker_cameras(project, conf.get("speaker_cameras", {}))
+    paths = project.outputs.get("speakers", [])
+    if not mapping or not paths or not paths[0].is_file():
+        return edit
+    turns = json.loads(paths[0].read_text(encoding="utf-8"))
+    return speaker_camera_edit(project, edit, turns, mapping,
+                               policy=CameraPolicy.from_settings(conf))
 
 
 def run_vision_worker(request: dict[str, Any], timeout: float = 3600) -> dict[str, Any]:

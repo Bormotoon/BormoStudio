@@ -118,6 +118,14 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
   Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
 
+### Speaker angles in reels — 2026-10-10
+
+- Timeline-domain reels pass through `speaker_camera_edit` with the program's
+  `CameraPolicy` and speaker cameras (incl. `@wide`), so a reel cuts between
+  angles like the master. `reels.speaker_angles: false` keeps one camera.
+- Checks after this continuation: 500 passed, 2 skipped (Python 3.10, offscreen);
+  Ruff and mypy pass.
+
 ### Raw warp replay for reel audio — 2026-10-10
 
 - When synchronization kept no voice WAVs, reel audio features re-render each

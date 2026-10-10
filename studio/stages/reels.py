@@ -410,6 +410,7 @@ def _settings(settings: dict[str, Any]) -> dict[str, Any]:
         "loudness_lufs": -14.0,
         "covers": True,
         "replay": True,
+        "speaker_angles": True,
     }
     if isinstance(settings.get("reels"), dict):
         defaults.update(settings["reels"])

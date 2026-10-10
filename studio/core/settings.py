@@ -192,6 +192,8 @@ class ReelsSettings:
     covers: bool = True
     # Rank with the YouTube "most replayed" heatmap of fetched episodes.
     replay: bool = True
+    # Timeline reels switch to each speaker's camera (program camera policy).
+    speaker_angles: bool = True
 
 
 @dataclass(slots=True)

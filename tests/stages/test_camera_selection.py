@@ -112,3 +112,21 @@ def test_cut_lead_switches_before_the_turn() -> None:
         {"start": 2, "end": 4, "speaker": "Bob"},
     ], {"Alice": "a", "Bob": "b"}, policy=CameraPolicy(min_shot_s=0, cut_lead_s=0.2))
     assert edit.keep == (KeepRange(0, 1.8, "a"), KeepRange(1.8, 4, "b"))
+
+
+def test_reels_switch_angles_by_speaker_when_configured(tmp_path: Path) -> None:
+    import json
+
+    from studio.stages.reel_render import reel_camera_plan
+
+    source = project()
+    turns = tmp_path / "turns.json"
+    turns.write_text(json.dumps([{"start": 0, "end": 2, "speaker": "Alice"},
+                                 {"start": 2, "end": 4, "speaker": "Bob"}]))
+    source.outputs["speakers"] = [turns]
+    source.speaker_cameras = {"Alice": "a", "Bob": "b"}
+    edit = EditMap("reel", (KeepRange(0, 4),))
+    plan = reel_camera_plan(source, {"program": {"cut_lead_s": 0}}, edit)
+    assert [item.camera_id for item in plan.keep] == ["a", "b"]
+    off = reel_camera_plan(source, {"reels": {"speaker_angles": False}}, edit)
+    assert off == edit

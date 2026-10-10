@@ -22,7 +22,9 @@ cropping or `reels.framing=fit` to preserve the full image with padding. Output
 size defaults to 1080x1920 (`reels.width` / `reels.height`); `reels.crop_x` sets
 horizontal crop position from 0 (left) to 1 (right), defaulting to the center.
 
-Rendered reels are loudness-normalized in two passes to `reels.loudness_lufs`
+Reels cut from the timeline switch cameras by speaker with the same camera
+choices and policy as the program (`reels.speaker_angles`, default on; needs
+speaker turns and speaker cameras). Rendered reels are loudness-normalized in two passes to `reels.loudness_lufs`
 (default −14 LUFS, true peak −1 dBTP; `0` keeps the source level) and get a
 `reel-NNN-cover.jpg` taken a third of the way in (`reels.covers`). The measured
 input loudness is in `render.json`. For fetched YouTube episodes, the "most
