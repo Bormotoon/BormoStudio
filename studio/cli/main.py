@@ -204,7 +204,7 @@ def _doctor() -> int:
 
 def _update_material(
     source: Path,
-    asset_id: str,
+    asset_ids: str | list[str],
     *,
     role: str | None,
     group: str | None,
@@ -215,22 +215,87 @@ def _update_material(
     project, project_path, _ = _project(source)
     with project_lock(project.work_dir):
         recover_publications(project.work_dir)
-        asset = next((item for item in project.assets if item.id == asset_id), None)
-        if asset is None:
-            raise ValueError(f"unknown asset: {asset_id}; run scan first")
-        overrides = asset.manual.setdefault("overrides", {})
-        if role is not None:
-            asset.role = AssetRole(role)
-            overrides["role"] = role
-        if group is not None:
-            asset.group_id = group or None
-            overrides["group_id"] = asset.group_id
-        if device is not None:
-            asset.device = device or None
-            overrides["device"] = asset.device
+        ids = [asset_ids] if isinstance(asset_ids, str) else asset_ids
+        by_id = {item.id: item for item in project.assets}
+        unknown = [asset_id for asset_id in ids if asset_id not in by_id]
+        if unknown:
+            raise ValueError(f"unknown asset: {', '.join(unknown)}; run scan first")
+        for asset_id in ids:
+            asset = by_id[asset_id]
+            overrides = asset.manual.setdefault("overrides", {})
+            if role is not None:
+                asset.role = AssetRole(role)
+                overrides["role"] = role
+            if group is not None:
+                asset.group_id = group or None
+                overrides["group_id"] = asset.group_id
+            if device is not None:
+                asset.device = device or None
+                overrides["device"] = asset.device
         project.plan_revision += 1
         project.save(project_path)
     return project
+
+
+def _update_tracks(source: Path, args: argparse.Namespace) -> dict[str, Any]:
+    from studio.core.recorder_tracks import set_track
+
+    project, project_path, _ = _project(source)
+    if args.asset is None:
+        return _tracks_document(project)
+    if not args.channels:
+        raise ValueError("tracks --asset requires --channels, for example --channels 0,1")
+    try:
+        channels = tuple(int(item) for item in args.channels.split(","))
+    except ValueError as exc:
+        raise ValueError("--channels must be comma-separated channel numbers") from exc
+    with project_lock(project.work_dir):
+        recover_publications(project.work_dir)
+        project = Project.load(project_path)
+        set_track(
+            project, args.asset, channels, speaker=args.speaker, name=args.name,
+            enabled=True if args.enable else False if args.disable else None,
+        )
+        project.plan_revision += 1
+        project.save(project_path)
+    return _tracks_document(project)
+
+
+def _update_cameras(source: Path, args: argparse.Namespace) -> dict[str, Any]:
+    project, project_path, _ = _project(source)
+    if args.speaker is None:
+        return _tracks_document(project)
+    speaker = args.speaker.strip()
+    if not speaker:
+        raise ValueError("cameras --speaker must not be empty")
+    with project_lock(project.work_dir):
+        recover_publications(project.work_dir)
+        project = Project.load(project_path)
+        if args.clear:
+            project.speaker_cameras.pop(speaker, None)
+        else:
+            camera = (args.camera or "").strip()
+            known = {
+                value for asset in project.assets if asset.role is AssetRole.CAMERA
+                for value in (asset.id, asset.group_id) if value
+            }
+            if camera not in known:
+                raise ValueError(f"unknown camera: {camera or '(empty)'}; use a camera group or ID")
+            project.speaker_cameras[speaker] = camera
+        project.plan_revision += 1
+        project.save(project_path)
+    return _tracks_document(project)
+
+
+def _tracks_document(project: Project) -> dict[str, Any]:
+    return {
+        "tracks": [
+            {"id": track.id, "asset_id": track.asset_id, "channels": list(track.channels),
+             "speaker": track.speaker, "name": track.name, "enabled": track.enabled}
+            for track in project.recorder_tracks
+        ],
+        "speaker_cameras": dict(project.speaker_cameras),
+    }
 
 
 def _run_batch(
@@ -331,11 +396,28 @@ def build_parser() -> argparse.ArgumentParser:
     models.add_argument("--cancel-file", type=Path)
     material = commands.add_parser("material")
     material.add_argument("source", type=Path)
-    material.add_argument("--asset", required=True)
+    material.add_argument("--asset", required=True, action="append")
     material.add_argument("--role", choices=[role.value for role in AssetRole])
     material.add_argument("--group")
     material.add_argument("--device")
     material.add_argument("--json", action="store_true")
+    tracks = commands.add_parser("tracks", help="list or edit recorder track lanes")
+    tracks.add_argument("source", type=Path)
+    tracks.add_argument("--asset")
+    tracks.add_argument("--channels", help="comma-separated channels forming one lane")
+    tracks.add_argument("--speaker")
+    tracks.add_argument("--name")
+    enabled = tracks.add_mutually_exclusive_group()
+    enabled.add_argument("--enable", action="store_true")
+    enabled.add_argument("--disable", action="store_true")
+    tracks.add_argument("--json", action="store_true")
+    cameras = commands.add_parser("cameras", help="list or edit speaker camera choices")
+    cameras.add_argument("source", type=Path)
+    cameras.add_argument("--speaker")
+    target = cameras.add_mutually_exclusive_group()
+    target.add_argument("--camera")
+    target.add_argument("--clear", action="store_true")
+    cameras.add_argument("--json", action="store_true")
     batch = commands.add_parser("batch")
     batch.add_argument("sources", nargs="+", type=Path)
     batch.add_argument("--json", action="store_true")
@@ -463,14 +545,23 @@ def _main(argv: Sequence[str] | None = None) -> int:
         project = _update_material(
             args.source, args.asset, role=args.role, group=args.group, device=args.device
         )
-        asset = next(item for item in project.assets if item.id == args.asset)
-        data = {
-            "id": asset.id,
-            "role": asset.role.value,
-            "group_id": asset.group_id,
-            "device": asset.device,
-        }
-        print(json.dumps(data, ensure_ascii=False, indent=2) if args.json else data)
+        documents = [
+            {
+                "id": asset.id,
+                "role": asset.role.value,
+                "group_id": asset.group_id,
+                "device": asset.device,
+            }
+            for asset_id in args.asset
+            for asset in project.assets
+            if asset.id == asset_id
+        ]
+        material: object = documents[0] if len(documents) == 1 else {"assets": documents}
+        print(json.dumps(material, ensure_ascii=False, indent=2) if args.json else material)
+        return 0
+    if args.command in {"tracks", "cameras"}:
+        handler = _update_tracks if args.command == "tracks" else _update_cameras
+        print(json.dumps(handler(args.source, args), ensure_ascii=False, indent=2))
         return 0
     if args.command in {"batch", "channel"}:
         from studio.cli.channel import acquire_channel, write_report

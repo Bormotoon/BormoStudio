@@ -146,15 +146,25 @@ def microphone_tracks(project: Project, conf: dict[str, object]) -> dict[str, st
     configured = conf.get("tracks", {})
     if not isinstance(configured, dict):
         raise ValueError("speakers.tracks must map asset:channel to speaker")
-    tracks = dict(configured)
+    from studio.core.recorder_tracks import microphone_map
+
+    # Lanes named on the Material screen are project choices and win over
+    # settings defaults for the same channel.
+    tracks = {**configured, **microphone_map(project)}
     assets = {asset.id: asset for asset in project.assets if asset.role is AssetRole.RECORDER}
+    disabled = {
+        f"{track.asset_id}:{channel}"
+        for track in project.recorder_tracks if not track.enabled
+        for channel in track.channels
+    }
     if not tracks:
         for asset in assets.values():
             channels = int(asset.manual.get("media_info", {}).get("audio_channels") or 1)
             if channels > 1 and conf.get("method", "auto") == "auto":
                 continue
             for channel in range(channels):
-                tracks[f"{asset.id}:{channel}"] = f"{asset.id}-ch{channel + 1}"
+                if f"{asset.id}:{channel}" not in disabled:
+                    tracks[f"{asset.id}:{channel}"] = f"{asset.id}-ch{channel + 1}"
     for key, speaker in tracks.items():
         if not isinstance(key, str) or not isinstance(speaker, str) or not speaker.strip():
             raise ValueError("speaker tracks require nonempty string names")

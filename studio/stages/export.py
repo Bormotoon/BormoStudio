@@ -75,9 +75,9 @@ class ExportStage:
             for path in paths if path.is_file()
         ]
         return stable_fingerprint(
-            "export-v12", project.assets, project.placements, project.audio_warp_maps,
+            "export-v13", project.assets, project.placements, project.audio_warp_maps,
             inputs, settings.get("export", {}), settings.get("roughcut", {}),
-            settings.get("program", {}),
+            settings.get("program", {}), project.speaker_cameras,
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -116,11 +116,12 @@ class ExportStage:
 
 def multicam_camera_plan(project: Project, settings: dict, use_edit: bool,
                         sequence: Sequence) -> EditMap | None:
+    from studio.core.recorder_tracks import effective_speaker_cameras
     from studio.stages.camera_selection import speaker_camera_edit
     from studio.stages.program import load_edit_map
 
     conf = settings.get("program", {})
-    mapping = conf.get("speaker_cameras", {})
+    mapping = effective_speaker_cameras(project, conf.get("speaker_cameras", {}))
     paths = project.outputs.get("roughcut", [])
     edit = None
     if use_edit and paths and paths[0].is_file():

@@ -70,6 +70,7 @@ class ProgramStage:
                 if key != "burn_subtitles"
             },
             settings.get("roughcut", {}),
+            project.speaker_cameras,
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -86,7 +87,9 @@ class ProgramStage:
         output.parent.mkdir(parents=True, exist_ok=True)
         conf = context.settings.get("program", {})
         conf = conf if isinstance(conf, dict) else {}
-        mapping = conf.get("speaker_cameras", {})
+        from studio.core.recorder_tracks import effective_speaker_cameras
+
+        mapping = effective_speaker_cameras(context.project, conf.get("speaker_cameras", {}))
         if mapping:
             from studio.stages.camera_selection import speaker_camera_edit
 

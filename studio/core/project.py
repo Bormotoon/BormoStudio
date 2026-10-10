@@ -50,6 +50,31 @@ class Asset:
 
 
 @dataclass(slots=True)
+class RecorderTrack:
+    """One microphone lane of a recorder file: one or more of its channels."""
+
+    asset_id: str
+    channels: tuple[int, ...]
+    speaker: str | None = None
+    name: str = ""
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        self.channels = tuple(self.channels)
+        if not self.channels or any(
+            isinstance(item, bool) or not isinstance(item, int) or item < 0
+            for item in self.channels
+        ) or len(set(self.channels)) != len(self.channels):
+            raise ValueError("recorder track channels must be unique non-negative integers")
+        if self.speaker is not None and not self.speaker.strip():
+            self.speaker = None
+
+    @property
+    def id(self) -> str:
+        return f"{self.asset_id}:{'+'.join(str(item) for item in self.channels)}"
+
+
+@dataclass(slots=True)
 class Project:
     source_dir: Path
     work_dir: Path
@@ -58,6 +83,8 @@ class Project:
     audio_warp_maps: list[AudioWarpMap] = field(default_factory=list)
     transcripts: dict[str, Path] = field(default_factory=dict)
     outputs: dict[str, list[Path]] = field(default_factory=dict)
+    recorder_tracks: list[RecorderTrack] = field(default_factory=list)
+    speaker_cameras: dict[str, str] = field(default_factory=dict)
     plan_revision: int = 1
     version: int = 1
     schema_version: int = PROJECT_SCHEMA_VERSION
@@ -98,6 +125,11 @@ class Project:
             ],
             "transcripts": {key: str(value) for key, value in self.transcripts.items()},
             "outputs": {key: [str(path) for path in paths] for key, paths in self.outputs.items()},
+            "recorder_tracks": [
+                {**asdict(track), "channels": list(track.channels)}
+                for track in self.recorder_tracks
+            ],
+            "speaker_cameras": dict(self.speaker_cameras),
         }
 
     @classmethod
@@ -140,6 +172,19 @@ class Project:
             outputs={
                 key: [Path(value) for value in values]
                 for key, values in data.get("outputs", {}).items()
+            },
+            recorder_tracks=[
+                RecorderTrack(
+                    asset_id=item["asset_id"],
+                    channels=tuple(item["channels"]),
+                    speaker=item.get("speaker"),
+                    name=str(item.get("name", "")),
+                    enabled=bool(item.get("enabled", True)),
+                )
+                for item in data.get("recorder_tracks", [])
+            ],
+            speaker_cameras={
+                str(key): str(value) for key, value in data.get("speaker_cameras", {}).items()
             },
             plan_revision=int(data.get("plan_revision", 1)),
             version=int(data.get("version", 1)),

@@ -11,12 +11,9 @@ from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFileDialog,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QMainWindow,
     QPushButton,
@@ -30,6 +27,7 @@ from PyQt6.QtWidgets import (
 from studio.core.project import Project
 from studio.gui.bridge import RunnerBridge
 from studio.gui.cut_timeline import CutTimeline, TimelineCut
+from studio.gui.material import MaterialPage
 from studio.gui.modules import ModulesPage
 from studio.gui.settings_page import SettingsPage
 from studio.gui.setup_wizard import SetupWizard
@@ -54,13 +52,8 @@ class MainWindow(QMainWindow):
         self.navigation.addItem("Settings")
         self.settings_page = SettingsPage()
         self.pages = QStackedWidget()
-        self.material = QTreeWidget()
-        self.material.setHeaderLabels(["Asset", "Role", "Group", "Device"])
-        self.material.currentItemChanged.connect(self._select_material)
-        self.material_role = QComboBox()
-        self.material_role.addItems(["camera", "recorder", "ignore", "unknown"])
-        self.material_group = QLineEdit()
-        self.material_device = QLineEdit()
+        self.material = MaterialPage()
+        self.material.command_requested.connect(self._material_command)
         self.review = QTreeWidget()
         self.review.setHeaderLabels(["ID", "Reason", "Start", "End", "Decision"])
         self.review_status = QLabel("No edit decisions available.")
@@ -135,7 +128,7 @@ class MainWindow(QMainWindow):
         start_layout.addWidget(setup)
         start_layout.addStretch()
         self.pages.addWidget(start)
-        self.pages.addWidget(self._material_page())
+        self.pages.addWidget(self.material)
         self.pages.addWidget(self._page(self.plan_label, "Build plan", self._plan))
         run = QPushButton("Run processing plan")
         run.clicked.connect(self._run)
@@ -146,20 +139,6 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.subtitles)
         self.pages.addWidget(self.modules_page)
         self.pages.addWidget(self.settings_page)
-
-    def _material_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addWidget(self.material)
-        fields = QFormLayout()
-        fields.addRow("Role", self.material_role)
-        fields.addRow("Group", self.material_group)
-        fields.addRow("Device", self.material_device)
-        layout.addLayout(fields)
-        save = QPushButton("Save material assignment")
-        save.clicked.connect(self._save_material)
-        layout.addWidget(save)
-        return page
 
     def _review_page(self) -> QWidget:
         page = QWidget()
@@ -369,55 +348,17 @@ class MainWindow(QMainWindow):
             )
 
     def _show_material(self, project: Project) -> None:
-        self.material.clear()
-        for asset in project.assets:
-            item = QTreeWidgetItem(
-                self.material,
-                [str(asset.path), asset.role.value, asset.group_id or "", asset.device or ""],
-            )
-            item.setData(0, Qt.ItemDataRole.UserRole, asset.id)
+        self.material.load(project)
 
-    def _select_material(
-        self,
-        item: QTreeWidgetItem | None,
-        previous: QTreeWidgetItem | None,
-    ) -> None:
-        del previous
-        if not item or not self.source:
+    def _material_command(self, command: str, arguments: list[str]) -> None:
+        if self.source is None:
             return
-        path = self.source / "_studio" / "project.json"
-        if not path.is_file():
-            return
-        project = Project.load(path)
-        asset_id = str(item.data(0, Qt.ItemDataRole.UserRole))
-        asset = next((entry for entry in project.assets if entry.id == asset_id), None)
-        if asset is None:
-            return
-        self.material_role.setCurrentText(asset.role.value)
-        self.material_group.setText(asset.group_id or "")
-        self.material_device.setText(asset.device or "")
-
-    def _save_material(self) -> None:
-        item = self.material.currentItem()
-        if item is None or self.source is None:
-            return
-        asset_id = str(item.data(0, Qt.ItemDataRole.UserRole))
         self.pending_view = "material"
         self.navigation.setCurrentRow(4)
-        self.bridge.start(
-            "material",
-            self.source,
-            [
-                "--asset",
-                asset_id,
-                "--role",
-                self.material_role.currentText(),
-                "--group",
-                self.material_group.text(),
-                "--device",
-                self.material_device.text(),
-            ],
-        )
+        try:
+            self.bridge.start(command, self.source, arguments)
+        except RuntimeError as exc:
+            self.material.status.setText(str(exc))
 
     def _show_review(self, project: Project) -> None:
         self.review.clear()

@@ -58,7 +58,10 @@ class ScanStage:
             json.dumps(data, indent=2) + "\n",
             encoding="utf-8",
         )
-        return StageOutput((report,), {"assets": assets})
+        from studio.core.recorder_tracks import refresh_tracks
+
+        tracks = refresh_tracks(assets, context.project.recorder_tracks)
+        return StageOutput((report,), {"assets": assets, "recorder_tracks": tracks})
 
 
 def scan(source_dir: Path) -> tuple[list[Asset], list[str]]:

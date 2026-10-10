@@ -35,7 +35,7 @@ class RunnerBridge(QObject):
             raise RuntimeError("a Studio command is already running")
         self.stdout_buffer = ""
         self.document_output = ""
-        self.document_mode = command in {"scan", "plan", "material"}
+        self.document_mode = command in {"scan", "plan", "material", "tracks", "cameras"}
         command_line = [command, str(source), *(arguments or [])]
         if command in {"run", "scan", "plan"}:
             self.cancel_directory = tempfile.TemporaryDirectory(prefix="uvf-run-")
