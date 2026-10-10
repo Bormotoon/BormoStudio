@@ -145,3 +145,22 @@ def test_pyannote_diarizes_each_session_and_unifies_labels(tmp_path: Path) -> No
     report = json.loads(output.project_changes["outputs"]["speakers"][1].read_text())
     assert report["identities"]["method"] == "pyannote-embedding"
     assert report["identities"]["sources"] == ["rec1", "rec2"]
+
+
+def test_named_first_session_keeps_unnamed_second_session_lanes(tmp_path: Path) -> None:
+    from studio.core.project import RecorderTrack
+    from studio.stages.speakers import microphone_tracks
+
+    project = Project(tmp_path, tmp_path / "_studio")
+    for name, offset in (("a1", 0), ("a2", 0), ("b1", 20), ("b2", 20), ("backup", 0)):
+        asset = Asset(name, Path(f"{name}.wav"), AssetKind.AUDIO, AssetRole.RECORDER)
+        asset.manual["media_info"] = {"audio_channels": 1}
+        project.assets.append(asset)
+        project.placements.append(SourcePlacement(name, offset, 0, 6))
+    project.recorder_tracks = [RecorderTrack("a1", (0,), speaker="Ivan"),
+                               RecorderTrack("a2", (0,), speaker="Maria")]
+    tracks = microphone_tracks(project, {"method": "mics"})
+    # The backup recorder plays alongside the named session and stays out.
+    assert tracks == {"a1:0": "Ivan", "a2:0": "Maria", "b1:0": "b1-ch1", "b2:0": "b2-ch1"}
+    assert microphone_tracks(project, {"method": "mics", "match_files": False}) == {
+        "a1:0": "Ivan", "a2:0": "Maria"}

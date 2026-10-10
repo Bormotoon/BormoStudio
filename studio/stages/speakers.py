@@ -236,6 +236,23 @@ def match_microphone_lanes(
     }
 
 
+def _separate_session(
+    asset_id: str, named_assets: set[str], placements: dict[str, SourcePlacement],
+    conf: dict[str, object],
+) -> bool:
+    """An unnamed recorder of another session: its lanes join by voice matching.
+
+    Naming the lanes of one session must not hide the next session's lanes;
+    cross-file matching then gives them the names of the same people.
+    """
+    if asset_id in named_assets or not conf.get("match_files", True):
+        return False
+    placement = placements.get(asset_id)
+    named = [placements[item] for item in named_assets if item in placements]
+    return placement is not None and bool(named) and all(
+        _overlap_s(placement, other) <= 1.0 for other in named)
+
+
 def microphone_tracks(project: Project, conf: dict[str, object]) -> dict[str, str]:
     configured = conf.get("tracks", {})
     if not isinstance(configured, dict):
@@ -251,14 +268,18 @@ def microphone_tracks(project: Project, conf: dict[str, object]) -> dict[str, st
         for track in project.recorder_tracks if not track.enabled
         for channel in track.channels
     }
-    if not tracks:
-        for asset in assets.values():
-            channels = int(asset.manual.get("media_info", {}).get("audio_channels") or 1)
-            if channels > 1 and conf.get("method", "auto") == "auto":
-                continue
-            for channel in range(channels):
-                if f"{asset.id}:{channel}" not in disabled:
-                    tracks[f"{asset.id}:{channel}"] = f"{asset.id}-ch{channel + 1}"
+    named_assets = {key.rsplit(":", 1)[0] for key in tracks if isinstance(key, str)}
+    placements = {item.asset_id: item for item in project.placements}
+    for asset in assets.values():
+        if named_assets and not _separate_session(asset.id, named_assets, placements, conf):
+            # Unnamed files beside named ones (a backup recorder) stay out.
+            continue
+        channels = int(asset.manual.get("media_info", {}).get("audio_channels") or 1)
+        if channels > 1 and conf.get("method", "auto") == "auto":
+            continue
+        for channel in range(channels):
+            if f"{asset.id}:{channel}" not in disabled:
+                tracks[f"{asset.id}:{channel}"] = f"{asset.id}-ch{channel + 1}"
     for key, speaker in tracks.items():
         if not isinstance(key, str) or not isinstance(speaker, str) or not speaker.strip():
             raise ValueError("speaker tracks require nonempty string names")

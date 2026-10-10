@@ -456,6 +456,9 @@ names given by the user are never merged; an unnamed lane can inherit a name.
 
 - Microphones: matching applies across recorder files that do not overlap on the
   timeline (separate sessions); merged lanes take the earliest lane's name.
+  Naming the lanes of one session does not hide another session's unnamed
+  recorders: their lanes join and take the matching names. Unnamed recorders that
+  play alongside named ones (a backup) still stay out.
 - pyannote: besides the transcript source, every placed file that covers mostly
   new timeline (another session) is diarized; labels of later sources take the
   matching first-source label, unmatched ones that would collide get `@asset`.
