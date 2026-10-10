@@ -31,7 +31,15 @@ class ReelRenderStage:
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
-        return []
+        if not _settings(settings).get("tracking", False):
+            return [Requirement("binary", "ffmpeg", "render reels")]
+        # Tracking falls back to a static crop, so vision pieces are optional.
+        return [
+            Requirement("binary", "ffmpeg", "render reels"),
+            Requirement("module", "vision", "face tracking", optional=True),
+            Requirement("model", "yunet", "face detection for tracking", optional=True),
+            Requirement("model", "light-asd", "active speaker for tracking", optional=True),
+        ]
 
     def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
         if not _settings(settings).get("render", False):

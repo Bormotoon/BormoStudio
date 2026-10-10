@@ -9,6 +9,7 @@ from typing import Any
 
 from studio.core.project import Project, StageManifest
 from studio.stages.base import Decision, DecisionKind, Stage
+from studio.stages.requirements import MissingRequirement, missing_requirements
 
 DISCOVERY_STAGES = ("discover", "scan", "prepare")
 
@@ -19,6 +20,7 @@ class PlannedStage:
     decision: Decision
     fingerprint: str
     will_reuse: bool
+    missing: tuple[MissingRequirement, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +75,11 @@ def build_plan(
             decision.kind is DecisionKind.RUN
             and _reusable_manifest(project, stage.id, fingerprint)
         )
-        planned.append(PlannedStage(stage.id, decision, fingerprint, reuse))
+        missing = (
+            tuple(missing_requirements(stage.requirements(settings), settings))
+            if decision.kind is DecisionKind.RUN and not reuse else ()
+        )
+        planned.append(PlannedStage(stage.id, decision, fingerprint, reuse, missing))
         decisions[stage.id] = decision
     return Plan(project.plan_revision, tuple(planned))
 

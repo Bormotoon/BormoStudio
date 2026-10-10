@@ -21,7 +21,7 @@ from studio.llm.session import BatchLlamaSession, ManagedLlamaSession, effective
 from studio.modules.cancellation import InstallationCancelled
 from studio.modules.manager import ModuleManager, module_names
 from studio.stages.base import stage_uses_llm
-from studio.stages.events import StageEvent
+from studio.stages.events import EventType, StageEvent
 from studio.stages.fetch import fetch_to_directory
 from studio.stages.planner import build_plan
 from studio.stages.runner import StageProcessError, run_stage_process
@@ -139,6 +139,18 @@ def _run_pipeline(
             )
             if candidate is None:
                 break
+            required = [item for item in candidate.missing if not item.optional]
+            if required:
+                failures[candidate.stage_id] = "missing requirements: " + "; ".join(
+                    f"{item.value} ({item.why}): {item.hint}" for item in required
+                )
+                print(failures[candidate.stage_id], file=sys.stderr)
+                if stream:
+                    forward(StageEvent(EventType.WARNING, candidate.stage_id, {
+                        "message": failures[candidate.stage_id],
+                        "missing": [item.to_dict() for item in candidate.missing],
+                    }))
+                continue
             try:
                 if stage_uses_llm(registry[candidate.stage_id], settings):
                     session.ensure()
@@ -169,6 +181,7 @@ def _run_pipeline(
                     "decision": item.decision.kind.value,
                     "reason": item.decision.reason,
                     "reuse": item.will_reuse,
+                    "missing": [entry.to_dict() for entry in item.missing],
                 }
                 for item in (plan.stages if not cancelled_run else [])
             ],
@@ -715,6 +728,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
                     "decision": item.decision.kind.value,
                     "reason": item.decision.reason,
                     "reuse": item.will_reuse,
+                    "missing": [entry.to_dict() for entry in item.missing],
                 }
                 for item in plan.stages
             ],

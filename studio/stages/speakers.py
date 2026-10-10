@@ -32,6 +32,9 @@ class SpeakersStage:
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
+        speakers = settings.get("speakers", {})
+        if isinstance(speakers, dict) and speakers.get("method") == "pyannote":
+            return [Requirement("module", "diarization", "pyannote speaker diarization")]
         return [Requirement("binary", "ffmpeg", "decode microphone channels")]
 
     def decide(self, project: Project, settings: dict[str, Any]) -> Decision:

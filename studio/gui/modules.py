@@ -84,6 +84,16 @@ class ModulesPage(QWidget):
         ):
             layout.addWidget(widget)
 
+    def select_target(self, kind: str, name: str) -> None:
+        """Preselect what a stage reported missing; installing stays explicit."""
+        if kind == "module":
+            self.module.setCurrentText(name)
+        else:
+            index = self.model.findData(name)
+            if index >= 0:
+                self.model.setCurrentIndex(index)
+        self.status.setText(f"A stage needs {name}; press Install/Download to get it.")
+
     def start(self, command: str, action: str, name: str | None = None) -> None:
         if self.process.state() != QProcess.ProcessState.NotRunning:
             return

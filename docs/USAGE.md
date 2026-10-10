@@ -82,6 +82,12 @@ GGUF in `llm/<repo>`. After a download in the GUI, the Whisper model name or GGU
 path is filled into project settings; saving applies it. `transcribe` loads a
 downloaded catalog model from disk and otherwise lets faster-whisper fetch it.
 
+Before running, the plan checks what each stage needs (ffmpeg, the Whisper
+package, modules, models, a managed llama binary and GGUF). Missing items appear
+in `uvf plan` and on the Plan page with how to install them; **Install missing
+requirement** opens Modules and models with the item selected. `uvf run` does not
+start a stage whose mandatory requirement is missing and reports it as failed.
+
 First-run setup (**Set up processing**) includes a Models page with the same
 downloader: pick a Whisper model for the project and optionally download a Gemma
 GGUF; Finish stores both in the project settings.

@@ -118,6 +118,19 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
   Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
 
+### Stage requirements and install navigation — 2026-10-10
+
+- `stages/requirements.py` checks declared `Requirement`s: binaries on PATH,
+  Python packages, managed modules, catalog/recipe models and, for managed
+  llama, the executable and GGUF path (external endpoints are not probed).
+  pyannote speakers now declare the diarization module; reel tracking declares
+  vision/YuNet/Light-ASD as optional (it falls back to a static crop).
+- The planner attaches missing requirements to stages that will run; `uvf plan`
+  and run reports list them with a hint and install target. `uvf run` records a
+  stage with a missing mandatory requirement as failed without starting it (its
+  dependents skip) and emits a warning event. The Plan page lists them and
+  **Install missing requirement** opens Modules and models with it preselected.
+
 ### First-run model step — 2026-10-10
 
 - The setup wizard has a Models page: it lists catalog models already present,

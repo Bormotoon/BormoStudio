@@ -137,9 +137,14 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(plan)
         run = QPushButton("Run processing plan")
         run.clicked.connect(self._run)
+        self.install_target: tuple[str, str] | None = None
+        self.install_button = QPushButton("Install missing requirement")
+        self.install_button.setEnabled(False)
+        self.install_button.clicked.connect(self._open_install)
         plan_layout = plan.layout()
         if plan_layout is not None:
             plan_layout.addWidget(run)
+            plan_layout.addWidget(self.install_button)
         self.pages.addWidget(self._review_page())
         self.pages.addWidget(self._page(self.log, "Cancel", self.bridge.cancel))
         self.pages.addWidget(self._page(self.result, "Open export folder", self._open_result))
@@ -286,13 +291,42 @@ class MainWindow(QMainWindow):
         self.pending_view = "result"
         self.navigation.setCurrentRow(4)
 
+    def _open_install(self) -> None:
+        if self.install_target is None:
+            return
+        self.modules_page.select_target(*self.install_target)
+        self.navigation.setCurrentRow(7)
+
+    def _note_missing(self, missing: object) -> list[str]:
+        lines: list[str] = []
+        for item in missing if isinstance(missing, list) else []:
+            if not isinstance(item, dict):
+                continue
+            optional = " (optional)" if item.get("optional") else ""
+            lines.append(f"  missing{optional}: {item.get('value')} — {item.get('hint')}")
+            install = item.get("install")
+            if isinstance(install, list) and len(install) == 2 and (
+                self.install_target is None or not item.get("optional")
+            ):
+                self.install_target = (str(install[0]), str(install[1]))
+        self.install_button.setEnabled(self.install_target is not None)
+        return lines
+
     def _plan_event(self, value: dict) -> None:
+        if value.get("t") == "warning" and "missing" in value:
+            self._append_log("\n".join(self._note_missing(value["missing"])) + "\n")
+            return
         stages = value.get("stages")
         if isinstance(stages, list):
+            self.install_target = None
+            details = {
+                stage["id"]: self._note_missing(stage.get("missing")) for stage in stages
+            }
             self.plan_label.setText(
                 "\n".join(
                     f"{stage['id']}: {'reuse' if stage.get('reuse') else stage['decision']} — "
                     f"{stage.get('reason', '')}"
+                    + "".join("\n" + line for line in details[stage["id"]])
                     for stage in stages
                 )
             )

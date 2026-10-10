@@ -1028,7 +1028,7 @@ release-база, её квалификация в этом окружении �
 **Задачи:**
 
 - [x] LLM-детекторы монтажа (подача дубля, оговорки, начало разговора, смысловые паразиты) с JSON/evidence guardrails: только номера фраз и дословные цитаты, времена из слов транскрипта, отклонённое — в `llm-report.json`, по умолчанию предложения. Приёмка на реальной модели отдельно.
-- [ ] **Частично:** modules manager/recipes/GUI/progress/cancel/locks есть. Не доделано: полнота stage → install navigation и реальные ML установки/запуски.
+- [ ] **Приёмка:** modules manager/recipes/GUI/progress/cancel/locks есть; планировщик проверяет требования каждого запускаемого этапа (ffmpeg, faster-whisper, модули, модели, управляемый llama), `uvf plan`/`run` называют недостающее и как установить, `run` не запускает этап без обязательного, экран плана ведёт кнопкой в «Модули и модели» с предвыбранной позицией. Не проверены реальные ML установки/запуски.
 - [x] YuNet/Light-ASD, Whisper (base…large-v3-turbo) и Gemma 4 GGUF загружаются из приложения: закреплённые ревизии, проверка хэшей, докачка, отмена, подстановка в настройки; мастер первого запуска показывает скачанное, предлагает large-v3-turbo и сохраняет выбранные Whisper/GGUF в проект. Реальная загрузка на чистой машине — приёмка фазы.
 - [ ] **Частично:** Linux frozen, setup wizard и local install script (binary/link/desktop entry) есть; same-host installed smoke пройден. Не доделано: dependency bundling, clean-machine/Python 3.12 и Windows/macOS; бинарник требует rebuild после последних guards.
 - [ ] **Частично:** compute probe/recommendations есть. Не доделано: измеряемое memory/performance autotuning Whisper/llama.

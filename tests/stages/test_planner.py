@@ -111,3 +111,19 @@ def test_invalid_discovery_blocks_main_plan(tmp_path: Path, damage: str) -> None
     plan = build_plan([_Stage("scan"), _Stage("sync", ("scan",))], project, {})
     assert not plan.stages[0].will_reuse
     assert plan.stages[1].decision.reason == "discovery inputs are not finalized"
+
+
+class _Needs(_Stage):
+    def requirements(self, settings):  # type: ignore[no-untyped-def]
+        return [Requirement("binary", "definitely-not-a-binary-uvf", "test")]
+
+
+def test_plan_reports_missing_only_for_stages_that_will_run(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    plan = build_plan([_Stage("discover"), _Stage("scan"), _Stage("prepare"),
+                       _Needs("needs")], project, {})
+    entry = next(item for item in plan.stages if item.stage_id == "needs")
+    assert entry.missing[0].value == "definitely-not-a-binary-uvf"
+    skipped = build_plan([_Stage("discover"), _Stage("scan"), _Stage("prepare"),
+                          _Needs("needs")], project, {}, skip={"needs"})
+    assert not next(item for item in skipped.stages if item.stage_id == "needs").missing
