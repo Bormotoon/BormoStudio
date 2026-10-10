@@ -110,7 +110,7 @@ class RoughcutStage:
                  for language in ("ru", "en")],
             )
         return stable_fingerprint(
-            "roughcut-v5", content, project.placements,
+            "roughcut-v6", content, project.placements,
             _sha256(source, project.work_dir) if source and source.is_file() else "missing",
             settings.get("roughcut", {}), llm_identity,
         )

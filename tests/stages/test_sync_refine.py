@@ -104,3 +104,20 @@ def test_clip_without_step_keeps_its_plan() -> None:
     assert not result.accepted
     assert result.pieces == [(10.0, 99.9, 1.0)]
     assert "within" in result.report["reason"]
+
+
+def test_absorption_window_stays_next_to_the_step() -> None:
+    from studio.stages.sync_refine import absorption_window
+
+    def inverse(rec: float) -> float:
+        return rec
+
+    pieces = [(0.0, 100.0, 1.0)]
+    # A long pause that holds the step: the window sits at the step, not mid-pause.
+    left, right, in_pause = absorption_window(
+        32.0, -0.088, [(10.0, 20.0), (33.0, 34.0)], inverse, 0.0, pieces, 0.4)
+    assert in_pause and left <= 32.0 <= right and right - left == pytest.approx(0.44)
+    # The nearest pause is 5 s away: absorb in speech at the step instead.
+    left, right, in_pause = absorption_window(
+        32.0, -0.088, [(20.0, 26.0), (27.0, 31.5), (31.6, 40.0)], inverse, 0.0, pieces, 0.4)
+    assert not in_pause and left < 32.0 < right

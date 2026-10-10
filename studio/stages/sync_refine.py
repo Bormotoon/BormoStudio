@@ -320,19 +320,21 @@ def absorption_window(
     """Output-time window that absorbs ``delta_s``: in a pause if one is near."""
     width = max(MIN_ABSORB_S, abs(delta_s) / PAUSE_TEMPO)
     spans = sorted(recorder_words)
-    best: tuple[float, float] | None = None
+    # The pause nearest to the step (≤ ``snap_s`` away): everything between the
+    # step and the window is read with the wrong regime, so closer is better.
+    best: tuple[float, float, float] | None = None  # (distance, left, right)
     for (_a0, a1), (b0, _b1) in zip(spans, spans[1:], strict=False):
         left, right = inverse(a1), inverse(b0)
         if left is None or right is None or right - left < width:
             continue
-        middle = (left + right) / 2
-        if abs(middle - position) <= snap_s + (right - left) / 2 and (
-                best is None or abs(middle - position) < abs(sum(best) / 2 - position)):
-            best = (left, right)
+        distance = max(0.0, left - position, position - right)
+        if distance <= snap_s and (best is None or distance < best[0]):
+            best = (distance, left, right)
     end = lead + sum(duration / factor for _s, duration, factor in pieces)
     if best is not None:
-        middle = min(max((best[0] + best[1]) / 2, best[0] + width / 2), best[1] - width / 2)
-        center, in_pause = middle, True
+        _distance, pause_left, pause_right = best
+        center = min(max(position, pause_left + width / 2), pause_right - width / 2)
+        in_pause = True
     else:
         width = max(width, abs(delta_s) / SPEECH_TEMPO)
         center, in_pause = position, False

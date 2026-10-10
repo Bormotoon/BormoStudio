@@ -99,7 +99,7 @@ class SpeakersStage:
                                         project.work_dir)
                       for asset in project.assets if asset.id in selected]
         return stable_fingerprint(
-            "speakers-v6", content, tracks, identities, project.placements,
+            "speakers-v7", content, tracks, identities, project.placements,
             [warp for warp in project.audio_warp_maps if warp.source_asset_id in selected], conf,
         )
 
