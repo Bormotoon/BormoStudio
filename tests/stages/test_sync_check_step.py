@@ -21,3 +21,23 @@ def test_content_check_reports_missing_voice_and_unloads_backend(tmp_path: Path)
     assert report["clips"][0]["spans"][0]["kind"] == "content"
     assert report["clips"][0]["time_domain"] == "rendered_audio"
     assert all(path.is_file() for path in artifacts)
+
+
+def test_content_gap_with_good_acoustics_is_a_camera_transcript_gap() -> None:
+    from studio.stages.sync_check_step import combine_checks
+    from studio.stages.sync_self_check import SelfCheckOutcome, SelfCheckSpan
+    from studio.stages.sync_verify import LagSample, VerifyReport
+
+    acoustic = VerifyReport("cam", "voice", duration_s=290, grid_s=2.5)
+    acoustic.samples = [LagSample(2 + 2.5 * i, 0.5, 200) for i in range(115)]
+    content = SelfCheckOutcome("failed", [SelfCheckSpan(251, 262, "content", "5 vs 0")])
+    result = combine_checks(content, acoustic, 20.0)
+    assert result["status"] == "passed"
+    assert result["warnings"][0]["kind"] == "camera_transcript_gap"
+    assert result["acoustic"]["status"] == "passed"
+
+    shifted = VerifyReport("cam", "voice", duration_s=290, grid_s=2.5)
+    shifted.samples = [LagSample(2 + 2.5 * i, -88.0 if i < 24 else 0.5, 200) for i in range(115)]
+    result = combine_checks(SelfCheckOutcome("passed"), shifted, 20.0)
+    assert result["status"] == "failed"
+    assert result["acoustic"]["shifted_intervals"]

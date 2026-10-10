@@ -28,13 +28,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
-from studio.stages.sync_acoustic import (
-    _REFINE_SR,
-    _window_slice,
-    gcc_phat,
-    load_mono16k_track,
-)
+from studio.stages.sync_acoustic import load_mono16k_track
 
 __all__ = [
     "DEFAULT_GCC_EPS",
@@ -43,6 +39,7 @@ __all__ = [
     "DEFAULT_MIN_SHARPNESS",
     "DEFAULT_WINDOW_S",
     "LagSample",
+    "ShiftedInterval",
     "VerifyReport",
     "measure",
     "validate_parameters",
@@ -61,12 +58,29 @@ DEFAULT_GCC_EPS = 1e-8
 DEFAULT_MIN_CONFIDENT = 3
 DEFAULT_MIN_SPAN_RATIO = 0.5
 
+# A run of at least this many consecutive bad windows (|lag| above the
+# threshold) is a shifted interval; shorter runs are outliers. A clip also
+# fails when more than this fraction of its confident windows is bad.
+DEFAULT_MIN_BAD_WINDOWS = 3
+DEFAULT_MAX_BAD_FRACTION = 0.1
+
 
 @dataclass
 class LagSample:
+    """One window. ``lag_ms`` is the residual: how much later (+) or earlier (−)
+    the recorder must be read at ``t`` for the voice to land under the picture."""
+
     t: float
     lag_ms: float
     sharpness: float
+
+
+@dataclass
+class ShiftedInterval:
+    start_s: float
+    end_s: float
+    median_lag_ms: float
+    windows: int
 
 
 @dataclass
@@ -79,6 +93,7 @@ class VerifyReport:
     rejected: list[tuple[float, str]] = field(default_factory=list)
     duration_s: float = 0.0
     min_sharpness: float = DEFAULT_MIN_SHARPNESS
+    grid_s: float = DEFAULT_GRID_S
 
     @property
     def confident(self) -> list[LagSample]:
@@ -102,9 +117,11 @@ class VerifyReport:
         times = [s.t for s in self.confident]
         return (max(times) - min(times)) if len(times) >= 2 else 0.0
 
-    def summary(self) -> dict[str, float | int | str]:
+    def summary(
+        self, threshold_ms: float | None = None, min_bad_windows: int = DEFAULT_MIN_BAD_WINDOWS,
+    ) -> dict[str, Any]:
         confident = self.confident
-        base: dict[str, float | int | str] = {
+        base: dict[str, Any] = {
             "n_confident": len(confident),
             "n_attempted": self.attempted,
             "n_rejected": len(self.rejected),
@@ -125,19 +142,90 @@ class VerifyReport:
                 "max_abs_lag_ms": lags[-1],
             }
         )
+        if threshold_ms is not None:
+            intervals, outliers, fraction = self.bad_windows(threshold_ms, min_bad_windows)
+            base.update(
+                {
+                    "threshold_ms": threshold_ms,
+                    "bad_fraction": round(fraction, 3),
+                    "shifted_intervals": [
+                        {
+                            "start_s": round(item.start_s, 3),
+                            "end_s": round(item.end_s, 3),
+                            "median_lag_ms": round(item.median_lag_ms, 1),
+                            "windows": item.windows,
+                        }
+                        for item in intervals
+                    ],
+                    "outliers": [
+                        {"t": round(item.t, 3), "lag_ms": round(item.lag_ms, 1)}
+                        for item in outliers
+                    ],
+                }
+            )
         return base
+
+    def bad_windows(
+        self, threshold_ms: float, min_bad_windows: int = DEFAULT_MIN_BAD_WINDOWS,
+    ) -> tuple[list[ShiftedInterval], list[LagSample], float]:
+        """Shifted intervals, isolated bad windows, and the bad-window fraction.
+
+        A window rejected for a weak peak does not break a run of bad windows
+        as long as the neighbouring confident windows are closer than three
+        grid steps: the measurement could not see there, which is no evidence
+        that the shift stopped.
+        """
+        confident = sorted(self.confident, key=lambda item: item.t)
+        if not confident:
+            return [], [], 0.0
+        bad = [abs(item.lag_ms) > threshold_ms for item in confident]
+        max_gap = 3.0 * self.grid_s
+        runs: list[tuple[int, int]] = []
+        start: int | None = None
+        for index, flag in enumerate(bad):
+            broken = start is not None and confident[index].t - confident[index - 1].t > max_gap
+            if start is not None and (not flag or broken):
+                runs.append((start, index))
+                start = None
+            if flag and start is None:
+                start = index
+        if start is not None:
+            runs.append((start, len(confident)))
+        intervals: list[ShiftedInterval] = []
+        outliers: list[LagSample] = []
+        for first, end in runs:
+            members = confident[first:end]
+            if len(members) < min_bad_windows:
+                outliers.extend(members)
+                continue
+            before = confident[first - 1] if first > 0 else None
+            after = confident[end] if end < len(confident) else None
+            left = (before.t + members[0].t) / 2 if before is not None and (
+                members[0].t - before.t <= max_gap) else (
+                0.0 if before is None else members[0].t - self.grid_s / 2)
+            right = (members[-1].t + after.t) / 2 if after is not None and (
+                after.t - members[-1].t <= max_gap) else (
+                self.duration_s if after is None else members[-1].t + self.grid_s / 2)
+            lags = sorted(item.lag_ms for item in members)
+            intervals.append(ShiftedInterval(left, right, lags[len(lags) // 2], len(members)))
+        return intervals, outliers, sum(bad) / len(bad)
 
     def verdict(
         self,
-        median_threshold_ms: float,
+        threshold_ms: float,
         min_confident: int = DEFAULT_MIN_CONFIDENT,
         min_span_ratio: float = DEFAULT_MIN_SPAN_RATIO,
+        min_bad_windows: int = DEFAULT_MIN_BAD_WINDOWS,
+        max_bad_fraction: float = DEFAULT_MAX_BAD_FRACTION,
     ) -> tuple[str, str]:
         """``(status, reason)`` where status is passed/failed/inconclusive.
 
         ``inconclusive`` exists because "we could not measure this" and "this
         measured well" are different answers, and only one of them justifies
-        shipping the render.
+        shipping the render. A median alone is not a verdict either: a third
+        of a clip shifted by 88 ms leaves the median at zero, so the clip
+        fails on any sustained run of bad windows or on too many bad windows
+        overall, and the reason names the shifted intervals.
         """
         summary = self.summary()
         confident = int(summary["n_confident"])
@@ -154,10 +242,25 @@ class VerifyReport:
                 f"usable windows span only {ratio:.0%} of the clip "
                 f"(need {min_span_ratio:.0%}) — the rest was never measured",
             )
+        intervals, outliers, fraction = self.bad_windows(threshold_ms, min_bad_windows)
         median = float(summary["median_abs_lag_ms"])
-        if median > median_threshold_ms:
-            return "failed", f"median |lag| {median:.1f} ms exceeds {median_threshold_ms:.1f} ms"
-        return "passed", f"median |lag| {median:.1f} ms over {confident} window(s)"
+        if intervals:
+            described = "; ".join(
+                f"{item.start_s:.1f}–{item.end_s:.1f} s: {item.median_lag_ms:+.0f} ms, "
+                f"{item.windows} windows"
+                for item in intervals
+            )
+            return "failed", f"shifted beyond {threshold_ms:.1f} ms: {described}"
+        if fraction > max_bad_fraction:
+            return (
+                "failed",
+                f"{fraction:.0%} of windows exceed {threshold_ms:.1f} ms "
+                f"(allowed {max_bad_fraction:.0%})",
+            )
+        if median > threshold_ms:
+            return "failed", f"median |lag| {median:.1f} ms exceeds {threshold_ms:.1f} ms"
+        note = f", {len(outliers)} outlier window(s)" if outliers else ""
+        return "passed", f"median |lag| {median:.1f} ms over {confident} window(s){note}"
 
 
 def validate_parameters(
@@ -215,28 +318,13 @@ def measure(
     reported honestly.
     """
     validate_parameters(grid_s, window_s, max_lag_s, min_sharpness)
+    from studio.stages.sync_grid import measure_grid
 
     video_track = load_mono16k_track(
         video_audio_path, start_s=source_start_s or None, duration_s=source_duration_s
     )
     voice_track = load_mono16k_track(voice_path, start_s=voice_start_s or None)
-    duration_s = min(len(video_track), len(voice_track)) / _REFINE_SR
-
-    report = VerifyReport(
-        video=str(video_audio_path),
-        voice=str(voice_path),
-        duration_s=duration_s,
-        min_sharpness=min_sharpness,
+    return measure_grid(
+        video_track, voice_track, grid_s=grid_s, window_s=window_s, max_lag_s=max_lag_s,
+        min_sharpness=min_sharpness, video=str(video_audio_path), voice=str(voice_path),
     )
-    half = window_s / 2.0
-    t = half
-    while t <= duration_s - half:
-        video_win = _window_slice(video_track, t, window_s, _REFINE_SR)
-        voice_win = _window_slice(voice_track, t, window_s, _REFINE_SR)
-        lag_s, sharp = gcc_phat(video_win, voice_win, _REFINE_SR, max_lag_s, DEFAULT_GCC_EPS)
-        if sharp >= min_sharpness:
-            report.samples.append(LagSample(t=t, lag_ms=lag_s * 1000.0, sharpness=sharp))
-        else:
-            report.rejected.append((t, f"correlation peak too weak (sharpness {sharp:.1f})"))
-        t += grid_s
-    return report

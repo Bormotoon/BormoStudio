@@ -38,7 +38,13 @@ class SyncSettings:
     session_offsets: dict[str, float] = field(default_factory=dict)
     reference_camera: str = "auto"
     boundary_flex: bool = False
-    verify: bool = False
+    # Acoustic grid (verdict, plan refinement, drift check): window spacing and length.
+    verify: bool = True
+    refine_grid_s: float = 2.5
+    refine_window_s: float = 4.0
+    # "auto" refines the plan acoustically when the camera has sound.
+    acoustic_refine: str = "auto"
+    step_min_ms: float = 10.0
     voice_segment_minutes: float = 0.0
     master_wav: bool = False
     master_crossfade_ms: float = 10.0
@@ -373,6 +379,9 @@ def validate_settings(settings: Settings) -> None:
         settings.sync.voice_enhance,
         {"off", "denoise", "denoise_dereverb", "resemble"},
     )
+    _one_of("sync.acoustic_refine", settings.sync.acoustic_refine, {"auto", "off"})
+    for name in ("refine_grid_s", "refine_window_s", "step_min_ms"):
+        _positive(f"sync.{name}", getattr(settings.sync, name))
     for name in ("acoustic_grid_s", "acoustic_window_s", "acoustic_min_sharpness"):
         _positive(f"sync.{name}", getattr(settings.sync, name))
     _one_of("transcribe.device", settings.transcribe.device, {"auto", "cuda", "cpu", "mlx"})

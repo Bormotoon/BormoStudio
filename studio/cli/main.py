@@ -505,7 +505,12 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("voice", type=Path)
     verify.add_argument("--grid-s", type=float, default=5.0)
     verify.add_argument("--window-s", type=float, default=4.0)
-    verify.add_argument("--threshold-ms", type=float, default=20.0)
+    verify.add_argument("--threshold-ms", type=float, default=None,
+                        help="default: sync.max_drift_ms of the project")
+    verify.add_argument("--project", type=Path,
+                        help="material folder whose settings apply (default: the camera's)")
+    verify.add_argument("--min-bad-windows", type=int, default=3)
+    verify.add_argument("--max-bad-fraction", type=float, default=0.1)
     review = commands.add_parser("review")
     review.add_argument("source", type=Path)
     review.add_argument("--cut")
@@ -836,10 +841,21 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command == "verify":
         from studio.stages.sync_verify import measure, validate_parameters
 
-        validate_parameters(args.grid_s, args.window_s, median_threshold_ms=args.threshold_ms)
+        threshold = args.threshold_ms
+        if threshold is None:
+            settings_path = (args.project or args.camera.resolve().parent) / "_studio" / (
+                "settings.yaml")
+            threshold = float(load_settings([settings_path]).sync.max_drift_ms)
+        validate_parameters(args.grid_s, args.window_s, median_threshold_ms=threshold)
+        if args.min_bad_windows < 1 or not 0 <= args.max_bad_fraction <= 1:
+            raise ValueError("--min-bad-windows >= 1 and --max-bad-fraction in [0, 1]")
         verification = measure(args.camera, args.voice, grid_s=args.grid_s, window_s=args.window_s)
-        verdict, reason = verification.verdict(args.threshold_ms)
-        print(json.dumps({"status": verdict, "reason": reason, **verification.summary()}, indent=2))
+        verdict, reason = verification.verdict(
+            threshold, min_bad_windows=args.min_bad_windows,
+            max_bad_fraction=args.max_bad_fraction,
+        )
+        print(json.dumps({"status": verdict, "reason": reason,
+                          **verification.summary(threshold, args.min_bad_windows)}, indent=2))
         return 0 if verdict == "passed" else 1
     if args.command == "review":
         from studio.stages.roughcut import review_cut

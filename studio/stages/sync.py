@@ -303,6 +303,8 @@ def _render_complex(context: StageContext) -> StageOutput:
             dict(zip([camera.id for camera in cameras], camera_transcripts, strict=True)),
             {camera.id: outputs[f"sync:{camera.id}"][0] for camera in cameras},
             report.parent / "self-check", context.settings.get("transcribe", {}),
+            cameras={camera.id: project.source_dir / camera.path for camera in cameras},
+            sync_settings=sync,
         )
         artifacts.extend(checks)
         outputs["self_check"] = list(checks)
@@ -344,17 +346,26 @@ def _render_complex(context: StageContext) -> StageOutput:
         )
         artifacts.append(master)
         outputs["master_wav"] = [master]
-    if sync.get("verify"):
+    if sync.get("verify", True):
         from studio.stages.sync_verify import measure
 
         measurements = []
+        threshold = float(sync.get("max_drift_ms", 20.0))
         for camera, candidate in zip(cameras, camera_transcripts, strict=True):
-            verification = measure(project.source_dir / camera.path,
-                                   outputs[f"sync:{camera.id}"][0],
-                                   source_duration_s=candidate.duration)
-            status, reason = verification.verdict(20.0)
+            try:
+                verification = measure(project.source_dir / camera.path,
+                                       outputs[f"sync:{camera.id}"][0],
+                                       grid_s=float(sync.get("refine_grid_s", 2.5)),
+                                       window_s=float(sync.get("refine_window_s", 4.0)),
+                                       source_duration_s=candidate.duration)
+            except (RuntimeError, OSError, ValueError) as exc:
+                # A camera without a readable audio stream cannot be measured.
+                measurements.append({"asset_id": camera.id, "status": "inconclusive",
+                                     "reason": f"camera audio could not be measured: {exc}"})
+                continue
+            status, reason = verification.verdict(threshold)
             measurements.append({"asset_id": camera.id, "status": status, "reason": reason,
-                                 **verification.summary()})
+                                 **verification.summary(threshold)})
         verify_path = report.with_name("verify.json")
         verify_path.write_text(json.dumps({"schema_version": 1, "clips": measurements},
                                           indent=2) + "\n", encoding="utf-8")
