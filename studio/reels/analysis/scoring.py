@@ -26,6 +26,7 @@ DEFAULT_SCORING_WEIGHTS: dict[str, float] = {
     "quote": 0.8,
     "audio": 0.7,
     "speech_rate": 0.4,
+    "replay": 1.0,
 }
 
 # RU: Нейтральное значение для факторов, которые не удалось измерить.
@@ -237,6 +238,15 @@ def clip_duration_score(
     return max(0.0, 1.0 - distance)
 
 
+def replay_factor(moment: Mapping[str, Any]) -> float:
+    """YouTube "most replayed" intensity of the span (0..1); neutral when unknown."""
+    value = moment.get("replay_score")
+    try:
+        return max(0.0, min(1.0, float(value))) if value is not None else NEUTRAL_FACTOR
+    except (TypeError, ValueError):
+        return NEUTRAL_FACTOR
+
+
 def combined_priority_score(
     moment: Mapping[str, Any],
     *,
@@ -269,6 +279,7 @@ def combined_priority_score(
         + quote_grounding_score(moment) * w["quote"]
         + audio_quality_score(moment) * w["audio"]
         + speech_rate_score(moment) * w["speech_rate"]
+        + replay_factor(moment) * w["replay"]
         # Clips that open or close mid-thought are the most common complaint
         # about auto-cut reels, so the penalty has to actually land here.
         - penalize_mid_thought(moment) * w["mid_thought"]

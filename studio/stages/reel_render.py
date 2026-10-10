@@ -20,6 +20,7 @@ from studio.core.timeline import EditMap, KeepRange, TimeDomain
 from studio.core.transcript import Segment, Transcript, Word, to_srt
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 from studio.stages.program import render_project_program
+from studio.stages.reel_finish import normalize_loudness, render_cover
 from studio.stages.reels import _settings, _transcript_path
 
 
@@ -81,7 +82,7 @@ class ReelRenderStage:
                 for name in ("face_detection_yunet_2023mar.onnx", "light_asd_talkset.model")
             )
         return stable_fingerprint(
-            "reel-render-v3",
+            "reel-render-v4",
             _settings(settings),
             project.to_dict()["assets"],
             [str(placement) for placement in project.placements],
@@ -183,6 +184,13 @@ class ReelRenderStage:
                 framed.replace(video)
             else:
                 framing_report = {"tracking": "disabled"}
+            lufs = float(settings.get("loudness_lufs", -14.0))
+            loudness = normalize_loudness(video, lufs) if lufs else {"status": "source"}
+            cover = None
+            if settings.get("covers", True):
+                cover = directory / f"{stem}-cover.jpg"
+                render_cover(video, cover, (end - start) / 3)
+                artifacts.append(cover)
             published_video = context.project.work_dir / video.relative_to(context.work_dir)
             local = clip_transcript(transcript, start, end, published_video)
             cues, style = load_edits(context.project.work_dir, stem, local)
@@ -225,6 +233,8 @@ class ReelRenderStage:
                     "framing": framing,
                     "framing_report": framing_report,
                     "crop_x": settings.get("crop_x", 0.5) if framing == "crop" else None,
+                    "loudness": loudness,
+                    "cover": cover.name if cover else None,
                 }
             )
         report = directory / "render.json"

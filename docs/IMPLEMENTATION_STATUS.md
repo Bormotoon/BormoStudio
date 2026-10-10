@@ -118,6 +118,16 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
   Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
 
+### Reel loudness, covers and most-replayed — 2026-10-10
+
+- `reel_finish.py`: two-pass EBU R128 `loudnorm` to `reels.loudness_lufs`
+  (−14 LUFS, −1 dBTP, video stream copied; no-audio/silent reels untouched) and a
+  cover JPEG per reel. Real-ffmpeg tests confirm a quiet clip lands within 1.5 LU.
+- `reels/analysis/replay.py`: yt-dlp `heatmap` → duration-weighted span intensity
+  scaled by the episode peak, mapped through the media placement (and program
+  mapping for edited transcripts). New `replay` scoring factor, neutral (0.5)
+  when absent so rankings without a heatmap keep their order.
+
 ### Fetch and batch settings — 2026-10-10
 
 - New `fetch` section: `download` video/audio, `max_height`, `cookies_file`,

@@ -1042,7 +1042,7 @@ release-база, её квалификация в этом окружении �
 - [ ] **Не выполнено:** OTIO/DaVinci Resolve экспорт.
 - [ ] **Не выполнено:** MLX/VideoToolbox на Mac.
 - [ ] **Частично:** нативный subtitle editor есть; последующие расширения/визуальная приёмка остаются.
-- [ ] **Не выполнено:** −14 LUFS, обложки, отдельный hook-title layout, аудиограмма и YouTube most-replayed integration.
+- [ ] **Частично:** −14 LUFS (двухпроходный loudnorm), обложки (кадр рилса) и YouTube most-replayed (heatmap из info.json как фактор ранжирования) реализованы. Не доделано: отдельный hook-title layout и аудиограмма.
 
 ---
 

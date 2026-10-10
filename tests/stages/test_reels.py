@@ -129,10 +129,11 @@ def test_metadata_changes_invalidate_reels_only_when_used(tmp_path: Path) -> Non
     stage = ReelsStage()
     metadata.write_text('{"title": "first"}')
     before = stage.fingerprint(project, {})
-    disabled = stage.fingerprint(project, {"reels": {"episode_context": False}})
+    unused = {"reels": {"episode_context": False, "replay": False}}
+    disabled = stage.fingerprint(project, unused)
     metadata.write_text('{"title": "second"}')
     assert stage.fingerprint(project, {}) != before
-    assert stage.fingerprint(project, {"reels": {"episode_context": False}}) == disabled
+    assert stage.fingerprint(project, unused) == disabled
 
 
 def test_judge_budget_limits_actual_request(tmp_path: Path, monkeypatch) -> None:

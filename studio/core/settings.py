@@ -187,6 +187,11 @@ class ReelsSettings:
     tracking: bool = False
     tracking_device: str = "cuda"
     active_speaker: bool = True
+    # Integrated loudness target for rendered reels (0 keeps source loudness).
+    loudness_lufs: float = -14.0
+    covers: bool = True
+    # Rank with the YouTube "most replayed" heatmap of fetched episodes.
+    replay: bool = True
 
 
 @dataclass(slots=True)
@@ -334,6 +339,11 @@ def validate_settings(settings: Settings) -> None:
     _one_of("program.encoder", settings.program.encoder, {"auto", "nvenc", "libx264", "cpu"})
     _non_negative("program.min_shot_s", settings.program.min_shot_s)
     _non_negative("program.crossfade_ms", settings.program.crossfade_ms)
+    lufs = settings.reels.loudness_lufs
+    if not isinstance(lufs, (int, float)) or isinstance(lufs, bool) or not (
+        lufs == 0 or -70 <= lufs <= -5
+    ):
+        raise SettingsError("reels.loudness_lufs must be 0 (off) or between -70 and -5")
     if settings.fetch.download not in {"video", "audio"}:
         raise SettingsError("fetch.download must be video or audio")
     for name in ("max_height", "retries", "min_duration_s", "max_duration_s"):

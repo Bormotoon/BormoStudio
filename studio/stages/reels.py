@@ -99,7 +99,7 @@ class ReelsStage:
             reels,
             prompts,
             model_identity(settings),
-            _metadata_identity(project) if reels["episode_context"] else "",
+            _metadata_identity(project) if reels["episode_context"] or reels["replay"] else "",
             speaker_context_identity(project) if reels["episode_context"] else "",
             settings.get("llm", {}).get("roles", {}),
             audio_identity(project, Transcript.load(source))
@@ -316,6 +316,13 @@ class ReelsStage:
                     )
             except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
                 audio_report = {"status": "failed", "error": str(exc)}
+        replay_report: dict[str, Any] = {"status": "disabled"}
+        if reels["replay"]:
+            from studio.reels.analysis.replay import annotate_replay
+
+            candidates, replay_report = annotate_replay(
+                candidates, context.project, transcript, episode_metadata_path(context.project)
+            )
         ranked = rank_moments(
             candidates,
             clip_type_quotas={
@@ -341,6 +348,7 @@ class ReelsStage:
                     "chunks": len(chunks),
                     "failures": failures,
                     "audio_features": audio_report,
+                    "replay": replay_report,
                     "llm_requests": {
                         "attempts": requests.attempts,
                         "retries_used": requests.retries_used,
@@ -399,6 +407,9 @@ def _settings(settings: dict[str, Any]) -> dict[str, Any]:
         "audio_timeout_s": 30.0,
         "episode_context": True,
         "min_quote_ratio": 0.75,
+        "loudness_lufs": -14.0,
+        "covers": True,
+        "replay": True,
     }
     if isinstance(settings.get("reels"), dict):
         defaults.update(settings["reels"])

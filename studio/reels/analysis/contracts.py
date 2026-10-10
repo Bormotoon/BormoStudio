@@ -71,6 +71,7 @@ class MomentRecord:
     speech_rate_wps: float | None = None
     audio_energy_db: float | None = None
     audio_silence_ratio: float | None = None
+    replay_score: float | None = None
     selection_stage: str = ""
     source_chunk_ids: tuple[str, ...] = ()
     speaker: str = ""
@@ -109,6 +110,7 @@ class MomentRecord:
             "speech_rate_wps": self.speech_rate_wps,
             "audio_energy_db": self.audio_energy_db,
             "audio_silence_ratio": self.audio_silence_ratio,
+            "replay_score": self.replay_score,
             "selection_stage": self.selection_stage,
             "source_chunk_ids": list(self.source_chunk_ids),
             "speaker": self.speaker,
@@ -170,6 +172,7 @@ def coerce_moment_record(raw: Mapping[str, Any]) -> MomentRecord | None:
         speech_rate_wps=_number(raw.get("speech_rate_wps")),
         audio_energy_db=_number(raw.get("audio_energy_db")),
         audio_silence_ratio=_number(raw.get("audio_silence_ratio")),
+        replay_score=_number(raw.get("replay_score")),
         selection_stage=str(raw.get("selection_stage") or "").strip(),
         source_chunk_ids=_strings(raw.get("source_chunk_ids")),
         speaker=str(raw.get("speaker") or "").strip(),

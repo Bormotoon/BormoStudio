@@ -22,6 +22,15 @@ cropping or `reels.framing=fit` to preserve the full image with padding. Output
 size defaults to 1080x1920 (`reels.width` / `reels.height`); `reels.crop_x` sets
 horizontal crop position from 0 (left) to 1 (right), defaulting to the center.
 
+Rendered reels are loudness-normalized in two passes to `reels.loudness_lufs`
+(default −14 LUFS, true peak −1 dBTP; `0` keeps the source level) and get a
+`reel-NNN-cover.jpg` taken a third of the way in (`reels.covers`). The measured
+input loudness is in `render.json`. For fetched YouTube episodes, the "most
+replayed" heatmap from yt-dlp's info.json adds a `replay` ranking factor
+(`reels.replay`, weight 1.0); moments are mapped to the downloaded file through
+its placement, and through the program mapping for edited transcripts. Without a
+heatmap the factor is neutral and the ranking is unchanged.
+
 ## Subtitle editor and captions
 
 The desktop **Subtitles** page edits rendered reels and the review program with
