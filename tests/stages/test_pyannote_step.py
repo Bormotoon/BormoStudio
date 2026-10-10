@@ -6,7 +6,7 @@ from studio.core.project import Asset, AssetRole, Project
 from studio.core.timeline import SourcePlacement
 from studio.core.transcript import Transcript
 from studio.stages.base import StageContext
-from studio.stages.speaker_backend import diarize
+from studio.stages.speaker_backend import Diarization, diarize
 from studio.stages.speakers import run_pyannote
 
 
@@ -16,10 +16,10 @@ def test_pyannote_maps_source_time_and_preserves_overlap(tmp_path: Path) -> None
     project.placements = [SourcePlacement("rec", 2, 1, 3, 2)]
     transcript = Transcript(tmp_path / "rec.wav", "en", 8, [],
                             metadata={"source_asset_id": "rec"})
-    with patch("studio.stages.speaker_backend.diarize", return_value=[
+    with patch("studio.stages.speaker_backend.diarize", return_value=Diarization([
         {"start": 0, "end": 2, "speaker": "S0"},
         {"start": 1.5, "end": 3, "speaker": "S1"},
-    ]):
+    ])):
         result = run_pyannote(StageContext(project, {}, project.work_dir), transcript, {})
     turns = json.loads(result.project_changes["outputs"]["speakers"][0].read_text())
     assert [(item["start"], item["end"], item["speaker"]) for item in turns] == [

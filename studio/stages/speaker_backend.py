@@ -4,6 +4,7 @@ import json
 import math
 import subprocess
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -19,17 +20,32 @@ pipeline = Pipeline.from_pretrained(model, use_auth_token=os.environ.get('HF_TOK
 if pipeline is None:
     raise RuntimeError('diarization model unavailable; check model access and HF_TOKEN')
 pipeline.to(torch.device(device))
-annotation = pipeline(audio)
+embeddings = {}
+try:
+    annotation, centroids = pipeline(audio, return_embeddings=True)
+    for label, vector in zip(annotation.labels(), centroids):
+        values = [float(value) for value in vector]
+        if all(value == value for value in values):
+            embeddings[str(label)] = values
+except TypeError:
+    annotation = pipeline(audio)
 turns = [{'start': segment.start, 'end': segment.end, 'speaker': str(speaker)}
          for segment, _, speaker in annotation.itertracks(yield_label=True)]
 with open(output, 'w', encoding='utf-8') as stream:
-    json.dump(turns, stream)
+    json.dump({'turns': turns, 'embeddings': embeddings}, stream)
 """
+
+
+@dataclass(frozen=True, slots=True)
+class Diarization:
+    turns: list[dict[str, Any]]
+    # Speaker centroid per label when the pipeline provides one.
+    embeddings: dict[str, list[float]] = field(default_factory=dict)
 
 
 def diarize(
     source: Path, directory: Path, *, model: str, device: str
-) -> list[dict[str, Any]]:
+) -> Diarization:
     manager = ModuleManager()
     if not manager.installed("diarization"):
         raise RuntimeError("diarization module is missing; install the diarization module")
@@ -45,7 +61,15 @@ def diarize(
                             log_dir=directory / "logs", timeout=7200, keep_logs=True)
         if result.returncode:
             raise RuntimeError("pyannote worker failed; inspect speakers backend logs")
-        turns = json.loads(output.read_text(encoding="utf-8"))
+        payload = json.loads(output.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("pyannote worker returned malformed output")
+    turns, embeddings = payload.get("turns"), payload.get("embeddings", {})
+    if not isinstance(embeddings, dict) or not all(
+        isinstance(vector, list) and vector and all(isinstance(v, (int, float)) for v in vector)
+        for vector in embeddings.values()
+    ):
+        raise ValueError("pyannote worker returned malformed embeddings")
     if not isinstance(turns, list) or not all(isinstance(turn, dict) for turn in turns):
         raise ValueError("pyannote worker returned malformed turns")
     checked: list[dict[str, Any]] = turns
@@ -55,4 +79,5 @@ def diarize(
             raise ValueError("invalid pyannote turn timing")
         if not isinstance(turn["speaker"], str) or not turn["speaker"]:
             raise ValueError("invalid pyannote speaker label")
-    return checked
+    return Diarization(checked, {str(k): [float(v) for v in vector]
+                                 for k, vector in embeddings.items()})

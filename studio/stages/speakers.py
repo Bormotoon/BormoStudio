@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import subprocess
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -85,10 +86,16 @@ class SpeakersStage:
                          or _primary_source_id(project) if transcript and transcript.is_file()
                          else _primary_source_id(project))
             selected = {source_id} if source_id is not None else set()
+            if transcript and transcript.is_file() and conf.get("match_files", True):
+                try:
+                    selected = {item[0] for item in diarization_sources(
+                        project, Transcript.load(transcript))}
+                except ValueError:
+                    pass
         identities = [describe_artifact(project.source_dir, project.source_dir / asset.path)
                       for asset in project.assets if asset.id in selected]
         return stable_fingerprint(
-            "speakers-v5", content, tracks, identities, project.placements,
+            "speakers-v6", content, tracks, identities, project.placements,
             [warp for warp in project.audio_warp_maps if warp.source_asset_id in selected], conf,
         )
 
@@ -103,16 +110,24 @@ class SpeakersStage:
         placements = {item.asset_id: item for item in context.project.placements}
         assets = {asset.id: asset for asset in context.project.assets}
         decoded: dict[str, np.ndarray] = {}
-        envelopes: dict[str, np.ndarray] = {}
-        warped_assets: set[str] = set()
-        for track, speaker in tracks.items():
-            asset_id, channel_text = track.rsplit(":", 1)
-            asset = assets[asset_id]
+        for track in tracks:
+            asset_id = track.rsplit(":", 1)[0]
             if asset_id not in decoded:
+                asset = assets[asset_id]
                 decoded[asset_id] = decode_channels(
                     context.project.source_dir / asset.path,
                     int(asset.manual.get("media_info", {}).get("audio_channels") or 1),
                 )
+        identities: dict[str, object] | None = None
+        if conf.get("match_files", True):
+            tracks, identities = match_microphone_lanes(
+                context.project, conf, tracks, decoded, placements,
+                threshold=float(conf.get("match_threshold", 0.9)),
+            )
+        envelopes: dict[str, np.ndarray] = {}
+        warped_assets: set[str] = set()
+        for track, speaker in tracks.items():
+            asset_id, channel_text = track.rsplit(":", 1)
             channel = int(channel_text)
             samples = decoded[asset_id][:, channel]
             warp = recorder_warp(context.project, asset_id)
@@ -146,11 +161,79 @@ class SpeakersStage:
             "smoothing": {"min_turn_s": float(conf.get("min_turn_s", 0.3)),
                           "max_gap_s": float(conf.get("max_gap_s", 0.3)),
                           "policy": "isolated A-B-A known-speaker islands only"},
-        }, indent=2) + "\n", encoding="utf-8")
+            "identities": identities,
+        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return StageOutput((output, report, raw_output), {
             "outputs": {**context.project.outputs, "speakers": [output, report],
                         "speakers_raw": [raw_output]},
         })
+
+
+def named_microphone_tracks(project: Project, conf: dict[str, object]) -> dict[str, str]:
+    """Lanes whose speaker the user named in settings or on the Material screen."""
+    from studio.core.recorder_tracks import microphone_map
+
+    configured = conf.get("tracks", {})
+    return {**(configured if isinstance(configured, dict) else {}), **microphone_map(project)}
+
+
+def _overlap_s(first: SourcePlacement, second: SourcePlacement) -> float:
+    def span(item: SourcePlacement) -> tuple[float, float]:
+        return item.offset_s, item.offset_s + item.duration_s * item.k
+
+    (a, b), (c, d) = span(first), span(second)
+    return max(0.0, min(b, d) - max(a, c))
+
+
+def match_microphone_lanes(
+    project: Project,
+    conf: dict[str, object],
+    tracks: dict[str, str],
+    decoded: dict[str, np.ndarray],
+    placements: dict[str, SourcePlacement],
+    *,
+    threshold: float,
+    sample_rate: int = 16000,
+) -> tuple[dict[str, str], dict[str, object] | None]:
+    """Give one person one name across recorder files that do not play together.
+
+    Lanes in one file, or in files that overlap on the timeline, are different
+    people. Names the user gave are kept and can be inherited by matching lanes.
+    """
+    from studio.stages.speaker_identity import VoiceLabel, match_labels, voice_signature
+
+    groups = sorted({track.rsplit(":", 1)[0] for track in tracks})
+    simultaneous = {
+        frozenset((first, second))
+        for index, first in enumerate(groups) for second in groups[index + 1:]
+        if first in placements and second in placements
+        and _overlap_s(placements[first], placements[second]) > 1.0
+    }
+    if len(groups) < 2 or len(simultaneous) == len(groups) * (len(groups) - 1) // 2:
+        return tracks, None
+    named = named_microphone_tracks(project, conf)
+    labels: list[VoiceLabel] = []
+    for track, speaker in tracks.items():
+        asset_id, channel = track.rsplit(":", 1)
+        signature = voice_signature(decoded[asset_id][:, int(channel)], sample_rate)
+        if signature is None:
+            continue
+        placement = placements.get(asset_id)
+        labels.append(VoiceLabel(
+            asset_id, track, signature, placement.offset_s if placement else 0.0,
+            fixed_name=speaker if track in named else None,
+        ))
+    match = match_labels(labels, threshold=threshold, simultaneous=simultaneous)
+    renamed = dict(tracks)
+    for label in labels:
+        name = match.names[(label.group, label.label)]
+        renamed[label.label] = name if name not in tracks else tracks[name]
+    changes = {track: renamed[track] for track in tracks if renamed[track] != tracks[track]}
+    return renamed, {
+        "method": "voice-signature", "threshold": threshold,
+        "simultaneous": sorted(sorted(pair) for pair in simultaneous),
+        "renamed": changes, "pairs": match.similarities,
+    }
 
 
 def microphone_tracks(project: Project, conf: dict[str, object]) -> dict[str, str]:
@@ -192,20 +275,62 @@ def microphone_tracks(project: Project, conf: dict[str, object]) -> dict[str, st
     return tracks
 
 
-def run_pyannote(context: StageContext, transcript: Transcript, conf: dict) -> StageOutput:
-    from studio.stages.speaker_backend import diarize
+Interval = tuple[float, float]
+
+
+def _subtract(span: Interval, covered: list[Interval]) -> list[Interval]:
+    pieces = [span]
+    for start, end in covered:
+        pieces = [
+            part for left, right in pieces
+            for part in ((left, min(right, start)), (max(left, end), right))
+            if part[1] - part[0] > 1e-6
+        ]
+    return pieces
+
+
+def diarization_sources(
+    project: Project, transcript: Transcript, *, all_files: bool = True
+) -> list[tuple[str, SourcePlacement, list[Interval]]]:
+    """Placed sources to diarize and the timeline each one is responsible for.
+
+    The transcript source comes first. Another placed file is added when it
+    covers mostly new timeline (a separate session), so overlapping copies of
+    one conversation are not diarized twice.
+    """
     from studio.stages.timeline import _primary_source_id
 
-    source_id = transcript.metadata.get("source_asset_id") or _primary_source_id(context.project)
-    asset = next(asset for asset in context.project.assets if asset.id == source_id)
-    placement = next((item for item in context.project.placements
-                      if item.asset_id == source_id), None)
-    if placement is None:
+    primary = transcript.metadata.get("source_asset_id") or _primary_source_id(project)
+    placements = {item.asset_id: item for item in project.placements}
+    if primary not in placements:
         raise ValueError("pyannote source placement is missing; run sync")
-    directory = context.work_dir / "stages" / "speakers"
-    raw = diarize(context.project.source_dir / asset.path, directory,
-                  model=str(conf.get("model", "pyannote/speaker-diarization-3.1")),
-                  device=str(conf.get("device", "cpu")))
+    roles = {asset.id: asset.role for asset in project.assets}
+    others = sorted(
+        (item for item in project.placements
+         if item.asset_id != primary
+         and roles.get(item.asset_id) in {AssetRole.CAMERA, AssetRole.RECORDER}),
+        key=lambda item: -item.duration_s * item.k,
+    )
+    chosen: list[tuple[str, SourcePlacement, list[Interval]]] = []
+    covered: list[Interval] = []
+    for item in [placements[str(primary)], *(others if all_files else [])]:
+        span = (max(0.0, item.offset_s),
+                min(transcript.duration, item.offset_s + item.duration_s * item.k))
+        if span[1] <= span[0]:
+            continue
+        new = _subtract(span, covered)
+        length = sum(end - start for start, end in new)
+        if chosen and (length < 5.0 or length < 0.5 * (span[1] - span[0])):
+            continue
+        chosen.append((item.asset_id, item, new))
+        covered.extend(new)
+    return chosen
+
+
+def _timeline_turns(
+    raw: list[dict[str, Any]], placement: SourcePlacement, intervals: list[Interval],
+    duration: float, label: Callable[[str], str],
+) -> list[SpeakerTurn]:
     turns = []
     for item in raw:
         start = max(float(item["start"]), placement.in_s)
@@ -213,10 +338,87 @@ def run_pyannote(context: StageContext, transcript: Transcript, conf: dict) -> S
         if end <= start:
             continue
         left = max(0.0, placement.offset_s + (start - placement.in_s) * placement.k)
-        right = min(transcript.duration,
-                    placement.offset_s + (end - placement.in_s) * placement.k)
-        if right > left:
-            turns.append(SpeakerTurn(left, right, item["speaker"], "pyannote"))
+        right = min(duration, placement.offset_s + (end - placement.in_s) * placement.k)
+        for low, high in intervals:
+            clipped = (max(left, low), min(right, high))
+            if clipped[1] > clipped[0]:
+                turns.append(SpeakerTurn(*clipped, label(item["speaker"]), "pyannote"))
+    return turns
+
+
+def run_pyannote(context: StageContext, transcript: Transcript, conf: dict) -> StageOutput:
+    from studio.stages import speaker_backend
+    from studio.stages.speaker_identity import VoiceLabel, match_labels, voice_signature
+
+    project = context.project
+    directory = context.work_dir / "stages" / "speakers"
+    sources = diarization_sources(project, transcript,
+                                  all_files=bool(conf.get("match_files", True)))
+    assets = {asset.id: asset for asset in project.assets}
+    results = []
+    for order, (asset_id, placement, intervals) in enumerate(sources):
+        path = project.source_dir / assets[asset_id].path
+        diarization = speaker_backend.diarize(
+            path, directory if order == 0 else directory / "sources" / asset_id,
+            model=str(conf.get("model", "pyannote/speaker-diarization-3.1")),
+            device=str(conf.get("device", "cpu")),
+        )
+        results.append((asset_id, placement, intervals, path, diarization))
+    names: dict[tuple[str, str], str] = {
+        (asset_id, str(turn["speaker"])): str(turn["speaker"])
+        for asset_id, _p, _i, _path, result in results[:1] for turn in result.turns
+    }
+    identities: dict[str, object] | None = None
+    if len(results) > 1:
+        labels = sorted({(asset_id, str(turn["speaker"]))
+                         for asset_id, _p, _i, _path, result in results
+                         for turn in result.turns})
+        embedded = all(label in result.embeddings
+                       for asset_id, _p, _i, _path, result in results
+                       for owner, label in labels if owner == asset_id)
+        voices = []
+        for order, (asset_id, placement, _intervals, path, result) in enumerate(results):
+            samples = None if embedded else decode_channels(path, 1)[:, 0]
+            for owner, label in labels:
+                if owner != asset_id:
+                    continue
+                own = [turn for turn in result.turns if turn["speaker"] == label]
+                if embedded:
+                    signature = np.asarray(result.embeddings[label], dtype=np.float64)
+                else:
+                    assert samples is not None
+                    pieces = [samples[int(float(turn["start"]) * 16000):
+                                      int(float(turn["end"]) * 16000)] for turn in own]
+                    found = voice_signature(np.concatenate(pieces)) if pieces else None
+                    if found is None:
+                        continue
+                    signature = found
+                start = min(float(turn["start"]) for turn in own)
+                first = placement.offset_s + (start - placement.in_s) * placement.k
+                # Labels of the transcript source name the shared speakers.
+                voices.append(VoiceLabel(asset_id, label, signature, order * 1e7 + first))
+        threshold = float(conf.get("embedding_threshold" if embedded else "match_threshold",
+                                   0.5 if embedded else 0.9))
+        match = match_labels(voices, threshold=threshold)
+        names.update(match.names)
+        identities = {
+            "method": "pyannote-embedding" if embedded else "voice-signature",
+            "threshold": threshold,
+            "sources": [asset_id for asset_id, *_rest in results],
+            "names": {f"{group}:{label}": name for (group, label), name in names.items()},
+            "pairs": match.similarities,
+        }
+    def namer(owner: str) -> Callable[[str], str]:
+        return lambda label: names.get((owner, label), f"{label}@{owner}")
+
+    turns = [
+        turn
+        for asset_id, placement, intervals, _path, result in results
+        for turn in _timeline_turns(
+            result.turns, placement, intervals, transcript.duration, namer(asset_id)
+        )
+    ]
+    turns.sort(key=lambda turn: (turn.start, turn.end))
     # Preserve intersecting turns as explicit overlap for camera selection.
     boundaries = sorted({value for turn in turns for value in (turn.start, turn.end)})
     resolved = []
@@ -234,14 +436,16 @@ def run_pyannote(context: StageContext, transcript: Transcript, conf: dict) -> S
                                         max_gap_s=0))
     report = directory / "report.json"
     report.write_text(json.dumps({"schema_version": 1, "time_domain": "timeline",
-                                 "method": "pyannote", "source_asset_id": source_id,
+                                 "method": "pyannote", "source_asset_id": sources[0][0],
                                  "model": conf.get("model", "pyannote/speaker-diarization-3.1"),
                                  "device": conf.get("device", "cpu"),
-                                 "labels": "anonymous, local to one primary source"},
-                                indent=2) + "\n", encoding="utf-8")
-    logs = tuple(sorted((directory / "logs").glob("*.log")))
+                                 "labels": "anonymous; matched across sources"
+                                 if identities else "anonymous, local to one primary source",
+                                 "identities": identities},
+                                ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    logs = tuple(sorted(directory.rglob("logs/*.log")))
     return StageOutput((output, raw_output, report, *logs), {"outputs": {
-        **context.project.outputs, "speakers": [output, report], "speakers_raw": [raw_output],
+        **project.outputs, "speakers": [output, report], "speakers_raw": [raw_output],
     }})
 
 

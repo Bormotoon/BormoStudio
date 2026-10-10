@@ -133,6 +133,11 @@ class SpeakerSettings:
     tracks: dict[str, str] = field(default_factory=dict)
     model: str = "pyannote/speaker-diarization-3.1"
     device: str = "cpu"
+    # One name per person across recorder files / diarized sources that do not
+    # play together (separate sessions); thresholds are cosine similarities.
+    match_files: bool = True
+    match_threshold: float = 0.9
+    embedding_threshold: float = 0.5
 
 
 @dataclass(slots=True)
@@ -343,6 +348,10 @@ def validate_settings(settings: Settings) -> None:
     _positive("speakers.step_s", settings.speakers.step_s)
     _non_negative("speakers.min_turn_s", settings.speakers.min_turn_s)
     _non_negative("speakers.max_gap_s", settings.speakers.max_gap_s)
+    for name in ("match_threshold", "embedding_threshold"):
+        value = getattr(settings.speakers, name)
+        if not math.isfinite(value) or not 0 <= value <= 1:
+            raise SettingsError(f"speakers.{name} must be between 0 and 1")
     if settings.speakers.step_s > 1:
         raise SettingsError("speakers.step_s must not exceed 1 second")
     if not math.isfinite(settings.speakers.silence_floor_db) or not (
