@@ -895,7 +895,7 @@ compute:    {allow_cpu: false}
 | 1 | Каркас и локальный pipeline реализованы | Полная golden-регрессия и сквозная GUI/CLI приёмка |
 | 2 | Режимы sync, voice/warp, FCPXML/XMEML, ручные роли, RecorderTrack и drag&drop групп есть | Паритет выбора потоков, раздельные сессии, реальный импорт NLE |
 | 3 | Паузы/дубли, решения, обзор резов на таймлайне, прослушивание без мастера, CFR-мастер с кроссфейдами есть | Реальное прослушивание, проверка слов на стыках, сквозной переэкспорт |
-| 4 | Mics/pyannote facade, выбор камер (GUI/CLI), политика общего плана, дорожки спикеров и multicam есть | Нелинейная mic-карта, модели и NLE приёмка |
+| 4 | Mics/pyannote facade, выбор камер (GUI/CLI), политика общего плана, дорожки спикеров и multicam есть | Cross-file identity, модели и NLE приёмка |
 | 5 | Тексты/term-check, role routing, рилсы/аудиокэш, captions/editor, vision, fetch, channel/batch с уведомлениями и отменой загрузок, миграция настроек есть | Raw warp replay, оставшиеся reels/llm ключи, phase-wide reuse и Forge-регрессия |
 | 6 | Модули, загрузка YuNet/Light-ASD/Whisper/GGUF, LLM-детекторы монтажа, мастер настройки и Linux frozen есть | Приёмка LLM-монтажа на модели, измеряемое tuning, production installers |
 | 7 | Последующая дорожная карта | Не блокирует первоначальный локальный выпуск |
@@ -995,7 +995,7 @@ release-база, её квалификация в этом окружении �
 
 **Задачи:**
 
-- [ ] **Частично:** mics/smoothing/pyannote facade есть. Не доделано: turns/manual naming parity, cross-file identity, nonlinear mic attribution и real model acceptance.
+- [ ] **Частично:** mics/smoothing/pyannote facade есть; атрибуция микрофонов при сложной синхронизации идёт через кусочную `AudioWarpMap` (вне её покрытия — линейное размещение). Не доделано: turns/manual naming parity, cross-file identity и real model acceptance.
 - [x] speaker-camera mapping задаётся на экране «Материал» и `uvf cameras` (хранится в проекте, перекрывает `program.speaker_cameras`); общий план назначается так же (`@wide`, «Wide shot»).
 - [ ] **Приёмка:** правила 5.6 реализованы: camera_id, minimum shot, coverage fallback, manual precedence, наложения и частые перебросы → общий план, вставка общего в длинный план (`max_shot_s`), упреждение реза `cut_lead_s`. Не проверена реальная оценка переключений.
 - [ ] **Приёмка:** retimed multicam/voice/ambience/speaker selection и XMEML lanes реализованы, generated FCPXML прошёл 1.9 DTD. Не проверены импорт/переключение/playback в NLE.

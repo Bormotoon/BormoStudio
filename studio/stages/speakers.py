@@ -12,7 +12,7 @@ from typing import Any, cast
 import numpy as np
 
 from studio.core.project import AssetRole, Project, describe_artifact, stable_fingerprint
-from studio.core.timeline import SourcePlacement
+from studio.core.timeline import AudioWarpMap, SourcePlacement, TimeDomain
 from studio.core.transcript import Transcript, Word
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 
@@ -88,7 +88,8 @@ class SpeakersStage:
         identities = [describe_artifact(project.source_dir, project.source_dir / asset.path)
                       for asset in project.assets if asset.id in selected]
         return stable_fingerprint(
-            "speakers-v4", content, tracks, identities, project.placements, conf,
+            "speakers-v5", content, tracks, identities, project.placements,
+            [warp for warp in project.audio_warp_maps if warp.source_asset_id in selected], conf,
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -103,6 +104,7 @@ class SpeakersStage:
         assets = {asset.id: asset for asset in context.project.assets}
         decoded: dict[str, np.ndarray] = {}
         envelopes: dict[str, np.ndarray] = {}
+        warped_assets: set[str] = set()
         for track, speaker in tracks.items():
             asset_id, channel_text = track.rsplit(":", 1)
             asset = assets[asset_id]
@@ -113,8 +115,10 @@ class SpeakersStage:
                 )
             channel = int(channel_text)
             samples = decoded[asset_id][:, channel]
+            warp = recorder_warp(context.project, asset_id)
+            warped_assets.update([asset_id] if warp else [])
             envelope = timeline_envelope(samples, placements[asset_id], transcript.duration,
-                                         step_s=step)
+                                         step_s=step, warp=warp)
             # Several files/channels assigned to one speaker share one lane.
             envelopes[speaker] = np.maximum(envelopes.get(speaker, np.zeros_like(envelope)),
                                             envelope)
@@ -136,7 +140,9 @@ class SpeakersStage:
         report = output.with_name("report.json")
         report.write_text(json.dumps({
             "schema_version": 1, "time_domain": "timeline", "method": "mics",
-            "tracks": tracks, "step_s": step, "map": "SourcePlacement",
+            "tracks": tracks, "step_s": step,
+            "map": {asset_id: "AudioWarpMap" if asset_id in warped_assets else "SourcePlacement"
+                    for asset_id in sorted({key.rsplit(":", 1)[0] for key in tracks})},
             "smoothing": {"min_turn_s": float(conf.get("min_turn_s", 0.3)),
                           "max_gap_s": float(conf.get("max_gap_s", 0.3)),
                           "policy": "isolated A-B-A known-speaker islands only"},
@@ -253,6 +259,7 @@ def decode_channels(path: Path, channels: int, sample_rate: int = 16000) -> np.n
 def timeline_envelope(
     samples: np.ndarray, placement: SourcePlacement, duration_s: float,
     *, step_s: float = 0.05, sample_rate: int = 16000,
+    warp: tuple[AudioWarpMap, SourcePlacement] | None = None,
 ) -> np.ndarray:
     # Integrate sample energy over each mapped bin rather than interpolating a
     # single sample; affine drift and negative offsets preserve RMS evidence.
@@ -260,12 +267,44 @@ def timeline_envelope(
     cumulative = np.concatenate(([0.0], np.cumsum(np.square(samples), dtype=np.float64)))
     boundaries = np.arange(count + 1) * step_s
     source_times = placement.in_s + (boundaries - placement.offset_s) / placement.k
+    if warp is not None:
+        # Piecewise (complex) sync: timeline → target camera file → recorder file.
+        warped = warped_source_times(boundaries, *warp)
+        source_times = np.where(np.isnan(warped), source_times, warped)
     source_times = np.clip(source_times, placement.in_s,
                            placement.in_s + placement.duration_s)
     positions = np.clip(np.round(source_times * sample_rate).astype(np.int64), 0, len(samples))
     lengths = np.diff(positions)
     energies = np.diff(cumulative[positions]) / np.maximum(lengths, 1)
     return cast(np.ndarray, np.sqrt(np.maximum(energies, 0)))
+
+
+def warped_source_times(
+    timeline_s: np.ndarray, warp: AudioWarpMap, camera: SourcePlacement,
+) -> np.ndarray:
+    """Recorder file times for timeline times through a warp map; NaN outside it."""
+    rendered = camera.in_s + (timeline_s - camera.offset_s) / camera.k
+    result = np.full(timeline_s.shape, np.nan)
+    for piece in warp.pieces:
+        inside = ((rendered >= piece.rendered_start_s)
+                  & (rendered <= piece.rendered_start_s + piece.rendered_duration_s))
+        ratio = piece.source_duration_s / piece.rendered_duration_s
+        result[inside] = (piece.source_start_s
+                          + (rendered[inside] - piece.rendered_start_s) * ratio)
+    return result
+
+
+def recorder_warp(
+    project: Project, asset_id: str,
+) -> tuple[AudioWarpMap, SourcePlacement] | None:
+    """The piecewise map of a recorder onto the camera covering the most timeline."""
+    cameras = {item.asset_id: item for item in project.placements}
+    candidates = [
+        (warp, cameras[warp.target_asset_id]) for warp in project.audio_warp_maps
+        if warp.source_asset_id == asset_id and warp.target_asset_id in cameras
+        and warp.source_domain is TimeDomain.FILE and len(warp.pieces) > 1
+    ]
+    return max(candidates, key=lambda item: item[1].duration_s * item[1].k, default=None)
 
 
 def assign_words_to_mics(

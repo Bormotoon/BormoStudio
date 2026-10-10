@@ -86,3 +86,30 @@ def test_worker_stage_decodes_stereo_mics_with_bleed_and_offset(tmp_path: Path) 
     assert stage.fingerprint(published, settings) == fingerprint
     with pytest.raises(ValueError, match="out of range"):
         microphone_tracks(project, {"tracks": {"rec:2": "Bad"}})
+
+
+def test_piecewise_warp_maps_mic_energy_where_a_linear_fit_would_drift() -> None:
+    from studio.core.timeline import AudioWarpMap, AudioWarpPiece
+    from studio.stages.speakers import recorder_warp, warped_source_times
+
+    # Recorder seconds 0-4 play at camera 0-4, its seconds 4-8 are squeezed
+    # into camera 4-6 (a drift burst), and 8-10 play at camera 6-8.
+    warp = AudioWarpMap("w", "rec", "cam", (
+        AudioWarpPiece(0, 4, 0, 4, "copy"), AudioWarpPiece(4, 4, 4, 2, "atempo"),
+        AudioWarpPiece(8, 2, 6, 2, "copy"),
+    ), TimeDomain.FILE, 3)
+    camera = SourcePlacement("cam", 0, 0, 8)
+    times = warped_source_times(np.array([1.0, 5.0, 9.0]), warp, camera)
+    assert times[:2].tolist() == [1.0, 6.0] and np.isnan(times[2])
+    signal = np.zeros(10)
+    signal[7] = 1.0  # speech only at recorder second 7
+    linear = timeline_envelope(signal, SourcePlacement("rec", 0, 0, 10), 8, step_s=1,
+                               sample_rate=1)
+    warped = timeline_envelope(signal, SourcePlacement("rec", 0, 0, 10), 8, step_s=1,
+                               sample_rate=1, warp=(warp, camera))
+    assert linear.argmax() == 7 and warped.argmax() == 5
+    project = Project(Path("/m"), Path("/w"))
+    project.placements = [camera]
+    project.audio_warp_maps = [warp]
+    assert recorder_warp(project, "rec") == (warp, camera)
+    assert recorder_warp(project, "other") is None
