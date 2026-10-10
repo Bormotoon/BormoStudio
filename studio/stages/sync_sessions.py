@@ -56,8 +56,15 @@ def plan_sessions(
             result = fit(camera, recorder)
             if result is not None:
                 fits[camera.id, recorder.id] = result
-        if not any(target == camera.id for target, _ in fits):
-            raise ValueError(f"no recorder overlaps camera {camera.id}: {rejected}")
+    # A clip no recorder matches (a one-second false start, a test shot) is left
+    # out with its reasons; only a project where nothing matches fails.
+    unplaced = [camera for camera in cameras
+                if not any(target == camera.id for target, _ in fits)]
+    if len(unplaced) == len(cameras):
+        raise ValueError(f"no recorder overlaps any camera: {rejected}")
+    for camera in unplaced:
+        rejected[camera.id] = "left out: no recorder matches this camera"
+    cameras = [camera for camera in cameras if camera not in unplaced]
 
     placed = {cameras[0].id: SourcePlacement(
         cameras[0].id, 0, 0, transcripts[cameras[0].id].duration, provenance="reference",

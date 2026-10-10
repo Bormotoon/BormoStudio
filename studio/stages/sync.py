@@ -244,6 +244,14 @@ def _render_complex(context: StageContext) -> StageOutput:
         project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
         check=check, search_ranges=search_ranges,
     )
+    left_out = [camera for camera in cameras
+                if not any(target == camera.id for target, _ in fits)]
+    if left_out:
+        stage_warnings.append(
+            "left out, no recorder matches: "
+            + ", ".join(Path(camera.path).name for camera in left_out))
+        cameras = [camera for camera in cameras if camera not in left_out]
+        camera_transcripts = [transcripts[camera.id] for camera in cameras]
     repair_sources = {}
     for camera, candidate in zip(cameras, camera_transcripts, strict=True):
         available = [asset for asset in recorders if (camera.id, asset.id) in fits]
