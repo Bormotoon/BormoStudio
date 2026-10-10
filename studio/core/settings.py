@@ -210,6 +210,24 @@ class ReelsSettings:
     title_color: str = "#FFFFFF"
     background_color: str = "#111114"
     waveform_color: str = "#FFFFFF"
+    # Forge caption looks (subtitle-presets.js) for reels without manual edits;
+    # "" keeps the editor's plain style. Empty/-1/0 keep the preset's choice.
+    caption_preset: str = ""
+    caption_highlight: str = ""
+    caption_case: str = ""
+    caption_punctuation: str = ""
+    caption_max_words: int = -1
+    caption_max_lines: int = 0
+    caption_max_chars: int = 0
+    caption_width_ratio: float = 0.74
+    caption_font_size: int = 96
+    caption_highlight_color: str = ""
+    caption_pause_split_s: float = 0.5
+    caption_max_duration_s: float = 7.0
+    caption_min_gap_s: float = 0.15
+    caption_fade_min_gap_s: float = 0.3
+    caption_censor: list[str] = field(default_factory=list)
+    caption_censor_style: str = "middle"
 
 
 @dataclass(slots=True)
@@ -220,6 +238,36 @@ class LlmSettings:
     port: int = 8080
     startup_timeout_s: float = 120.0
     roles: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Owned llama-server tuning; None leaves the server's own default.
+    n_gpu_layers: int | None = None
+    ctx_size: int | None = None
+    batch_size: int | None = None
+    ubatch_size: int | None = None
+    threads: int | None = None
+    main_gpu: int | None = None
+    # One slot: Studio sends requests one at a time, extra slots only cost VRAM.
+    parallel: int | None = 1
+    flash_attn: str = "auto"
+    cache_type_k: str = ""
+    cache_type_v: str = ""
+    # Host-RAM prompt cache in MiB, "auto" (free memory minus the reserve) or None.
+    cache_ram_mb: int | str | None = None
+    cache_ram_reserve_mb: int = 6144
+    cache_ram_min_mb: int = 512
+    cache_ram_max_mb: int = 8192
+    ctx_checkpoints: int | None = None
+    log_file: str = "llama-server.log"
+    extra_args: list[str] = field(default_factory=list)
+    # Request options; role_options overrides them per task role.
+    temperature: float = 0.0
+    n_predict: int | None = None
+    role_options: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Streamed responses are abandoned and retried when they stall.
+    watchdog: bool = True
+    first_token_timeout_s: float = 120.0
+    stall_timeout_s: float = 120.0
+    max_retries: int = 2
+    retry_backoff_s: float = 2.0
 
 
 @dataclass(slots=True)
@@ -291,6 +339,7 @@ def validate_settings(settings: Settings) -> None:
         for name, expected in get_type_hints(type(section)).items():
             if not _matches_type(getattr(section, name), expected):
                 raise SettingsError(f"{section_name}.{name} has an invalid value type")
+    _validate_llm_tuning(settings.llm)
     if not 1 <= settings.llm.port <= 65535:
         raise SettingsError("llm.port must be between 1 and 65535")
     _positive("llm.startup_timeout_s", settings.llm.startup_timeout_s)
@@ -466,9 +515,7 @@ def validate_settings(settings: Settings) -> None:
     _positive("reels.request_timeout_s", settings.reels.request_timeout_s)
     for role, config in settings.llm.roles.items():
         if (
-            role not in {
-                "proofread", "article", "context", "scout", "cleanup", "judge", "roughcut",
-            }
+            role not in LLM_ROLES
             or not isinstance(config, dict)
             or not config
             or set(config) - {"model", "base_url"}
@@ -528,6 +575,51 @@ def validate_settings(settings: Settings) -> None:
         raise SettingsError(f"export.targets contains unsupported values: {sorted(unknown)}")
 
 
+LLM_ROLES = {"proofread", "article", "context", "scout", "cleanup", "judge", "roughcut"}
+
+
+def _validate_llm_tuning(llm: LlmSettings) -> None:
+    for name in ("ctx_size", "batch_size", "ubatch_size", "threads", "parallel",
+                 "ctx_checkpoints", "n_predict"):
+        value = getattr(llm, name)
+        if value is not None and value < 1:
+            raise SettingsError(f"llm.{name} must be a positive integer or null")
+    for name in ("n_gpu_layers", "main_gpu"):
+        value = getattr(llm, name)
+        if value is not None and value < 0:
+            raise SettingsError(f"llm.{name} must be non-negative or null")
+    _one_of("llm.flash_attn", llm.flash_attn, {"auto", "on", "off"})
+    for name in ("cache_type_k", "cache_type_v"):
+        if not re.fullmatch(r"[a-z0-9_]*", getattr(llm, name)):
+            raise SettingsError(f"llm.{name} must be a llama.cpp cache type such as q8_0")
+    if (llm.cache_type_k or llm.cache_type_v) and llm.flash_attn == "off":
+        raise SettingsError("quantized llama KV cache requires llm.flash_attn auto or on")
+    ram = llm.cache_ram_mb
+    if isinstance(ram, str) and ram != "auto" or isinstance(ram, int) and ram < 0:
+        raise SettingsError("llm.cache_ram_mb must be MiB, auto or null")
+    for name in ("cache_ram_reserve_mb", "cache_ram_min_mb", "cache_ram_max_mb"):
+        if getattr(llm, name) < 0:
+            raise SettingsError(f"llm.{name} must be non-negative")
+    if llm.cache_ram_max_mb < llm.cache_ram_min_mb:
+        raise SettingsError("llm.cache_ram_max_mb must not be below cache_ram_min_mb")
+    if any(not isinstance(item, str) or not item for item in llm.extra_args):
+        raise SettingsError("llm.extra_args must be a list of nonempty strings")
+    if not 0 <= llm.temperature <= 2:
+        raise SettingsError("llm.temperature must be between 0 and 2")
+    for name in ("first_token_timeout_s", "stall_timeout_s"):
+        _positive(f"llm.{name}", getattr(llm, name))
+    if not 0 <= llm.max_retries <= 10:
+        raise SettingsError("llm.max_retries must be between 0 and 10")
+    _non_negative("llm.retry_backoff_s", llm.retry_backoff_s)
+    for role, options in llm.role_options.items():
+        if role not in LLM_ROLES or set(options) - {"temperature", "n_predict", "timeout_s"}:
+            raise SettingsError("llm.role_options maps roles to temperature/n_predict/timeout_s")
+        if not 0 <= options.get("temperature", 0) <= 2:
+            raise SettingsError("llm.role_options temperature must be between 0 and 2")
+        if options.get("n_predict", 1) < 1 or options.get("timeout_s", 1) <= 0:
+            raise SettingsError("llm.role_options n_predict and timeout_s must be positive")
+
+
 def _validate_reel_layout(reels: ReelsSettings) -> None:
     _one_of("reels.layout", reels.layout, {"video", "title", "audiogram"})
     _one_of("reels.title_field", reels.title_field, {"hook", "title"})
@@ -539,6 +631,37 @@ def _validate_reel_layout(reels: ReelsSettings) -> None:
     for name in ("title_color", "background_color", "waveform_color"):
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", getattr(reels, name)):
             raise SettingsError(f"reels.{name} must be #RRGGBB")
+    _validate_captions(reels)
+
+
+def _validate_captions(reels: ReelsSettings) -> None:
+    from studio.core import caption_styles as captions
+
+    if reels.caption_preset and reels.caption_preset not in captions.preset_names():
+        raise SettingsError(f"reels.caption_preset must be one of {captions.preset_names()}")
+    for name, choices in (("caption_highlight", captions.HIGHLIGHTS),
+                          ("caption_case", captions.CASES),
+                          ("caption_punctuation", captions.PUNCTUATION)):
+        value = getattr(reels, name)
+        if value:
+            _one_of(f"reels.{name}", value, choices)
+    _one_of("reels.caption_censor_style", reels.caption_censor_style, captions.CENSOR_STYLES)
+    if reels.caption_max_words < -1 or not 0 <= reels.caption_max_lines <= 4:
+        raise SettingsError("reels.caption_max_words >= -1 and caption_max_lines 0..4")
+    if reels.caption_max_chars < 0 or not 12 <= reels.caption_font_size <= 300:
+        raise SettingsError("reels.caption_max_chars >= 0 and caption_font_size 12..300")
+    if not 0.2 <= reels.caption_width_ratio <= 1:
+        raise SettingsError("reels.caption_width_ratio must be between 0.2 and 1")
+    if reels.caption_highlight_color and not re.fullmatch(
+        r"#[0-9a-fA-F]{6}", reels.caption_highlight_color
+    ):
+        raise SettingsError("reels.caption_highlight_color must be #RRGGBB or empty")
+    for name in ("caption_pause_split_s", "caption_max_duration_s"):
+        _positive(f"reels.{name}", getattr(reels, name))
+    for name in ("caption_min_gap_s", "caption_fade_min_gap_s"):
+        _non_negative(f"reels.{name}", getattr(reels, name))
+    if any(not isinstance(word, str) or not word.strip() for word in reels.caption_censor):
+        raise SettingsError("reels.caption_censor must list nonempty words")
 
 
 def _validate_roughcut_llm(roughcut: RoughcutSettings) -> None:

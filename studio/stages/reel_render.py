@@ -12,12 +12,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from studio.core.caption_styles import CaptionOptions, TimedWord, build_cues, to_styled_ass
 from studio.core.framing import load_reel_overrides, overrides_path, reel_settings
 from studio.core.launch import frozen_root
 from studio.core.media import probe
 from studio.core.proc import run_logged
 from studio.core.project import Project, stable_fingerprint
-from studio.core.subtitles import load_edits, to_ass
+from studio.core.subtitles import Cue, edit_path, load_edits, to_ass
 from studio.core.timeline import EditMap, KeepRange, TimeDomain
 from studio.core.transcript import Segment, Transcript, Word, to_srt
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
@@ -25,6 +26,7 @@ from studio.stages.program import render_project_program
 from studio.stages.reel_finish import normalize_loudness, render_cover
 from studio.stages.reel_layout import (
     compose_title,
+    packaged_fonts,
     reel_title,
     render_audiogram,
     title_band_height,
@@ -189,6 +191,17 @@ class ReelRenderStage:
             published_video = context.project.work_dir / video.relative_to(context.work_dir)
             local = clip_transcript(transcript, start, end, published_video)
             cues, style = load_edits(context.project.work_dir, stem, local)
+            portrait = ((framing != "source" or layout != "video")
+                        and int(settings.get("height", 1920)) > int(settings.get("width", 1080)))
+            # Manual edits from the subtitle editor win over a caption preset.
+            styled = (settings.get("caption_preset")
+                      and not edit_path(context.project.work_dir, stem).is_file())
+            if styled:
+                options = replace(CaptionOptions.from_settings(settings),
+                                  play_res=(1080, 1920) if portrait else (1920, 1080))
+                caption_cues = build_cues(
+                    [TimedWord(w.text, w.start, w.end) for w in local.words], options)
+                cues = [Cue(cue.start, cue.end, cue.text) for cue in caption_cues]
             subtitle_transcript = replace(
                 local,
                 segments=[Segment(cue.start, cue.end, text_override=cue.text) for cue in cues],
@@ -199,12 +212,8 @@ class ReelRenderStage:
             artifacts.extend((video, json_path, srt_path))
             ass_path = directory / f"{stem}.ass"
             ass_path.write_text(
-                to_ass(
-                    cues,
-                    style,
-                    portrait=(framing != "source" or layout != "video")
-                    and int(settings.get("height", 1920)) > int(settings.get("width", 1080)),
-                ),
+                to_styled_ass(caption_cues, options) if styled
+                else to_ass(cues, style, portrait=portrait),
                 encoding="utf-8",
             )
             artifacts.append(ass_path)
@@ -219,6 +228,7 @@ class ReelRenderStage:
                     "transcript": json_path.name,
                     "subtitles": srt_path.name,
                     "styled_subtitles": ass_path.name,
+                    "caption_preset": options.preset if styled else None,
                     "captioned": f"{stem}-captioned.mp4"
                     if settings.get("burn_subtitles")
                     else None,
@@ -381,6 +391,7 @@ def burn_subtitles(video: Path, subtitles: Path, output: Path) -> None:
         safe_path = Path(temporary) / f"captions{subtitles.suffix}"
         shutil.copyfile(subtitles, safe_path)
         escaped = str(safe_path).replace("\\", "/").replace(":", "\\:")
+        fonts = packaged_fonts(Path(temporary))
         result = run_logged(
             [
                 "ffmpeg",
@@ -391,7 +402,7 @@ def burn_subtitles(video: Path, subtitles: Path, output: Path) -> None:
                 "-i",
                 str(video),
                 "-vf",
-                f"subtitles=filename='{escaped}'",
+                f"subtitles=filename='{escaped}':fontsdir='{fonts}'",
                 "-c:v",
                 "libx264",
                 "-preset",

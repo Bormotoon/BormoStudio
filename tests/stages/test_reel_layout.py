@@ -136,3 +136,31 @@ def test_title_script_sits_in_the_band_and_respects_duration() -> None:
 def test_invalid_layout_settings(override: str) -> None:
     with pytest.raises(SettingsError):
         load_settings([], [override])
+
+
+def test_caption_preset_styles_reels_until_captions_are_edited(tmp_path: Path) -> None:
+    from studio.core.subtitles import Cue, SubtitleStyle, save_edits
+
+    project = _project(tmp_path)
+    Transcript(
+        project.outputs["program"][0], "en", 3,
+        [Segment(0.5, 2.5, tuple(Word(w, 0.5 + i * 0.3, 0.75 + i * 0.3)
+                                 for i, w in enumerate("one two three four five six".split())))],
+        time_domain=TimeDomain.EDITED,
+    ).save(project.transcripts["edited"])
+    settings = {"reels": {"render": True, "width": 180, "height": 320, "framing": "crop",
+                          "covers": False, "loudness_lufs": 0, "burn_subtitles": True,
+                          "caption_preset": "hormozi"}}
+    output = ReelRenderStage().run(StageContext(project, settings, project.work_dir))
+    folder = project.work_dir / "stages" / "reel_render"
+    script = (folder / "reel-001.ass").read_text()
+    assert "Montserrat Black" in script and "\\rHighlight" in script
+    assert "ONE TWO THREE FOUR" in (folder / "reel-001.srt").read_text()
+    assert (folder / "reel-001-captioned.mp4").is_file()
+    report = json.loads(next(p for p in output.artifacts if p.name == "render.json").read_text())
+    assert report["reels"][0]["caption_preset"] == "hormozi"
+    local = Transcript.load(folder / "reel-001.json")
+    save_edits(project.work_dir, "reel-001", local, [Cue(0.1, 0.9, "Edited")], SubtitleStyle())
+    ReelRenderStage().run(StageContext(project, settings, project.work_dir))
+    assert "Montserrat" not in (folder / "reel-001.ass").read_text()
+    assert "Edited" in (folder / "reel-001.srt").read_text()

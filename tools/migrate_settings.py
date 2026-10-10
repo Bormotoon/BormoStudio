@@ -42,6 +42,22 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _optional_int(value: Any) -> int | None:
+    return None if value in (None, "") else int(value)
+
+
+def _gpu_layers(value: Any) -> int | None:
+    # Forge passed no flag for 0, letting llama-server fit layers itself.
+    return None if value in (None, "", 0) else int(value)
+
+
+def _cache_ram(value: Any) -> int | str | None:
+    text = str(value).strip().lower() if value is not None else ""
+    if text in {"", "null", "none"}:
+        return None
+    return "auto" if text == "auto" else int(float(text))
+
+
 def _download(value: Any) -> str:
     # Forge "auto" fetched video whenever cutting could use it; Studio exports
     # and reels need the picture, so auto keeps video.
@@ -138,6 +154,30 @@ FORGE_RULES = (
     Rule("llama_cpp.timeout", "reels.request_timeout_s", float),
     Rule("llama_cpp.service.model_path", "llm.model_path"),
     Rule("llama_cpp.service.startup_timeout", "llm.startup_timeout_s", float),
+    Rule("llama_cpp.service.n_gpu_layers", "llm.n_gpu_layers", _gpu_layers),
+    Rule("llama_cpp.service.ctx_size", "llm.ctx_size", _optional_int),
+    Rule("llama_cpp.service.batch_size", "llm.batch_size", _optional_int),
+    Rule("llama_cpp.service.ubatch_size", "llm.ubatch_size", _optional_int),
+    Rule("llama_cpp.service.threads", "llm.threads", _optional_int),
+    Rule("llama_cpp.service.main_gpu", "llm.main_gpu", _optional_int),
+    Rule("llama_cpp.service.parallel", "llm.parallel", _optional_int),
+    Rule("llama_cpp.service.cache_ram_mb", "llm.cache_ram_mb", _cache_ram),
+    Rule("llama_cpp.service.cache_ram_reserve_mb", "llm.cache_ram_reserve_mb", int),
+    Rule("llama_cpp.service.cache_ram_min_mb", "llm.cache_ram_min_mb", int),
+    Rule("llama_cpp.service.cache_ram_max_mb", "llm.cache_ram_max_mb", int),
+    Rule("llama_cpp.service.ctx_checkpoints", "llm.ctx_checkpoints", _optional_int),
+    Rule("llama_cpp.service.log_file", "llm.log_file", _text),
+    Rule("llama_cpp.service.extra_args", "llm.extra_args",
+         lambda value: [str(item) for item in value or []]),
+    Rule("llama_cpp.temperature", "llm.temperature", float),
+    Rule("llama_cpp.n_predict", "llm.n_predict", _optional_int),
+    Rule("llama_cpp.watchdog.enabled", "llm.watchdog", bool),
+    Rule("llama_cpp.watchdog.first_token_timeout", "llm.first_token_timeout_s", float),
+    Rule("llama_cpp.watchdog.stall_timeout", "llm.stall_timeout_s", float),
+    Rule("llama_cpp.watchdog.max_retries", "llm.max_retries", int),
+    Rule("llama_cpp.role_overrides.scout.chunk_seconds", "reels.chunk_seconds", int),
+    Rule("transcription.repetition_penalty", "transcribe.repetition_penalty", float),
+    Rule("transcription.no_repeat_ngram_size", "transcribe.no_repeat_ngram_size", int),
     Rule("processing.analysis.json_retry", "reels.json_retries"),
     Rule("processing.analysis.json_retry_budget", "reels.retry_budget"),
     Rule("processing.analysis.quote_verification.min_final_ratio", "reels.min_quote_ratio"),
@@ -151,6 +191,22 @@ FORGE_RULES = (
     Rule("processing.reel_min_duration", "reels.target_min_s", float),
     Rule("processing.reel_max_duration", "reels.target_max_s", float),
     Rule("subtitles.enabled", "reels.burn_subtitles"),
+    Rule("subtitles.font_size_px", "reels.caption_font_size", int),
+    Rule("subtitles.highlight", "reels.caption_highlight", _text),
+    Rule("subtitles.text_case", "reels.caption_case", _text),
+    Rule("subtitles.strip_punctuation", "reels.caption_punctuation", _text),
+    Rule("subtitles.max_words_per_cue", "reels.caption_max_words", int),
+    Rule("subtitles.max_lines", "reels.caption_max_lines", int),
+    Rule("subtitles.max_chars_per_line", "reels.caption_max_chars", int),
+    Rule("subtitles.max_width_ratio", "reels.caption_width_ratio", float),
+    Rule("subtitles.highlight_color", "reels.caption_highlight_color", _text),
+    Rule("subtitles.pause_split_s", "reels.caption_pause_split_s", float),
+    Rule("subtitles.max_duration_s", "reels.caption_max_duration_s", float),
+    Rule("subtitles.min_gap_s", "reels.caption_min_gap_s", float),
+    Rule("subtitles.fade_min_gap_s", "reels.caption_fade_min_gap_s", float),
+    Rule("subtitles.censor_words", "reels.caption_censor",
+         lambda value: [str(item) for item in value or []]),
+    Rule("subtitles.censor_style", "reels.caption_censor_style", _text),
     Rule("video.face_device", "reels.tracking_device"),
     Rule("video.active_speaker", "reels.active_speaker"),
     Rule("youtube.download", "fetch.download", _download),
@@ -196,6 +252,12 @@ _FORGE_REPLACED = {
     "autonomy.log_keep_days": "logs live in each project work folder",
     "autonomy.runs_dir": "use `uvf batch --report` for a queue report",
     "autonomy.notify.command": "shell hooks are deferred (PROJECT_DECISIONS.md)",
+    "llama_cpp.watchdog.log_interval": "Studio reports LLM progress as stage events",
+    "llama_cpp.scout_parallelism": "Studio sends LLM requests one at a time (llm.parallel)",
+    "llama_cpp.model_overrides": "use llm.roles and llm.role_options",
+    "subtitles.ass_style": "save a look in the subtitle editor or choose reels.caption_preset",
+    "subtitles.wrap_words": "reel captions always wrap into reels.caption_max_lines lines",
+    "subtitles.keep_nosubs": "Studio always keeps the uncaptioned reel next to the captioned",
     "cli.quiet": "Studio prints JSON results; use --events for progress",
     "cli.verbose": "Studio prints JSON results; use --events for progress",
 }
@@ -278,6 +340,31 @@ def migrate_forge(data: dict[str, Any], migration: Migration) -> None:
                 "model_path"))
             migration.put("forge", key, "llm.managed", managed)
             continue
+        if key == "subtitles.preset":
+            # An empty Forge preset meant the shipped forge_subtitles.ass look.
+            migration.put("forge", key, "reels.caption_preset", str(value or "forge"))
+            continue
+        if key == "subtitles.karaoke":
+            if value and "highlight" not in data.get("subtitles", {}):
+                migration.put("forge", key, "reels.caption_highlight", "karaoke")
+            else:
+                migration.skip("forge", key, "reels", "Studio uses reels.caption_highlight")
+            continue
+        if key in {"llama_cpp.service.cache_type_k", "llama_cpp.service.cache_type_v"}:
+            migration.put("forge", key, f"llm.{key.rsplit('.', 1)[1]}", _text(value))
+            if value:
+                # Forge always started llama-server with flash attention on.
+                migration.put("forge", key, "llm.flash_attn", "on")
+            continue
+        option = _role_option(key)
+        if option is not None:
+            option_role, name = option
+            options = migration.settings.setdefault("llm", {}).setdefault("role_options", {})
+            options.setdefault(option_role, {})[name] = float(value)
+            migration.migrated.append({"source": f"forge:{key}",
+                                       "target": f"llm.role_options.{option_role}.{name}",
+                                       "value": float(value)})
+            continue
         if key.startswith("llama_cpp.roles.") and isinstance(value, str):
             role = _FORGE_ROLES.get(key.rsplit(".", 1)[1])
             if role is not None:
@@ -305,6 +392,24 @@ def migrate_forge(data: dict[str, Any], migration: Migration) -> None:
         migration.skip("forge", key, _FORGE_PLANNED.get(section, "unknown"),
                        "no Studio setting yet" if section in _FORGE_PLANNED
                        else "unknown legacy section")
+
+
+_ROLE_OPTION_NAMES = {"timeout": "timeout_s", "temperature": "temperature",
+                      "n_predict": "n_predict"}
+
+
+def _role_option(key: str) -> tuple[str, str] | None:
+    """Forge per-role request options as (Studio role, option name)."""
+    parts = key.split(".")
+    if len(parts) == 4 and parts[:2] == ["llama_cpp", "role_overrides"]:
+        role, name = _FORGE_ROLES.get(parts[2]), parts[3]
+    elif len(parts) == 2 and parts[0] in {"proofread", "article"}:
+        role, name = parts[0], parts[1]
+    else:
+        return None
+    if role is None or name not in _ROLE_OPTION_NAMES:
+        return None
+    return role, _ROLE_OPTION_NAMES[name]
 
 
 def _reconcile(migration: Migration) -> None:

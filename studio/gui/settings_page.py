@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from studio.core.caption_styles import preset_names
 from studio.core.launch import python_command
 from studio.core.presets import apply_preset, list_presets
 from studio.core.settings import load_settings
@@ -50,6 +51,7 @@ class SettingsPage(QWidget):
             ("speakers", "method", "Speakers", ["auto", "mics", "pyannote", "off"]),
             ("program", "encoder", "Video encoder", ["auto", "cpu", "nvenc"]),
             ("reels", "layout", "Reel layout", ["video", "title", "audiogram"]),
+            ("reels", "caption_preset", "Reel caption style", ["", *preset_names()]),
         ):
             combo = QComboBox()
             combo.addItems(choices)

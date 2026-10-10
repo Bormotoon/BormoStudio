@@ -83,14 +83,19 @@ def _encode(command: list[str], output: Path, timeout: float) -> None:
         raise RuntimeError(result.stderr)
 
 
+def packaged_fonts(folder: Path) -> str:
+    """Copy the packaged fonts to a filter-safe folder; return it escaped for libass."""
+    fonts = folder / "fonts"
+    with as_file(files("studio.resources") / "fonts") as packaged:
+        shutil.copytree(packaged, fonts, ignore=shutil.ignore_patterns("licenses"))
+    return _escape(fonts)
+
+
 def _title_filter(folder: Path, text: str, duration: float, settings: dict[str, Any]) -> str:
     """A libass filter for the title, with fonts and script copied to a safe folder."""
     script = folder / "title.ass"
     script.write_text(title_ass(text, duration, settings), encoding="utf-8")
-    fonts = folder / "fonts"
-    with as_file(files("studio.resources") / "fonts") as packaged:
-        shutil.copytree(packaged, fonts, ignore=shutil.ignore_patterns("licenses"))
-    return f"subtitles=filename='{_escape(script)}':fontsdir='{_escape(fonts)}'"
+    return f"subtitles=filename='{_escape(script)}':fontsdir='{packaged_fonts(folder)}'"
 
 
 def compose_title(

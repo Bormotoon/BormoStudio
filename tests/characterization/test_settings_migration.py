@@ -82,3 +82,29 @@ def test_cli_writes_loadable_settings_and_report(tmp_path: Path) -> None:
     assert data["conflicts"][0]["target"] == "transcribe.model"
     assert data["unmapped"][0]["source"] == "whispersync:gcc_eps"
     assert main(["--forge", str(forge), "--output", str(output)]) == 2
+
+
+def test_forge_llama_tuning_watchdog_and_role_options_migrate() -> None:
+    source = yaml.safe_load((ROOT / "legacy" / "forge" / "config.yaml").read_text("utf-8"))
+    llm = migrate(forge=source).settings["llm"]
+    assert (llm["n_gpu_layers"], llm["ctx_size"], llm["parallel"]) == (999, 8192, 1)
+    assert (llm["cache_type_k"], llm["flash_attn"], llm["cache_ram_mb"]) == ("q8_0", "on", "auto")
+    assert (llm["watchdog"], llm["first_token_timeout_s"], llm["max_retries"]) == (True, 90, 4)
+    assert llm["role_options"]["scout"] == {"timeout_s": 600, "temperature": 0.35,
+                                            "n_predict": 2048}
+    assert llm["role_options"]["article"]["timeout_s"] == 900
+    zero = migrate(forge={"llama_cpp": {"service": {"n_gpu_layers": 0}}}).settings["llm"]
+    assert zero["n_gpu_layers"] is None  # Forge let llama-server fit layers for 0
+
+
+def test_forge_subtitle_styles_migrate_to_caption_settings() -> None:
+    source = {"subtitles": {"preset": "", "karaoke": True, "font_size_px": 80,
+                            "censor_words": ["бля*"], "max_words_per_cue": 3}}
+    reels = migrate(forge=source).settings["reels"]
+    assert reels["caption_preset"] == "forge"  # Forge's shipped look
+    assert reels["caption_highlight"] == "karaoke"
+    assert (reels["caption_font_size"], reels["caption_max_words"]) == (80, 3)
+    assert reels["caption_censor"] == ["бля*"]
+    explicit = migrate(forge={"subtitles": {"preset": "hormozi", "highlight": "pop",
+                                            "karaoke": True}}).settings["reels"]
+    assert (explicit["caption_preset"], explicit["caption_highlight"]) == ("hormozi", "pop")

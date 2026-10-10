@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
 
-from studio.llm.server import LlamaServer
+from studio.llm.server import LlamaServer, server_arguments
 from studio.modules.cancellation import check_cancelled
 
 
@@ -44,7 +44,12 @@ class ManagedLlamaSession:
                 probe.bind(("127.0.0.1", port))
             except OSError as exc:
                 raise RuntimeError("managed llama port is occupied; choose another port") from exc
-        server = LlamaServer(Path(executable), model, self.work_dir / "llama", port)
+        log_name = str(self.settings.get("log_file", "llama-server.log") or "")
+        server = LlamaServer(
+            Path(executable), model, self.work_dir / "llama", port,
+            arguments=server_arguments(self.settings, executable),
+            log_file=(self.work_dir / "llama" / log_name) if log_name else None,
+        )
         self.server = server
         try:
             server.start()

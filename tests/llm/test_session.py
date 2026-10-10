@@ -12,7 +12,7 @@ def test_owned_session_reuses_and_stops(tmp_path: Path, monkeypatch) -> None:
     calls = []
 
     class Server:
-        def __init__(self, *args):
+        def __init__(self, *args, **kwargs):
             self.process = type("Process", (), {"poll": lambda self: None})()
 
         def start(self):
