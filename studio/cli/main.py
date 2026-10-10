@@ -302,6 +302,29 @@ def _update_cameras(source: Path, args: argparse.Namespace) -> dict[str, Any]:
     return _tracks_document(project)
 
 
+def _tune(args: argparse.Namespace) -> dict[str, Any]:
+    from studio.core.autotune import tune_project
+    from studio.core.settings_store import save_settings
+
+    project, _project_path, settings_path = _project(args.source)
+    if args.sample_s <= 0:
+        raise ValueError("tune --sample-s must be positive")
+    both = not args.whisper and not args.llama
+    # Recorders first: their speech is the cleanest sample.
+    sources = [project.source_dir / asset.path
+               for role in (AssetRole.RECORDER, AssetRole.CAMERA)
+               for asset in project.assets if asset.role is role]
+    report = tune_project(sources, _settings(settings_path), project.work_dir,
+                          whisper=args.whisper or both, llama=args.llama or both,
+                          sample_s=args.sample_s)
+    path = project.work_dir / "tuning.json"
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if args.apply and report["recommendations"]:
+        save_settings(project.work_dir, report["recommendations"])
+        report["applied"] = True
+    return report
+
+
 def _update_reel(source: Path, args: argparse.Namespace) -> dict[str, Any]:
     from studio.core.framing import load_reel_overrides, save_reel_override
 
@@ -453,6 +476,13 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("doctor")
     compute = commands.add_parser("compute")
     compute.add_argument("--probe-whisper", action="store_true", help=argparse.SUPPRESS)
+    compute.add_argument("--bench-whisper", metavar="JSON", help=argparse.SUPPRESS)
+    tune = commands.add_parser("tune", help="measure Whisper/llama settings on this machine")
+    tune.add_argument("source", type=Path)
+    tune.add_argument("--whisper", action="store_true", help="tune Whisper only")
+    tune.add_argument("--llama", action="store_true", help="tune the owned llama-server only")
+    tune.add_argument("--sample-s", type=float, default=60.0)
+    tune.add_argument("--apply", action="store_true", help="save the recommendations")
     verify = commands.add_parser("verify")
     verify.add_argument("camera", type=Path)
     verify.add_argument("voice", type=Path)
@@ -576,7 +606,15 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command == "compute":
         from studio.core.capabilities import inspect_compute, whisper_probe
 
+        if args.bench_whisper:
+            from studio.core.autotune import whisper_benchmark
+
+            print(json.dumps(whisper_benchmark(json.loads(args.bench_whisper))))
+            return 0
         print(json.dumps(whisper_probe() if args.probe_whisper else inspect_compute(), indent=2))
+        return 0
+    if args.command == "tune":
+        print(json.dumps(_tune(args), ensure_ascii=False, indent=2))
         return 0
     install_options = {}
     if getattr(args, "cancel_file", None):

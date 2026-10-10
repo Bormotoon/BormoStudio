@@ -137,7 +137,13 @@ class SettingsPage(QWidget):
         self.apply_button = QPushButton("Apply compute recommendations")
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self._apply_compute)
+        self.tune_button = QPushButton("Measure and tune Whisper / llama")
+        self.tune_button.setToolTip(
+            "Times real candidates on this machine; takes several minutes and needs the GPU free"
+        )
+        self.tune_button.clicked.connect(self._tune)
         layout.addWidget(self.detect_button)
+        layout.addWidget(self.tune_button)
         layout.addWidget(self.apply_button)
         preset_row = QHBoxLayout()
         self.preset_combo = QComboBox()
@@ -277,12 +283,25 @@ class SettingsPage(QWidget):
         executable, *arguments = python_command("studio.cli.main", ["compute"])
         self.probe.start(executable, arguments)
 
+    def _tune(self) -> None:
+        if self.probe.state() != QProcess.ProcessState.NotRunning or self.work_dir is None:
+            return
+        self.detect_button.setEnabled(False)
+        self.tune_button.setEnabled(False)
+        self.apply_button.setEnabled(False)
+        self.status.setText("Measuring Whisper and llama candidates; this takes a few minutes...")
+        executable, *arguments = python_command(
+            "studio.cli.main", ["tune", str(self.work_dir.parent)])
+        self.probe.start(executable, arguments)
+
     def _compute_error(self, _error: QProcess.ProcessError) -> None:
         self.detect_button.setEnabled(True)
+        self.tune_button.setEnabled(True)
         self.status.setText(self.probe.errorString())
 
     def _compute_finished(self, code: int, _status: QProcess.ExitStatus) -> None:
         self.detect_button.setEnabled(True)
+        self.tune_button.setEnabled(True)
         try:
             if code:
                 raise ValueError(
@@ -320,9 +339,7 @@ class SettingsPage(QWidget):
             return
         self._snapshot = None
         self.load_project(self.work_dir)
-        self.status.setText(
-            "Compute recommendations saved. This is conservative setup, not a benchmark."
-        )
+        self.status.setText("Compute recommendations saved.")
 
     def save_yaml(self) -> bool:
         if self.work_dir is None:
