@@ -75,6 +75,11 @@ RESAMPLE_CONFORM_MAX_DEVIATION = 0.005
 # assumption that fails on someone's four-hour lecture.
 
 
+def _seconds(value: float) -> str:
+    """ffmpeg time argument: fixed notation (``7e-09`` is rejected), µs precision."""
+    return f"{max(0.0, float(value)):.6f}"
+
+
 def edge_fade_filters(out_duration: float, fade_ms: int) -> list[str]:
     """Equal-power fade-in/out at the edges of a segment of length
     ``out_duration`` seconds. Declicks segment seams without changing the
@@ -199,9 +204,9 @@ def apply_atempo_segment(
         "ffmpeg",
         "-y",
         "-ss",
-        str(start),
+        _seconds(start),
         "-t",
-        str(duration),
+        _seconds(duration),
         "-i",
         str(input_path),
         "-af",
@@ -259,9 +264,9 @@ def resample_conform_segment(
         "ffmpeg",
         "-y",
         "-ss",
-        str(start),
+        _seconds(start),
         "-t",
-        str(duration),
+        _seconds(duration),
         "-i",
         str(input_path),
         "-af",
@@ -302,9 +307,9 @@ def extract_segment(
         "ffmpeg",
         "-y",
         "-ss",
-        str(start),
+        _seconds(start),
         "-t",
-        str(duration),
+        _seconds(duration),
         "-i",
         str(input_path),
     ]
@@ -455,7 +460,7 @@ def generate_silence(
         "-i",
         f"anullsrc=r={sample_rate}:cl={layout}",
         "-t",
-        str(duration),
+        _seconds(duration),
         "-acodec",
         codec,
         *WAV_MUX_ARGS,

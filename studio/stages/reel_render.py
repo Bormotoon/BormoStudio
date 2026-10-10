@@ -287,7 +287,7 @@ def render_reel_source(
                 "error",
                 "-y",
                 "-ss",
-                str(start),
+                f"{start:.6f}",
                 "-i",
                 str(sources[0]),
                 "-t",
@@ -333,8 +333,8 @@ def reel_audio(
     if not sources:
         raise ValueError("edited moments require a rendered program")
     result = run_logged(
-        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", str(start), "-i", str(sources[0]),
-         "-t", str(end - start), "-map", "0:a:0", "-ar", "48000", str(output)],
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.6f}", "-i", str(sources[0]),
+         "-t", f"{end - start:.6f}", "-map", "0:a:0", "-ar", "48000", str(output)],
         timeout=max(120, (end - start) * 10),
     )
     if result.returncode:

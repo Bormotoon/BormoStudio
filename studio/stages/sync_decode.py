@@ -10,10 +10,10 @@ def extract_audio_to_wav(
 ) -> None:
     command = ["ffmpeg", "-nostdin", "-v", "error", "-y"]
     if start_s is not None:
-        command.extend(["-ss", str(start_s)])
+        command.extend(["-ss", f"{max(0.0, start_s):.6f}"])
     command.extend(["-i", str(source), "-map", "0:a:0", "-vn"])
     if duration_s is not None:
-        command.extend(["-t", str(duration_s)])
+        command.extend(["-t", f"{max(0.0, duration_s):.6f}"])
     if mono:
         command.extend(["-ac", "1"])
     command.extend(["-ar", str(sample_rate), "-c:a", "pcm_s16le", str(output)])
