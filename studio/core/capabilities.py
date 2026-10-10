@@ -10,6 +10,11 @@ from studio.core.launch import python_command
 
 
 def whisper_probe() -> dict:
+    from studio.stages.transcribe import mlx_available
+
+    if mlx_available():
+        return {"available": True, "cuda_devices": 0, "mlx": True,
+                "compute_types": ["float16"]}
     try:
         import ctranslate2
 
@@ -41,12 +46,14 @@ def inspect_compute() -> dict:
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         whisper = {"available": False, "cuda_devices": 0, "error": str(exc)}
     cuda = bool(whisper.get("available") and whisper.get("cuda_devices", 0))
+    mlx = bool(whisper.get("mlx"))
     types = whisper.get("compute_types", [])
     preferred = ("float16", "int8_float16", "float32") if cuda else ("int8", "float32")
     compute_type = next((value for value in preferred if value in types), "auto")
     try:
         choice = select_encoder("auto")
-        encoder = "nvenc" if choice.codec == "h264_nvenc" else "cpu"
+        encoder = {"h264_nvenc": "nvenc", "h264_videotoolbox": "videotoolbox"}.get(
+            choice.codec, "cpu")
         diagnostics["encoder"] = choice.reason
     except (OSError, RuntimeError) as exc:
         encoder = "cpu"
@@ -59,8 +66,8 @@ def inspect_compute() -> dict:
         "diagnostics": diagnostics,
         "recommendations": {
             "transcribe": {
-                "device": "cuda" if cuda else "cpu",
-                "compute_type": compute_type,
+                "device": "cuda" if cuda else "mlx" if mlx else "cpu",
+                "compute_type": "auto" if mlx else compute_type,
                 "batch_size": 8 if cuda else 1,
             },
             "program": {"encoder": encoder},

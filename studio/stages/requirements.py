@@ -29,7 +29,10 @@ class MissingRequirement:
         }
 
 
-_PACKAGES = {"faster-whisper": ("faster_whisper", "pip install 'ultimate-video-forge[whisper]'")}
+_PACKAGES = {
+    "faster-whisper": ("faster_whisper", "pip install 'ultimate-video-forge[whisper]'"),
+    "mlx-whisper": ("mlx_whisper", "pip install 'ultimate-video-forge[mlx]' (Apple Silicon)"),
+}
 
 
 def missing_requirements(

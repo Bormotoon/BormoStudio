@@ -47,9 +47,9 @@ class SettingsPage(QWidget):
         form = QFormLayout()
         for section, key, label, choices in (
             ("sync", "mode", "Synchronization", ["auto", "camera", "simple", "complex"]),
-            ("transcribe", "device", "Whisper device", ["auto", "cpu", "cuda"]),
+            ("transcribe", "device", "Whisper device", ["auto", "cpu", "cuda", "mlx"]),
             ("speakers", "method", "Speakers", ["auto", "mics", "pyannote", "off"]),
-            ("program", "encoder", "Video encoder", ["auto", "cpu", "nvenc"]),
+            ("program", "encoder", "Video encoder", ["auto", "cpu", "nvenc", "videotoolbox"]),
             ("reels", "layout", "Reel layout", ["video", "title", "audiogram"]),
             ("reels", "caption_preset", "Reel caption style", ["", *preset_names()]),
         ):

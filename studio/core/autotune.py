@@ -141,16 +141,18 @@ def _best(trials: list[Trial], free_mb: int | None, headroom_mb: int) -> Trial |
 
 def whisper_benchmark(request: dict[str, Any]) -> dict[str, Any]:
     """Transcribe ``request["audio"]`` once with the given settings (trial process)."""
-    from studio.stages.transcribe import FasterWhisperBackend, TranscribeSettings
+    from studio.stages.transcribe import TranscribeSettings, whisper_backend
 
     settings = TranscribeSettings.from_mapping({
         "model": request["model"], "device": request["device"], "language":
         request.get("language"), "compute_type": request["compute_type"],
         "batch_size": request["batch_size"], "mode": "fast", "use_cache": False,
     })
-    backend = FasterWhisperBackend(settings)
+    backend = whisper_backend(settings)
     started = time.monotonic()
-    backend._ensure_model()
+    load = getattr(backend, "_ensure_model", None)
+    if load is not None:
+        load()
     loaded = time.monotonic()
     transcript = backend.transcribe(Path(request["audio"]), settings)
     finished = time.monotonic()
@@ -159,6 +161,9 @@ def whisper_benchmark(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def whisper_candidates(probe: dict[str, Any]) -> tuple[str, list[str], list[int]]:
+    if probe.get("mlx"):
+        # mlx-whisper has one precision and no batched pipeline: one measurement.
+        return "mlx", ["float16"], [1]
     cuda = bool(probe.get("available") and probe.get("cuda_devices"))
     supported = set(probe.get("compute_types", []))
     preferred = ["float16", "int8_float16", "int8"] if cuda else ["int8", "float32"]

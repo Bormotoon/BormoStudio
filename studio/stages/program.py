@@ -300,6 +300,7 @@ def render_project_program(
                     "[a]",
                     "-c:v",
                     codec,
+                    *choice.options,
                     *(["-preset", "ultrafast", "-crf", "30"]
                       if max_height is not None and codec == "libx264" else []),
                     "-pix_fmt",
@@ -314,7 +315,7 @@ def render_project_program(
             try:
                 _run_ffmpeg(command)
             except RuntimeError as exc:
-                if encoder != "auto" or codec != "h264_nvenc":
+                if encoder != "auto" or codec == "libx264":
                     raise
                 # Regenerate every part to avoid joining different H.264
                 # parameter sets when hardware fails halfway through a job.

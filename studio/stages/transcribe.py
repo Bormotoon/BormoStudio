@@ -186,6 +186,87 @@ class FasterWhisperBackend:
                 torch.cuda.empty_cache()
 
 
+# Whisper names → MLX community conversions; other values are a repo or folder.
+MLX_MODELS = {
+    "tiny": "mlx-community/whisper-tiny-mlx",
+    "base": "mlx-community/whisper-base-mlx",
+    "small": "mlx-community/whisper-small-mlx",
+    "medium": "mlx-community/whisper-medium-mlx",
+    "large-v2": "mlx-community/whisper-large-v2-mlx",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+    "turbo": "mlx-community/whisper-large-v3-turbo",
+}
+
+
+class MlxWhisperBackend:
+    """Whisper on Apple Silicon through mlx-whisper (Metal, unified memory).
+
+    mlx-whisper has no batched pipeline, VAD filter, hotwords or repetition
+    controls; fast mode decodes sequentially and glossary terms stay in the prompt.
+    """
+
+    device = "mlx"
+    compute_type = "float16"
+
+    def __init__(self, settings: TranscribeSettings) -> None:
+        self.settings = settings
+        self.model = MLX_MODELS.get(settings.model, settings.model)
+
+    def transcribe(self, audio: Path, settings: TranscribeSettings) -> Transcript:
+        import mlx_whisper  # type: ignore[import-not-found]
+
+        quality = settings.mode == "quality"
+        result = mlx_whisper.transcribe(
+            str(audio),
+            path_or_hf_repo=self.model,
+            language=settings.language,
+            word_timestamps=True,
+            temperature=tuple(TEMPERATURES),
+            compression_ratio_threshold=2.4,
+            logprob_threshold=-1.0,
+            no_speech_threshold=0.6,
+            initial_prompt=settings.prompt() or None,
+            condition_on_previous_text=quality,
+            verbose=None,
+        )
+        segments = [
+            Segment(
+                float(segment["start"]),
+                float(segment["end"]),
+                tuple(
+                    Word(str(word["word"]).strip(), float(word["start"]), float(word["end"]),
+                         float(word.get("probability", 1.0)))
+                    for word in segment.get("words") or []
+                ),
+                avg_logprob=_optional_float(segment.get("avg_logprob")),
+                text_override=str(segment.get("text", "")).strip(),
+            )
+            for segment in result.get("segments", [])
+        ]
+        from studio.core.media import probe
+
+        return Transcript(
+            source_audio=audio,
+            language=str(result.get("language") or settings.language or ""),
+            duration=float(probe(audio).duration_s or (segments[-1].end if segments else 0.0)),
+            segments=segments,
+            model=settings.model,
+            device=self.device,
+            compute_type=self.compute_type,
+            mode=settings.mode,
+        )
+
+    def unload(self) -> None:
+        """MLX frees the model with the Python objects; nothing is held here."""
+
+
+def whisper_backend(settings: TranscribeSettings) -> WhisperBackend:
+    if _resolve_device(settings.device) == "mlx":
+        return MlxWhisperBackend(settings)
+    return FasterWhisperBackend(settings)
+
+
 class WhisperEngine:
     def __init__(
         self,
@@ -194,7 +275,7 @@ class WhisperEngine:
         cache_dir: Path | None = None,
     ) -> None:
         self.settings = settings
-        self.backend = backend or FasterWhisperBackend(settings)
+        self.backend = backend or whisper_backend(settings)
         self.cache_dir = cache_dir or user_cache_path("studio") / "transcripts"
 
     def transcribe(self, path: Path, stream_index: int | None = None) -> Transcript:
@@ -270,6 +351,9 @@ class TranscribeStage:
     gpu = GpuUse.WHISPER
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
+        device = str(settings.get("transcribe", {}).get("device", "auto"))
+        if device == "mlx" or device == "auto" and mlx_available():
+            return [Requirement("package", "mlx-whisper", "speech recognition on Apple Silicon")]
         return [Requirement("package", "faster-whisper", "local speech recognition")]
 
     def decide(self, project: Project, settings: dict[str, Any]) -> Decision:
@@ -320,15 +404,27 @@ class TranscribeStage:
         return StageOutput(tuple(artifacts), {"transcripts": transcripts})
 
 
+def mlx_available() -> bool:
+    import importlib.util
+    import platform
+    import sys
+
+    return (sys.platform == "darwin" and platform.machine() == "arm64"
+            and importlib.util.find_spec("mlx_whisper") is not None)
+
+
 def _resolve_device(requested: str) -> str:
     if requested != "auto":
         return requested
     try:
         import ctranslate2  # type: ignore[import-not-found]
 
-        return "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
+        if ctranslate2.get_cuda_device_count():
+            return "cuda"
     except ImportError:
-        return "cpu"
+        pass
+    # Apple Silicon: the Metal backend is far faster than CTranslate2 on CPU.
+    return "mlx" if mlx_available() else "cpu"
 
 
 def _resolve_compute_type(device: str, requested: str) -> str:

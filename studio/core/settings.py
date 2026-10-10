@@ -371,7 +371,7 @@ def validate_settings(settings: Settings) -> None:
     )
     for name in ("acoustic_grid_s", "acoustic_window_s", "acoustic_min_sharpness"):
         _positive(f"sync.{name}", getattr(settings.sync, name))
-    _one_of("transcribe.device", settings.transcribe.device, {"auto", "cuda", "cpu"})
+    _one_of("transcribe.device", settings.transcribe.device, {"auto", "cuda", "cpu", "mlx"})
     _one_of("transcribe.mode", settings.transcribe.mode, {"fast", "quality"})
     _positive("transcribe.repetition_penalty", settings.transcribe.repetition_penalty)
     if any(not key.strip() or value < 0
@@ -407,7 +407,8 @@ def validate_settings(settings: Settings) -> None:
         -100 <= settings.speakers.silence_floor_db <= 0
     ):
         raise SettingsError("speakers.silence_floor_db must be between -100 and 0")
-    _one_of("program.encoder", settings.program.encoder, {"auto", "nvenc", "libx264", "cpu"})
+    _one_of("program.encoder", settings.program.encoder,
+            {"auto", "nvenc", "videotoolbox", "libx264", "cpu"})
     _non_negative("program.min_shot_s", settings.program.min_shot_s)
     _non_negative("program.crossfade_ms", settings.program.crossfade_ms)
     lufs = settings.reels.loudness_lufs

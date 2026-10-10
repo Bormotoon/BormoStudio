@@ -211,7 +211,8 @@ def _doctor() -> int:
             capture_output=True,
             text=True,
         )
-        print(f"nvenc: {'available' if 'h264_nvenc' in result.stdout else 'unavailable'}")
+        for name, codec in (("nvenc", "h264_nvenc"), ("videotoolbox", "h264_videotoolbox")):
+            print(f"{name}: {'available' if codec in result.stdout else 'unavailable'}")
     return 0 if all(checks.values()) else 1
 
 
