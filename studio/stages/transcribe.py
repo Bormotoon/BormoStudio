@@ -101,6 +101,8 @@ class FasterWhisperBackend:
         self.device = _resolve_device(settings.device)
         self.compute_type = _resolve_compute_type(self.device, settings.compute_type)
         self._model: Any = None
+        # Set by WhisperEngine: fraction of the current file recognized so far.
+        self.progress: Callable[[float], None] | None = None
 
     def _ensure_model(self) -> Any:
         if self._model is None:
@@ -183,7 +185,7 @@ class FasterWhisperBackend:
                 avg_logprob=_optional_float(getattr(segment, "avg_logprob", None)),
                 text_override=str(segment.text).strip(),
             )
-            for segment in generated
+            for segment in self._reporting(generated, len(samples) / 16000)
         ]
         return Transcript(
             source_audio=audio,
@@ -195,6 +197,13 @@ class FasterWhisperBackend:
             compute_type=self.compute_type,
             mode=settings.mode,
         )
+
+    def _reporting(self, generated: Any, duration_s: float) -> Any:
+        """Pass segments through while reporting how far recognition has got."""
+        for segment in generated:
+            if self.progress is not None and duration_s > 0:
+                self.progress(min(1.0, float(segment.end) / duration_s))
+            yield segment
 
     @staticmethod
     def _speech_clips(
@@ -324,6 +333,15 @@ class WhisperEngine:
         self.backend = backend or whisper_backend(settings)
         self.cache_dir = cache_dir or user_cache_path("studio") / "transcripts"
         self.digest_cache = digest_cache
+        self.progress: Callable[[float], None] | None = None
+
+    def _recognize(self, audio: Path, done: float = 0.0, share: float = 1.0) -> Transcript:
+        """Backend recognition reporting ``done + share * fraction`` of the file."""
+        if hasattr(self.backend, "progress"):
+            report = self.progress
+            self.backend.progress = (
+                None if report is None else lambda fraction: report(done + share * fraction))
+        return self.backend.transcribe(audio, self.settings)
 
     def transcribe(
         self, path: Path, stream_index: int | None = None, audio_filter: str | None = None,
@@ -337,7 +355,7 @@ class WhisperEngine:
                 cached.source_audio = path
                 return cached
         if stream_index is None and audio_filter is None:
-            transcript = self._sane(self.backend.transcribe(path, self.settings), path)
+            transcript = self._sane(self._recognize(path), path)
         else:
             if stream_index is not None and (not isinstance(stream_index, int)
                     or isinstance(stream_index, bool) or stream_index < 0):
@@ -352,7 +370,7 @@ class WhisperEngine:
                      "-c:a", "pcm_s16le", str(decoded)],
                     check=True, capture_output=True,
                 )
-                transcript = self._sane(self.backend.transcribe(decoded, self.settings), decoded)
+                transcript = self._sane(self._recognize(decoded), decoded)
         transcript.source_audio = path
         if self.settings.use_cache:
             self._save(cache_path, transcript)
@@ -374,11 +392,12 @@ class WhisperEngine:
         segments: list[Segment] = []
         language = ""
         suspects: list[Any] = []
-        for index in tiles:
+        for number, index in enumerate(tiles):
             core_start, core_end = index * TILE_S, min(duration_s, (index + 1) * TILE_S)
             start = max(0.0, core_start - TILE_OVERLAP_S)
             end = min(duration_s, core_end + TILE_OVERLAP_S)
-            tile = self._tile(path, start, end - start, stream_index, audio_filter)
+            tile = self._tile(path, start, end - start, stream_index, audio_filter,
+                              number / len(tiles), 1 / len(tiles))
             language = language or tile.language
             suspects.extend(tile.metadata.get("suspect_words", []))
             segments.extend(_core_segments(tile, start, core_start, core_end))
@@ -393,7 +412,7 @@ class WhisperEngine:
                           metadata=metadata)
 
     def _tile(self, path: Path, start: float, duration: float, stream_index: int | None,
-              audio_filter: str | None) -> Transcript:
+              audio_filter: str | None, done: float = 0.0, share: float = 1.0) -> Transcript:
         key = stable_fingerprint(self._key(path, stream_index, audio_filter), "tile",
                                  round(start, 3), round(duration, 3))
         cache_path = self.cache_dir / f"{key}.json"
@@ -411,7 +430,7 @@ class WhisperEngine:
                  "-ar", "16000", "-c:a", "pcm_s16le", str(decoded)],
                 check=True, capture_output=True,
             )
-            tile = self._sane(self.backend.transcribe(decoded, self.settings), decoded)
+            tile = self._sane(self._recognize(decoded, done, share), decoded)
         if self.settings.use_cache:
             self._save(cache_path, tile)
         return tile
@@ -522,8 +541,17 @@ class TranscribeStage:
         artifacts: list[Path] = []
         warnings: list[str] = []
         transcripts = dict(context.project.transcripts)
-        for asset_id in requirements.get("transcripts", []):
+        requested = requirements.get("transcripts", [])
+        for number, asset_id in enumerate(requested):
             asset = asset_by_id[asset_id]
+
+            def report(fraction: float, number: int = number,
+                       name: str = Path(asset.path).name) -> None:
+                context.progress((number + fraction) / len(requested),
+                                 f"Whisper {number + 1}/{len(requested)}: {name} "
+                                 f"{fraction:.0%}")
+
+            engine.progress = report
             source = context.project.source_dir / asset.path
             stream = requirements.get("audio_streams", {}).get(asset_id)
             pan = effective_audio(asset).pan

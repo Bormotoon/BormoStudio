@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -65,6 +66,8 @@ class StageContext:
     project: Project
     settings: dict[str, Any]
     work_dir: Path
+    # progress(fraction 0..1, message): live progress for long stages.
+    progress: Callable[[float, str], None] = field(default=lambda _value, _message: None)
 
 
 class Stage(Protocol):

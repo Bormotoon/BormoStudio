@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections.abc import Sequence
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -52,6 +53,9 @@ def stage_registry() -> dict[str, Stage]:
     return {stage.id: stage for stage in stages}
 
 
+PROGRESS_INTERVAL_S = 10.0
+
+
 def _emit(event: StageEvent) -> None:
     print(event.to_json(), flush=True)
 
@@ -76,8 +80,22 @@ def execute(
             settings = loaded
     configure_from_settings(settings)
     _emit(StageEvent(EventType.START, stage_id))
+    events = sys.stdout  # stage code prints go to stderr; events stay on stdout
+    last = [0.0, -1.0]
+
+    def progress(value: float, message: str) -> None:
+        # At most one event per PROGRESS_INTERVAL_S: logs show life, not noise.
+        now = time.monotonic()
+        value = min(1.0, max(0.0, float(value)))
+        if now - last[0] < PROGRESS_INTERVAL_S and value < 1.0:
+            return
+        last[0], last[1] = now, value
+        print(StageEvent(EventType.PROGRESS, stage_id,
+                         {"value": round(value, 4), "message": message}).to_json(),
+              file=events, flush=True)
+
     with redirect_stdout(sys.stderr):
-        output = stage.run(StageContext(project, settings, output_dir))
+        output = stage.run(StageContext(project, settings, output_dir, progress))
     for key, value in output.project_changes.items():
         if not hasattr(project, key):
             raise ValueError(f"stage returned unknown project field: {key}")

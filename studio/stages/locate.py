@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -88,7 +88,7 @@ class LocateStage:
     def run(self, context: StageContext) -> StageOutput:
         output = context.work_dir / "stages" / "locate" / "positions.json"
         previous = _load(context.project.work_dir / "stages" / "locate" / "positions.json")
-        data = locate_project(context.project, context.settings, previous)
+        data = locate_project(context.project, context.settings, previous, context.progress)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
                           encoding="utf-8")
@@ -97,6 +97,7 @@ class LocateStage:
 
 def locate_project(
     project: Project, settings: dict[str, Any], previous: dict[str, Any] | None = None,
+    progress: Callable[[float, str], None] | None = None,
 ) -> dict[str, Any]:
     sync = settings.get("sync", {}) if isinstance(settings.get("sync"), dict) else {}
     transcribe = settings.get("transcribe", {})
@@ -148,8 +149,16 @@ def locate_project(
         # Everything else in one pass over the recorder, all cameras at once.
         rest = {key: value for key, value in windows.items() if value and key not in found}
         if rest:
+            count = sum(len(value) for value in rest.values())
+
+            def report(fraction: float, name: str = Path(recorder.path).name,
+                       cameras_count: int = len(rest), count: int = count) -> None:
+                if progress is not None:
+                    progress(fraction, f"{name}: {cameras_count} camera(s), {count} windows")
+
             for camera_id, (position, sharpness) in search_many(
-                    source, rest, None, pan=pan, stream=stream).items():
+                    source, rest, None, pan=pan, stream=stream, progress=report,
+                    duration_s=duration).items():
                 found[camera_id] = Located(position, sharpness, "full")
         for camera in cameras:
             if camera.id not in windows or not windows[camera.id]:
@@ -224,6 +233,7 @@ def camera_windows(camera: Path, duration_s: float) -> list[tuple[float, np.ndar
 def search_many(
     recorder: Path, cameras: dict[str, list[tuple[float, np.ndarray]]],
     span: tuple[float, float] | None, *, pan: str | None = None, stream: int | None = None,
+    progress: Callable[[float], None] | None = None, duration_s: float | None = None,
 ) -> dict[str, tuple[float, float]]:
     """Start of each camera in recorder time, decided by windows that agree.
 
@@ -241,11 +251,19 @@ def search_many(
     if not windows:
         return {}
     candidates: list[list[tuple[float, float]]] = []
+    batches = max(1, -(-len(windows) // BATCH_WINDOWS))
     # Window spectra are block-sized: a bounded batch keeps memory flat however
     # many cameras there are, at the cost of one more decode of the recorder.
     for first in range(0, len(windows), BATCH_WINDOWS):
+        batch = first // BATCH_WINDOWS
+
+        def report(fraction: float, batch: int = batch) -> None:
+            if progress is not None:
+                progress((batch + fraction) / batches)
+
         candidates += _collect(recorder, windows[first:first + BATCH_WINDOWS], span,
-                               pan=pan, stream=stream)
+                               pan=pan, stream=stream, progress=report,
+                               duration_s=duration_s)
     result: dict[str, tuple[float, float]] = {}
     for camera_id in cameras:
         votes = [(start, index, sharpness)
@@ -261,6 +279,7 @@ def search_many(
 def _collect(
     recorder: Path, windows: list[tuple[str, float, np.ndarray]],
     span: tuple[float, float] | None, *, pan: str | None, stream: int | None,
+    progress: Callable[[float], None] | None = None, duration_s: float | None = None,
 ) -> list[list[tuple[float, float]]]:
     """``(sharpness, camera start)`` candidates of each window over one recorder pass."""
     win_n = max(len(samples) for _c, _t, samples in windows)
@@ -272,8 +291,11 @@ def _collect(
         np.complex64) for _c, _t, samples in windows]
     candidates: list[list[tuple[float, float]]] = [[] for _ in windows]  # (sharpness, start)
     origin = span[0] if span else 0.0
+    length_s = (span[1] - span[0]) if span else duration_s
     for block_start, block in stream_blocks(recorder, span, block_n, win_n, pan=pan,
                                             stream=stream):
+        if progress is not None and length_s:
+            progress(min(1.0, block_start / SR / length_s))
         if block.size < SR:
             continue
         padded = np.zeros(block_n, np.float32)
@@ -287,7 +309,8 @@ def _collect(
             product = block_fft * spectrum
             product /= np.abs(product) + 1e-12
             cc = np.abs(np.fft.irfft(product, nfft))
-            floor = float(np.median(cc[:block_n])) or 1e-12
+            # The median of every 16th lag is the same noise floor at a fraction of the cost.
+            floor = float(np.median(cc[:block_n:16])) or 1e-12
             for offset in _peaks(cc[:limit], PEAKS_PER_BLOCK, samples.size // 2):
                 centre = origin + (block_start + offset + samples.size / 2) / SR
                 candidates[index].append((float(cc[offset]) / floor, centre - t))
@@ -321,9 +344,13 @@ def _vote(votes: list[tuple[float, int, float]]) -> tuple[float, float] | None:
 
 def _peaks(values: np.ndarray, count: int, separation: int) -> list[int]:
     """Indices of the ``count`` highest values at least ``separation`` apart."""
-    order = np.argsort(values)[::-1]
+    # Only the top few hundred values can matter: a partial partition instead
+    # of sorting a million correlation values for every window and block.
+    pool = min(values.size, count * 64)
+    top = np.argpartition(values, values.size - pool)[values.size - pool:]
+    order = top[np.argsort(values[top])[::-1]]
     chosen: list[int] = []
-    for index in order[: count * 64]:
+    for index in order:
         if all(abs(int(index) - other) >= separation for other in chosen):
             chosen.append(int(index))
             if len(chosen) == count:
