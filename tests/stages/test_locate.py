@@ -133,3 +133,16 @@ def test_untranscribed_recorder_parts_are_not_unknown_sound() -> None:
     assert sounds and all(40 <= at < 340 for at in sounds)
     head = next(cut for cut in edit.cuts if cut.reason == "head")
     assert head.start == 40.0
+
+
+def test_digital_silence_and_an_impulse_do_not_capture_the_search(tmp_path: Path) -> None:
+    # The sony_run recorder: a clap-like impulse near the start, then five
+    # minutes of exact zeros; every window's single best peak sat on the impulse.
+    recorder = _speech(900, 7)
+    recorder[int(19.4 * SR):int(19.402 * SR)] = 0.95
+    recorder[int(52 * SR):int(352 * SR)] = 0.0
+    camera = recorder[int(500 * SR):int(800 * SR)] * 0.2 + np.random.default_rng(8).standard_normal(
+        int(300 * SR)).astype(np.float32) * 0.01
+    rec_path, cam_path = _wav(tmp_path / "rec.wav", recorder), _wav(tmp_path / "cam.wav", camera)
+    found = locate_camera(cam_path, rec_path, None, 900.0, 300.0, None, 120.0)
+    assert found is not None and found.position_s == pytest.approx(500.0, abs=0.01)

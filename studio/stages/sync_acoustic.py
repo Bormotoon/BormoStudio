@@ -416,6 +416,12 @@ def acoustic_coarse_align(
     )
     if rec_track.size < 8 or cam_track.size < 8:
         return None
+    # Stretches of digital silence (a recorder that lost its input) make the
+    # median correlation ~0 and every peak in that block look "sharp"; a
+    # -90 dBFS noise floor keeps the sharpness ratio meaningful.
+    rng = np.random.default_rng(0)
+    rec_track = rec_track + rng.standard_normal(rec_track.size).astype(np.float32) * 3e-5
+    cam_track = cam_track + rng.standard_normal(cam_track.size).astype(np.float32) * 3e-5
 
     half = window_s / 2.0
     win_n = max(8, int(round(window_s * _REFINE_SR)))
