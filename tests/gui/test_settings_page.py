@@ -106,3 +106,18 @@ def test_settings_page_applies_preset(tmp_path: Path) -> None:
     assert "roughcut-tight" in page.status.text()
     page.close()
     app.processEvents()
+
+
+def test_wizard_downloads_models_into_project_settings(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UVF_MODELS_DIR", str(tmp_path / "models"))
+    app = QApplication.instance() or QApplication([])
+    wizard = SetupWizard(tmp_path)
+    assert wizard.downloads.model.currentData() == "whisper-large-v3-turbo"
+    wizard.downloads.model_installed.emit("whisper-large-v3-turbo", str(tmp_path / "w"))
+    wizard.downloads.model_installed.emit("gguf-gemma-4-e4b-it-q4", str(tmp_path / "g.gguf"))
+    assert wizard.whisper.currentData() == "large-v3-turbo"
+    wizard.accept()
+    settings = load_settings([tmp_path / "settings.yaml"])
+    assert settings.transcribe.model == "large-v3-turbo"
+    assert settings.llm.model_path == str(tmp_path / "g.gguf")
+    app.processEvents()

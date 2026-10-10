@@ -118,6 +118,14 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - Final checks for this continuation: 465 passed, 2 skipped on Python 3.10,
   Ruff passes, mypy passes on Python 3.12 (126 source files), diff whitespace passes.
 
+### First-run model step — 2026-10-10
+
+- The setup wizard has a Models page: it lists catalog models already present,
+  embeds the same verified/resumable downloader as Modules and models (preselected
+  Whisper large-v3-turbo), and Finish saves the chosen Whisper model and a
+  downloaded GGUF path to the project. Finish waits for a running download; Cancel
+  stops it and keeps the partial file for resume. Not run on a clean machine.
+
 ### Wide-shot policy — 2026-10-10
 
 - `@wide` in speaker cameras (Material page "Wide shot", `uvf cameras`, settings)

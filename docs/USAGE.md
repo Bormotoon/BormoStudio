@@ -82,6 +82,10 @@ GGUF in `llm/<repo>`. After a download in the GUI, the Whisper model name or GGU
 path is filled into project settings; saving applies it. `transcribe` loads a
 downloaded catalog model from disk and otherwise lets faster-whisper fetch it.
 
+First-run setup (**Set up processing**) includes a Models page with the same
+downloader: pick a Whisper model for the project and optionally download a Gemma
+GGUF; Finish stores both in the project settings.
+
 ## Packaged executable
 
 The PyInstaller executable exposes `--gui`, `--cli COMMAND ...` and the internal

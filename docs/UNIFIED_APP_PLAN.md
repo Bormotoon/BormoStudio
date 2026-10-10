@@ -897,7 +897,7 @@ compute:    {allow_cpu: false}
 | 3 | Паузы/дубли, решения, обзор резов на таймлайне, прослушивание без мастера, CFR-мастер с кроссфейдами есть | Реальное прослушивание, проверка слов на стыках, сквозной переэкспорт |
 | 4 | Mics/pyannote facade, выбор камер (GUI/CLI), политика общего плана, дорожки спикеров и multicam есть | Нелинейная mic-карта, модели и NLE приёмка |
 | 5 | Тексты/term-check, role routing, рилсы/аудиокэш, captions/editor, vision, fetch, channel/batch с уведомлениями и отменой загрузок, миграция настроек есть | Raw warp replay, разделы для непереносимых настроек, phase-wide reuse и Forge-регрессия |
-| 6 | Модули, загрузка YuNet/Light-ASD/Whisper/GGUF, LLM-детекторы монтажа, мастер настройки и Linux frozen есть | Приёмка LLM-монтажа на модели, загрузка в мастере первого запуска, измеряемое tuning, production installers |
+| 6 | Модули, загрузка YuNet/Light-ASD/Whisper/GGUF, LLM-детекторы монтажа, мастер настройки и Linux frozen есть | Приёмка LLM-монтажа на модели, измеряемое tuning, production installers |
 | 7 | Последующая дорожная карта | Не блокирует первоначальный локальный выпуск |
 
 **Ни одна фаза ещё не закрыта по всем критериям приёмки.** Текущая база —
@@ -1029,7 +1029,7 @@ release-база, её квалификация в этом окружении �
 
 - [x] LLM-детекторы монтажа (подача дубля, оговорки, начало разговора, смысловые паразиты) с JSON/evidence guardrails: только номера фраз и дословные цитаты, времена из слов транскрипта, отклонённое — в `llm-report.json`, по умолчанию предложения. Приёмка на реальной модели отдельно.
 - [ ] **Частично:** modules manager/recipes/GUI/progress/cancel/locks есть. Не доделано: полнота stage → install navigation и реальные ML установки/запуски.
-- [ ] **Частично:** YuNet/Light-ASD, Whisper (base…large-v3-turbo) и Gemma 4 GGUF загружаются из приложения: закреплённые ревизии, проверка хэшей, докачка, отмена, подстановка в настройки. Не доделано: шаг загрузки в мастере первого запуска.
+- [x] YuNet/Light-ASD, Whisper (base…large-v3-turbo) и Gemma 4 GGUF загружаются из приложения: закреплённые ревизии, проверка хэшей, докачка, отмена, подстановка в настройки; мастер первого запуска показывает скачанное, предлагает large-v3-turbo и сохраняет выбранные Whisper/GGUF в проект. Реальная загрузка на чистой машине — приёмка фазы.
 - [ ] **Частично:** Linux frozen, setup wizard и local install script (binary/link/desktop entry) есть; same-host installed smoke пройден. Не доделано: dependency bundling, clean-machine/Python 3.12 и Windows/macOS; бинарник требует rebuild после последних guards.
 - [ ] **Частично:** compute probe/recommendations есть. Не доделано: измеряемое memory/performance autotuning Whisper/llama.
 
