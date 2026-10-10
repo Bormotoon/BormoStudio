@@ -293,9 +293,14 @@ def search_many(
                                         stream=stream, progress=report,
                                         duration_s=duration_s))
     else:
+        import multiprocessing
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
-        with ProcessPoolExecutor(max_workers=min(workers, len(tasks))) as pool:
+        # spawn: the same behaviour on Linux, macOS and Windows, and no fork()
+        # of a process that may already run threads.
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=min(workers, len(tasks)),
+                                 mp_context=context) as pool:
             futures = {
                 pool.submit(_collect, recorder, batches[batch_index], piece, pan=pan,
                             stream=stream): batch_index
