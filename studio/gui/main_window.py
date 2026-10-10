@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
         self.navigation.addItem("Modules and models")
         self.navigation.addItem("Settings")
         self.settings_page = SettingsPage()
+        self.modules_page.model_installed.connect(self.settings_page.use_model)
         self.pages = QStackedWidget()
         self.material = MaterialPage()
         self.material.command_requested.connect(self._material_command)

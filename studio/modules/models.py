@@ -11,9 +11,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from studio.core.workspace import project_lock, published
 from studio.modules.cancellation import check_cancelled
+
+if TYPE_CHECKING:
+    from studio.modules.catalog import CatalogModel
+    from studio.modules.downloads import CatalogInstaller
 
 
 @dataclass(frozen=True)
@@ -57,12 +62,43 @@ class ModelManager:
             )
         )
 
+    def names(self) -> list[str]:
+        from studio.modules.catalog import CATALOG
+
+        return [*recipes(), *CATALOG]
+
+    def describe(self, name: str) -> dict[str, object]:
+        from studio.modules.catalog import CATALOG
+
+        entry = CATALOG.get(name)
+        return {
+            "name": name,
+            "kind": entry.kind if entry else "vision",
+            "title": entry.title if entry else name,
+            "size": entry.size if entry else None,
+            "installed": self.installed(name),
+            "path": str(self.path(name)),
+        }
+
+    def _catalog(self, name: str) -> tuple[CatalogModel, CatalogInstaller] | None:
+        from studio.modules.catalog import CATALOG
+        from studio.modules.downloads import CatalogInstaller
+
+        entry = CATALOG.get(name)
+        return (entry, CatalogInstaller(self.root)) if entry else None
+
     def path(self, name: str) -> Path:
+        found = self._catalog(name)
+        if found is not None:
+            return found[1].path(found[0])
         if name not in recipes():
-            raise ValueError(f"unknown vision model: {name}")
+            raise ValueError(f"unknown model: {name}")
         return self.root / recipes()[name].filename
 
     def installed(self, name: str) -> bool:
+        found = self._catalog(name)
+        if found is not None:
+            return found[1].installed(found[0])
         path = self.path(name)
         return path.is_file() and digest(path) == recipes()[name].sha256
 
@@ -73,6 +109,9 @@ class ModelManager:
         progress: Callable[[dict], None] = lambda event: None,
         cancelled: Callable[[], bool] = lambda: False,
     ) -> Path:
+        found = self._catalog(name)
+        if found is not None:
+            return found[1].install(found[0], progress=progress, cancelled=cancelled)
         path = self.path(name)
         recipe = recipes()[name]
         with project_lock(self.root):
@@ -125,3 +164,14 @@ def digest(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(block)
     return value.hexdigest()
+
+
+def whisper_model_source(model: str, manager: ModelManager | None = None) -> str:
+    """Local directory of a downloaded catalog Whisper model, else the name itself."""
+    from studio.modules.catalog import whisper_entry
+
+    entry = whisper_entry(model)
+    manager = manager or ModelManager()
+    if entry is not None and manager.installed(entry.name):
+        return str(manager.path(entry.name))
+    return model

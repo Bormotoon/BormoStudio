@@ -73,3 +73,23 @@ def test_setup_wizard_persists_selected_outputs(tmp_path: Path) -> None:
     assert settings.program.enabled
     assert not settings.reels.enabled
     app.processEvents()
+
+
+def test_downloaded_models_fill_settings_and_modules_list_catalog(tmp_path):
+    from studio.gui.modules import ModulesPage, _describe
+
+    app = QApplication.instance() or QApplication([])
+    page = SettingsPage()
+    page.load_project(tmp_path)
+    page.use_model("whisper-large-v3-turbo", str(tmp_path / "w"))
+    assert page.controls[("transcribe", "model")].text() == "large-v3-turbo"
+    page.use_model("gguf-gemma-4-e4b-it-q4", str(tmp_path / "m.gguf"))
+    assert page.controls[("llm", "model_path")].text() == str(tmp_path / "m.gguf")
+    assert page.dirty
+    modules = ModulesPage()
+    names = [modules.model.itemData(index) for index in range(modules.model.count())]
+    assert names[:2] == ["yunet", "light-asd"] and "whisper-large-v3" in names
+    assert _describe({"name": "x", "phase": "download", "bytes": 10**9, "total": 4 * 10**9}) == (
+        "x: download 1.00 of 4.00 GB"
+    )
+    assert app is not None

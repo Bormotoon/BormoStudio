@@ -477,7 +477,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps({"type": "installation_progress", **event}), flush=True)
 
     if args.command == "models":
-        from studio.modules.models import ModelManager, recipes
+        from studio.modules.models import ModelManager
 
         manager = ModelManager()
         if args.action == "install":
@@ -501,14 +501,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             print(
                 json.dumps(
                     {
-                        "models": [
-                            {
-                                "name": name,
-                                "installed": manager.installed(name),
-                                "path": str(manager.path(name)),
-                            }
-                            for name in recipes()
-                        ]
+                        "models": [manager.describe(name) for name in manager.names()]
                     }
                 )
             )

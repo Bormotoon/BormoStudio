@@ -88,8 +88,10 @@ class FasterWhisperBackend:
         if self._model is None:
             from faster_whisper import WhisperModel  # type: ignore[import-not-found]
 
+            from studio.modules.models import whisper_model_source
+
             self._model = WhisperModel(
-                self.settings.model,
+                whisper_model_source(self.settings.model),
                 device=self.device,
                 compute_type=self.compute_type,
             )

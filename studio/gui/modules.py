@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from PyQt6.QtCore import QProcess
+from PyQt6.QtCore import QProcess, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QLabel,
@@ -19,10 +19,13 @@ from studio.core.launch import python_command
 
 
 class ModulesPage(QWidget):
+    model_installed = pyqtSignal(str, str)
+
     def __init__(self) -> None:
         super().__init__()
         self.process = QProcess(self)
         self.buffer = ""
+        self.installed_result: dict | None = None
         self.cancel_directory = None
         self.cancel_file = None
         self.cancel_button = QPushButton("Cancel installation")
@@ -37,19 +40,31 @@ class ModulesPage(QWidget):
         self.module = QComboBox()
         self.module.addItems(["vision", "diarization", "youtube"])
         self.module.setAccessibleName("Optional module")
+        from studio.modules.catalog import CATALOG
+
         self.model = QComboBox()
-        self.model.addItems(["yunet", "light-asd"])
-        self.model.setAccessibleName("Vision model")
+        self.model.addItem("YuNet face detector (vision)", "yunet")
+        self.model.addItem("Light-ASD active speaker (vision)", "light-asd")
+        for entry in CATALOG.values():
+            if entry.name != "whisper-tiny":
+                self.model.addItem(entry.title, entry.name)
+        self.model.setAccessibleName("Model to download")
         install = QPushButton("Install selected module")
         install.clicked.connect(lambda: self.start("modules", "install", self.module.currentText()))
         download = QPushButton("Download selected model")
-        download.clicked.connect(lambda: self.start("models", "install", self.model.currentText()))
+        download.clicked.connect(
+            lambda: self.start("models", "install", str(self.model.currentData()))
+        )
         inspect = QPushButton("Show installed modules")
         inspect.clicked.connect(lambda: self.start("modules", "list"))
         models = QPushButton("Check installed models")
         models.clicked.connect(lambda: self.start("models", "list"))
         self.actions = [install, download, inspect, models]
-        self.status = QLabel("Install vision, then YuNet and Light-ASD for automatic framing.")
+        self.status = QLabel(
+            "Download Whisper and Gemma GGUF models here; downloads resume after "
+            "cancellation and are verified against pinned checksums. Install vision, "
+            "then YuNet and Light-ASD for automatic framing."
+        )
         self.status.setWordWrap(True)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
@@ -74,6 +89,7 @@ class ModulesPage(QWidget):
             return
         self.log.clear()
         self.buffer = ""
+        self.installed_result = None
         self.cancel_directory = tempfile.TemporaryDirectory(prefix="uvf-install-")
         self.cancel_file = Path(self.cancel_directory.name) / "cancel"
         self.cancel_button.setEnabled(action == "install")
@@ -102,13 +118,16 @@ class ModulesPage(QWidget):
                 event = json.loads(line)
             except ValueError:
                 continue
+            if isinstance(event, dict) and {"name", "path"} <= event.keys() and "type" not in event:
+                self.installed_result = event
+                continue
             if not isinstance(event, dict) or event.get("type") != "installation_progress":
                 continue
             percent = event.get("percent")
             self.progress.setRange(0, 100 if percent is not None else 0)
             if percent is not None:
                 self.progress.setValue(percent)
-            self.status.setText(f"{event.get('name', '')}: {event.get('phase', '')}")
+            self.status.setText(_describe(event))
 
     def _finished(self, code: int, _status: QProcess.ExitStatus) -> None:
         self._output()
@@ -121,6 +140,11 @@ class ModulesPage(QWidget):
             if code == 130
             else "Installation failed; see log."
         )
+        if code == 0 and self.installed_result is not None:
+            self.model_installed.emit(
+                str(self.installed_result["name"]), str(self.installed_result["path"])
+            )
+            self.status.setText(f"Completed: {self.installed_result['path']}")
         self._cleanup_cancel()
         for button in self.actions:
             button.setEnabled(True)
@@ -144,3 +168,11 @@ class ModulesPage(QWidget):
         if self.cancel_directory is not None:
             self.cancel_directory.cleanup()
             self.cancel_directory = None
+
+
+def _describe(event: dict) -> str:
+    text = f"{event.get('name', '')}: {event.get('phase', '')}"
+    done, total = event.get("bytes"), event.get("total")
+    if isinstance(done, int) and isinstance(total, int) and total:
+        text += f" {done / 1e9:.2f} of {total / 1e9:.2f} GB"
+    return text

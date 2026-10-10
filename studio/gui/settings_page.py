@@ -228,6 +228,19 @@ class SettingsPage(QWidget):
         self._snapshot = self._state()
         return True
 
+    def use_model(self, name: str, path: str) -> None:
+        """Fill the matching field after a catalog download; saving stays explicit."""
+        from studio.modules.catalog import CATALOG
+
+        entry = CATALOG.get(name)
+        if entry is None:
+            return
+        key = ("transcribe", "model") if entry.kind == "whisper" else ("llm", "model_path")
+        field = self.controls[key]
+        if isinstance(field, QLineEdit):
+            field.setText(entry.whisper_name if entry.kind == "whisper" else path)
+        self.status.setText(f"{entry.title} is ready; save settings to use it in this project.")
+
     def _browse_llm(self, field: QLineEdit, title: str) -> None:
         path, _filter = QFileDialog.getOpenFileName(
             self,
