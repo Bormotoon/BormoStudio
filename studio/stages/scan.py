@@ -55,7 +55,7 @@ class ScanStage:
             for asset in project.assets
             if asset.manual.get("overrides")
         }
-        return stable_fingerprint("scan-v6", identities, overrides,
+        return stable_fingerprint("scan-v7", identities, overrides,
                                   select_settings(settings, self.settings_keys))
 
     def run(self, context: StageContext) -> StageOutput:

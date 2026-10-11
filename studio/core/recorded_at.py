@@ -1,6 +1,10 @@
 """When a file started recording, from whatever the device left behind.
 
-Sources, best first: the container's ``creation_time`` (QuickTime/DJI, UTC),
+Sources, best first: the QuickTime ``com.apple.quicktime.creationdate`` (the
+recording time; DJI and Canon keep it when files are copied), the container's
+``creation_time`` (QuickTime/DJI, UTC; often the time of copying or ingest:
+on sony_run it was hours after the recording and its deltas spread over
+10 000 s),
 a Broadcast WAV ``bext`` chunk (origination date/time and the sample count
 since midnight), a timestamp in the file name (``2026-10-05_103823465``,
 ``20261005_103823``) and finally ``mtime − duration``. Clocks of different
@@ -26,6 +30,9 @@ _NAME_PATTERNS = (
 def recorded_at(path: Path, tags: dict[str, str], duration_s: float,
                 sample_rate: int | None = None) -> dict[str, Any] | None:
     """``{"start": ISO, "epoch": seconds, "source": ..., "precision": seconds}``."""
+    recorded = _iso(tags.get("com.apple.quicktime.creationdate", ""))
+    if recorded is not None:
+        return _result(recorded, "quicktime_creationdate", 1.0)
     created = _iso(tags.get("creation_time", ""))
     if created is not None:
         return _result(created, "creation_time", 1.0)
