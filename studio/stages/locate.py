@@ -9,6 +9,14 @@ match gives the offset between the group's clock and the recorder's
 ``recorded_at + delta`` (±``sync.locate_search_s``, then ±15 min, then the
 whole file). ``prepare`` turns the positions into the recorder ranges that
 need a transcript.
+
+``recorded_at`` is often the time the files were copied, not recorded: on
+sony_run the deltas of one camera's clips spread over 10 000 s and a narrow
+search around such a prediction accepted weak false peaks. So a group delta
+is kept only when clips found independently agree on it, a narrow search must
+pass a stricter vote than the full pass, and every position must respect the
+order of the camera's files; a clip that breaks it is searched again between
+its neighbours.
 """
 
 from __future__ import annotations
@@ -49,6 +57,19 @@ PEAKS_PER_BLOCK = 3
 KEEP_CANDIDATES = 24
 AGREE_S = 0.1
 WIDE_SEARCH_S = 900.0
+# A narrow search (around a prediction or between neighbouring files) offers
+# few competing peaks, so a weak false one wins easily: it needs half of the
+# clip's windows and a sharper peak than the full pass. On sony_run the false
+# narrow matches peaked at 51-61, the true ones at 64-80 and above.
+STRICT_MIN_SHARPNESS = 62.0
+# Clips of one group agree on the clock delta within this (two thirds of them
+# at least); only then is it a hint. On sony_run the recording-time deltas of
+# one camera spread over 14-16 s in 3.5 h (the recorder loses samples), and
+# two Canon clips were 240-270 s off; the copy times spread over 10 000 s.
+HINT_AGREE_S = 30.0
+HINT_MAJORITY = 2 / 3
+# Consecutive files of one camera may overlap by this much in recorder time.
+ORDER_TOLERANCE_S = 2.0
 DITHER = 3e-5  # about -90 dBFS
 BATCH_WINDOWS = 40
 
@@ -66,7 +87,7 @@ class LocateStage:
     after: tuple[str, ...] = ("scan",)
     # Settings that can change this stage's result; they alone enter its fingerprint.
     settings_keys: tuple[str, ...] = (
-        "sync.mode", "sync.locate_search_s", "transcribe.recorder_scope")
+        "sync.mode", "sync.placement", "sync.locate_search_s", "transcribe.recorder_scope")
     # compute.cpu_workers changes speed, not the result: it stays out of the fingerprint.
     gpu = GpuUse.NONE
 
@@ -84,7 +105,7 @@ class LocateStage:
              if (project.source_dir / asset.path).is_file() else None)
             for asset in project.assets if asset.role in {AssetRole.CAMERA, AssetRole.RECORDER}
         ]
-        return stable_fingerprint("locate-v2", sources,
+        return stable_fingerprint("locate-v3", sources,
                                   select_settings(settings, self.settings_keys))
 
     def run(self, context: StageContext) -> StageOutput:
@@ -107,12 +128,17 @@ def locate_project(
     cameras = [asset for asset in project.assets if asset.role is AssetRole.CAMERA]
     recorders = [asset for asset in project.assets if asset.role is AssetRole.RECORDER]
     data: dict[str, Any] = {"schema_version": 2, "positions": {}, "missing": {}, "deltas": {}}
-    if scope == "full" or sync.get("mode") == "camera" or not cameras or not recorders:
+    placement = sync.get("placement", "text")
+    if (scope == "full" or sync.get("mode") == "camera" or placement == "text"
+            or not cameras or not recorders):
         data["skipped"] = "nothing to locate" if not cameras or not recorders else (
-            "transcribe.recorder_scope=full" if scope == "full" else "sync.mode=camera")
+            "transcribe.recorder_scope=full" if scope == "full"
+            else "sync.mode=camera" if sync.get("mode") == "camera"
+            else "sync.placement=text: cameras are placed by their speech")
         return data
     search_s = float(sync.get("locate_search_s", 120.0))
-    hints = (previous or {}).get("deltas", {})
+    previous_positions = (previous or {}).get("positions", {})
+    group_hints = (previous or {}).get("deltas", {})
     workers = cpu_workers(settings)
     windows = {
         camera.id: camera_windows(project.source_dir / camera.path, _duration(camera))
@@ -131,9 +157,12 @@ def locate_project(
         pan = effective_audio(recorder).pan
         stream = info.get("audio_stream_index")
         found: dict[str, Located] = {}
-        # A clock offset learned on an earlier run narrows the search per camera.
+        # A clock offset learned on an earlier run narrows the search per camera:
+        # the clip's own one first, else one its group agreed on.
         for camera in cameras:
-            delta = hints.get(f"{_group(camera)}|{recorder.id}")
+            own = previous_positions.get(camera.id, {}).get(recorder.id, {}).get("delta_s")
+            delta = own if own is not None else group_hints.get(
+                f"{_group(camera)}|{recorder.id}")
             cam_epoch = epoch(camera.manual.get("media_info", {}))
             if camera.id not in windows or not windows[camera.id] or None in (
                     delta, cam_epoch, rec_epoch):
@@ -145,7 +174,8 @@ def locate_project(
                 if span[1] <= span[0]:
                     continue
                 result = search_many(source, {camera.id: windows[camera.id]}, span,
-                                     pan=pan, stream=stream, workers=workers).get(camera.id)
+                                     pan=pan, stream=stream, workers=workers,
+                                     strict=True).get(camera.id)
                 if result is not None:
                     found[camera.id] = Located(result[0], result[1], name)
                     break
@@ -163,7 +193,10 @@ def locate_project(
                     source, rest, None, pan=pan, stream=stream, progress=report,
                     duration_s=duration, workers=workers).items():
                 found[camera_id] = Located(position, sharpness, "full")
-        _search_after_previous_files(
+        rejected = _out_of_order(cameras, found)
+        for camera_id in rejected:
+            del found[camera_id]
+        _search_between_files(
             cameras, windows, found, source, duration, search_s, pan=pan, stream=stream,
             workers=workers,
         )
@@ -173,55 +206,136 @@ def locate_project(
             located = found.get(camera.id)
             if located is None:
                 data["missing"].setdefault(camera.id, {})[recorder.id] = (
-                    "no acoustic match agreed by two windows")
+                    rejected[camera.id] if camera.id in rejected
+                    else "no acoustic match agreed by two windows")
                 continue
             entry = {"position_s": round(located.position_s, 3),
                      "sharpness": round(located.sharpness, 1), "method": located.method}
             cam_epoch = epoch(camera.manual.get("media_info", {}))
             if cam_epoch is not None and rec_epoch is not None:
-                delta = rec_epoch + located.position_s - cam_epoch
-                entry["delta_s"] = round(delta, 3)
-                data["deltas"][f"{_group(camera)}|{recorder.id}"] = round(delta, 3)
+                entry["delta_s"] = round(rec_epoch + located.position_s - cam_epoch, 3)
             data["positions"].setdefault(camera.id, {})[recorder.id] = entry
+        data["deltas"].update(_group_deltas(cameras, data["positions"], recorder.id))
     for camera_id in list(data["missing"]):
         if camera_id in data["positions"]:  # found in another recorder
             del data["missing"][camera_id]
     return data
 
 
-def _search_after_previous_files(
+def _group_deltas(
+    cameras: list[Asset], positions: dict[str, Any], recorder_id: str,
+) -> dict[str, float]:
+    """The clock delta of each group whose clips agree on it.
+
+    ``recorded_at`` may be the copy time of the file rather than its recording
+    time; then every clip has its own delta and a group value is a false hint.
+    Only clips found by the unconstrained pass vote.
+    """
+    by_group: dict[str, list[float]] = {}
+    for camera in cameras:
+        entry = positions.get(camera.id, {}).get(recorder_id, {})
+        if entry.get("method") == "full" and entry.get("delta_s") is not None:
+            by_group.setdefault(_group(camera), []).append(float(entry["delta_s"]))
+    result = {}
+    for group, values in by_group.items():
+        middle = float(np.median(values))
+        agree = [value for value in values if abs(value - middle) <= HINT_AGREE_S]
+        if len(agree) >= 2 and len(agree) >= HINT_MAJORITY * len(values):
+            result[f"{group}|{recorder_id}"] = round(float(np.median(agree)), 3)
+    return result
+
+
+def _out_of_order(cameras: list[Asset], found: dict[str, Located]) -> dict[str, str]:
+    """Positions that contradict the order of their camera's files, with the reason.
+
+    Files of one camera are recorded one after another, so their positions in
+    a recorder must follow their natural name order without overlapping. The
+    largest set of clips that does is kept (ties go to sharper matches); the
+    others are false peaks and are searched again between their neighbours.
+    """
+    rejected: dict[str, str] = {}
+    for members in _groups(cameras).values():
+        chain = [camera for camera in members if camera.id in found]
+        if len(chain) < 2:
+            continue
+        # Longest chain in name order whose starts follow each other's ends.
+        best: list[tuple[float, int]] = []  # (score, previous index)
+        for index, camera in enumerate(chain):
+            weight = 1.0 + min(found[camera.id].sharpness, 999.0) / 1000.0
+            score, link = weight, -1
+            for before in range(index):
+                if found[camera.id].position_s >= (found[chain[before].id].position_s
+                                                   + _duration(chain[before])
+                                                   - ORDER_TOLERANCE_S):
+                    if best[before][0] + weight > score:
+                        score, link = best[before][0] + weight, before
+            best.append((score, link))
+        keep: set[str] = set()
+        index = max(range(len(chain)), key=lambda item: best[item][0])
+        while index >= 0:
+            keep.add(chain[index].id)
+            index = best[index][1]
+        for camera in chain:
+            if camera.id not in keep:
+                rejected[camera.id] = (
+                    f"match at {found[camera.id].position_s:.1f} s contradicts the order "
+                    "of the camera's files")
+    return rejected
+
+
+def _groups(cameras: list[Asset]) -> dict[str, list[Asset]]:
+    by_group: dict[str, list[Asset]] = {}
+    for camera in cameras:
+        by_group.setdefault(_group(camera), []).append(camera)
+    return {group: sorted(members, key=lambda item: _natural(str(item.path)))
+            for group, members in by_group.items()}
+
+
+def _search_between_files(
     cameras: list[Asset], windows: dict[str, list[tuple[float, np.ndarray]]],
     found: dict[str, Located], source: Path, duration: float, search_s: float, *,
     pan: str | None, stream: int | None, workers: int,
 ) -> None:
-    """A second, narrow search for clips the full pass missed.
+    """A second, narrow search for clips the full pass missed or misplaced.
 
     Files of one camera are often consecutive: split at a size limit (DJI and
     Canon at 4 GB) or recorded one after another. That is only a hint — pauses
-    happen — so the clip is searched around the end of the previous file of
-    the same camera, and placed only when its windows agree acoustically. In a
-    narrow range far fewer false peaks compete with a weak real match.
+    happen — so the clip is searched after the end of the previous file of the
+    same camera and before the start of the next one, and placed only when its
+    windows pass the strict vote. In a narrow range far fewer false peaks
+    compete with a weak real match.
     """
-    by_group: dict[str, list[Asset]] = {}
-    for camera in cameras:
-        by_group.setdefault(_group(camera), []).append(camera)
     changed = True
     while changed:  # a clip found this way can lead to the next one
         changed = False
-        for members in by_group.values():
-            ordered = sorted(members, key=lambda item: _natural(str(item.path)))
-            for previous, camera in zip(ordered, ordered[1:], strict=False):
-                if camera.id in found or previous.id not in found or not windows.get(camera.id):
+        for ordered in _groups(cameras).values():
+            for index, camera in enumerate(ordered):
+                if camera.id in found or not windows.get(camera.id):
                     continue
-                expected = found[previous.id].position_s + _duration(previous)
-                span = (max(0.0, expected - search_s),
-                        min(duration, expected + _duration(camera) + search_s))
+                before = next((item for item in reversed(ordered[:index])
+                               if item.id in found), None)
+                after = next((item for item in ordered[index + 1:] if item.id in found), None)
+                if before is None and after is None:
+                    continue
+                if before is not None:
+                    expected = found[before.id].position_s + _duration(before)
+                    low = expected - search_s
+                    high = (found[after.id].position_s + search_s if after is not None
+                            else expected + _duration(camera) + search_s)
+                    method = "between_files" if after is not None else "after_previous_file"
+                else:
+                    assert after is not None
+                    low = found[after.id].position_s - _duration(camera) - search_s
+                    high = found[after.id].position_s + search_s
+                    method = "before_next_file"
+                span = (max(0.0, low), min(duration, high))
                 if span[1] <= span[0]:
                     continue
                 result = search_many(source, {camera.id: windows[camera.id]}, span, pan=pan,
-                                     stream=stream, workers=workers).get(camera.id)
+                                     stream=stream, workers=workers,
+                                     strict=True).get(camera.id)
                 if result is not None:
-                    found[camera.id] = Located(result[0], result[1], "after_previous_file")
+                    found[camera.id] = Located(result[0], result[1], method)
                     changed = True
 
 
@@ -284,9 +398,12 @@ def search_many(
     recorder: Path, cameras: dict[str, list[tuple[float, np.ndarray]]],
     span: tuple[float, float] | None, *, pan: str | None = None, stream: int | None = None,
     progress: Callable[[float], None] | None = None, duration_s: float | None = None,
-    workers: int = 1,
+    workers: int = 1, strict: bool = False,
 ) -> dict[str, tuple[float, float]]:
     """Start of each camera in recorder time, decided by windows that agree.
+
+    ``strict`` is for narrow searches: the start needs half of the clip's
+    windows and a peak of ``STRICT_MIN_SHARPNESS``.
 
     Each window keeps its strongest peaks over the whole search, not just one:
     a recorder with an isolated impulse (a clap, a dropped connector) pulls
@@ -364,7 +481,9 @@ def search_many(
                  for index, (owner, _t, _s) in enumerate(windows) if owner == camera_id
                  for sharpness, start in sorted(candidates[index], reverse=True)[:KEEP_CANDIDATES]
                  if sharpness >= CANDIDATE_SHARPNESS]
-        decided = _vote(votes)
+        count = sum(1 for owner, _t, _s in windows if owner == camera_id)
+        decided = (_vote(votes, (count + 1) // 2, STRICT_MIN_SHARPNESS)
+                   if strict else _vote(votes))
         if decided is not None:
             result[camera_id] = decided
     return result
@@ -413,7 +532,10 @@ def _collect(
     return candidates
 
 
-def _vote(votes: list[tuple[float, int, float]]) -> tuple[float, float] | None:
+def _vote(
+    votes: list[tuple[float, int, float]], min_windows: int = 2,
+    min_sharpness: float = MIN_SHARPNESS,
+) -> tuple[float, float] | None:
     """The start most windows agree on (± ``AGREE_S``), with its best sharpness."""
     votes.sort()
     best: tuple[int, float, float, float] | None = None  # windows, total, start, sharpness
@@ -429,7 +551,7 @@ def _vote(votes: list[tuple[float, int, float]]) -> tuple[float, float] | None:
         windows = len(strongest)
         total = sum(sharp for sharp, _start in strongest.values())
         top = max(sharp for sharp, _start in strongest.values())
-        if windows >= 2 and top >= MIN_SHARPNESS and (
+        if windows >= max(2, min_windows) and top >= min_sharpness and (
                 best is None or (windows, total) > (best[0], best[1])):
             start = float(np.median([value for _sharp, value in strongest.values()]))
             best = (windows, total, start, top)

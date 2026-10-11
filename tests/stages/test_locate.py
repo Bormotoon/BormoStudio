@@ -14,6 +14,7 @@ from studio.stages.roughcut import build_edit_list
 from studio.stages.transcribe import TranscribeSettings, WhisperEngine, tiles_for
 
 SR = 16000
+ACOUSTIC = {"sync": {"placement": "acoustic"}}
 
 
 def _speech(seconds: float, seed: int) -> np.ndarray:
@@ -194,7 +195,7 @@ def test_next_file_is_searched_after_the_previous_but_never_placed_blindly(
         return {"dji_0926": (4850.5, 60.0)} if confirmed else {}
 
     monkeypatch.setattr(module, "search_many", fake_search)
-    data = module.locate_project(project, {})
+    data = module.locate_project(project, ACOUSTIC)
     assert spans[-1][0] == ["dji_0926"]
     # From 2 min before the previous file's end, clipped to the recorder's end.
     assert spans[-1][1] == pytest.approx((3911.0 + 939.0 - 120.0, 5000.0))
@@ -203,3 +204,114 @@ def test_next_file_is_searched_after_the_previous_but_never_placed_blindly(
         assert entry["method"] == "after_previous_file" and entry["position_s"] == 4850.5
     else:
         assert "dji_0926" not in data["positions"] and "dji_0926" in data["missing"]
+
+
+def _dji(name: str, duration: float, recorded_at: float | None = None) -> Asset:
+    info: dict[str, object] = {"duration_s": duration, "audio_channels": 2}
+    if recorded_at is not None:
+        info["recorded_at"] = {"epoch": recorded_at}
+    return Asset(name.lower(), Path(f"{name}.mov"), AssetKind.VIDEO, AssetRole.CAMERA,
+                 group_id="dji", manual={"media_info": info})
+
+
+def test_a_match_against_the_file_order_is_searched_again_between_neighbours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # sony_run: mvi-0856 sat on a sharp false peak at 24 s although its
+    # neighbours were at 6797 s and 7596 s.
+    from studio.core.project import Project
+    from studio.stages import locate as module
+
+    recorder = _asset("rec", AssetRole.RECORDER, 9000.0)
+    project = Project(tmp_path, tmp_path / "_studio", [
+        _dji("DJI_0854", 900.0), _dji("DJI_0855", 700.0), _dji("DJI_0856", 60.0),
+        _dji("DJI_0857", 600.0), recorder])
+    monkeypatch.setattr(module, "camera_windows", lambda path, duration: [(1.0, np.zeros(8))])
+    calls = []
+
+    def fake_search(source, cameras, span, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append((sorted(cameras), span, kwargs.get("strict", False)))
+        if span is None:
+            return {"dji_0854": (5800.0, 70.0), "dji_0855": (6797.0, 66.0),
+                    "dji_0856": (24.6, 225.0),
+                    "dji_0857": (7596.0, 98.0)}
+        return {"dji_0856": (7510.0, 80.0)}
+
+    monkeypatch.setattr(module, "search_many", fake_search)
+    data = module.locate_project(project, ACOUSTIC)
+    names, span, strict = calls[-1]
+    assert names == ["dji_0856"] and strict
+    assert span == pytest.approx((6797.0 + 700.0 - 120.0, 7596.0 + 120.0))
+    entry = data["positions"]["dji_0856"]["rec"]
+    assert entry["method"] == "between_files" and entry["position_s"] == 7510.0
+
+
+def test_an_out_of_order_match_without_a_better_place_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from studio.core.project import Project
+    from studio.stages import locate as module
+
+    recorder = _asset("rec", AssetRole.RECORDER, 9000.0)
+    project = Project(tmp_path, tmp_path / "_studio", [
+        _dji("DJI_0842", 30.0), _dji("DJI_0845", 500.0), _dji("DJI_0846", 900.0), recorder])
+    monkeypatch.setattr(module, "camera_windows", lambda path, duration: [(1.0, np.zeros(8))])
+
+    def fake_search(source, cameras, span, **kwargs):  # type: ignore[no-untyped-def]
+        if span is None:
+            return {"dji_0842": (8367.0, 56.0), "dji_0845": (415.0, 76.0),
+                    "dji_0846": (974.0, 132.0)}
+        return {}
+
+    monkeypatch.setattr(module, "search_many", fake_search)
+    data = module.locate_project(project, ACOUSTIC)
+    assert "dji_0842" not in data["positions"]
+    assert "order" in data["missing"]["dji_0842"]["rec"]
+    assert set(data["positions"]) == {"dji_0845", "dji_0846"}
+
+
+def test_a_group_delta_is_a_hint_only_when_its_clips_agree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # recorded_at is the copy time on sony_run: every clip has its own delta.
+    from studio.core.project import Project
+    from studio.stages import locate as module
+
+    recorder = Asset("rec", Path("rec.wav"), AssetKind.AUDIO, AssetRole.RECORDER,
+                     manual={"media_info": {"duration_s": 9000.0,
+                                            "recorded_at": {"epoch": 1000.0}}})
+    cameras = [_dji("DJI_0001", 600.0, 90000.0), _dji("DJI_0002", 600.0, 90040.0),
+               _dji("DJI_0003", 600.0, 90080.0)]
+    project = Project(tmp_path, tmp_path / "_studio", [*cameras, recorder])
+    monkeypatch.setattr(module, "camera_windows", lambda path, duration: [(1.0, np.zeros(8))])
+    copied = {"dji_0001": (100.0, 150.0), "dji_0002": (900.0, 150.0),
+              "dji_0003": (1700.0, 150.0)}
+    monkeypatch.setattr(module, "search_many",
+                        lambda source, cams, span, **kwargs: {
+                            key: value for key, value in copied.items() if key in cams})
+    data = module.locate_project(project, ACOUSTIC)
+    assert data["deltas"] == {}
+    deltas = {key: value["rec"]["delta_s"] for key, value in data["positions"].items()}
+    assert len(set(deltas.values())) == 3  # one per clip
+    agreeing = {"dji_0001": (100.0, 150.0), "dji_0002": (140.0, 150.0),
+                "dji_0003": (180.0, 150.0)}
+    copied.clear()
+    copied.update(agreeing)
+    project = Project(tmp_path, tmp_path / "_studio", [
+        _dji("DJI_0001", 30.0, 90000.0), _dji("DJI_0002", 30.0, 90040.0),
+        _dji("DJI_0003", 30.0, 90080.0), recorder])
+    data = module.locate_project(project, ACOUSTIC)
+    assert list(data["deltas"]) == ["dji|rec"]
+    # One clip far off (sony_run mvi-0845: 240 s) does not cancel the others' hint.
+    copied["dji_0003"] = (430.0, 150.0)
+    data = module.locate_project(project, ACOUSTIC)
+    assert data["deltas"]["dji|rec"] == pytest.approx(1000.0 + 100.0 - 90000.0)
+
+
+def test_a_narrow_search_needs_a_stricter_vote() -> None:
+    from studio.stages.locate import STRICT_MIN_SHARPNESS, _vote
+
+    weak = [(12162.6, 0, 60.8), (12162.62, 1, 55.0)]
+    assert _vote(list(weak)) is not None
+    assert _vote(list(weak), 2, STRICT_MIN_SHARPNESS) is None
+    assert _vote([(10.0, 0, 90.0), (10.01, 1, 80.0)], 3) is None
