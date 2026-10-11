@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from studio.core.project import Asset, Project
@@ -17,6 +18,7 @@ def plan_sessions(
     check: Callable[[Asset, Asset, AlignmentMap], AlignmentMap] | None = None,
     search_ranges: dict[tuple[str, str], tuple[float, float]] | None = None,
     text_only: set[tuple[str, str]] | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> tuple[list[SourcePlacement], dict[tuple[str, str], AlignmentMap], dict[str, str]]:
     """Fit every camera to the recorders and place all files on one timeline.
 
@@ -53,8 +55,11 @@ def plan_sessions(
             return None
         return result
 
-    for camera in cameras:
-        for recorder in recorders:
+    total = len(cameras) * len(recorders)
+    for index, camera in enumerate(cameras):
+        for offset, recorder in enumerate(recorders):
+            if progress is not None:
+                progress(index * len(recorders) + offset, total, Path(camera.path).name)
             result = fit(camera, recorder)
             if result is not None:
                 fits[camera.id, recorder.id] = result

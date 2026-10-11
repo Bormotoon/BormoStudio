@@ -176,7 +176,8 @@ def _run_complex(context: StageContext) -> StageOutput:
     context.work_dir.mkdir(parents=True, exist_ok=True)
     with selected_media(context.project, context.work_dir,
                         context.settings.get("transcribe", {}).get("audio_streams")) as project:
-        return _render_complex(StageContext(project, context.settings, context.work_dir))
+        return _render_complex(StageContext(project, context.settings, context.work_dir,
+                                            context.progress))
 
 
 def _render_complex(context: StageContext) -> StageOutput:
@@ -247,9 +248,14 @@ def _render_complex(context: StageContext) -> StageOutput:
                 stage_warnings.append(f"{Path(target.path).name}: {checked.report['complex']}")
         return checked.alignment
 
+    # Progress: fitting the camera-recorder pairs is most of the work (0-60 %),
+    # rendering a voice per camera next (60-90 %), the checks last.
+    def fitting(done: int, total: int, name: str) -> None:
+        context.progress(0.6 * done / max(1, total), f"fitting {done + 1}/{total}: {name}")
+
     placements, fits, rejected = plan_sessions(
         project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
-        check=check, search_ranges=search_ranges, text_only=text_only,
+        check=check, search_ranges=search_ranges, text_only=text_only, progress=fitting,
     )
     left_out = [camera for camera in cameras
                 if not any(target == camera.id for target, _ in fits)]
@@ -260,7 +266,9 @@ def _render_complex(context: StageContext) -> StageOutput:
         cameras = [camera for camera in cameras if camera not in left_out]
         camera_transcripts = [transcripts[camera.id] for camera in cameras]
     repair_sources = {}
-    for camera, candidate in zip(cameras, camera_transcripts, strict=True):
+    for number, (camera, candidate) in enumerate(zip(cameras, camera_transcripts, strict=True)):
+        context.progress(0.6 + 0.3 * number / max(1, len(cameras)),
+                         f"rendering voice {number + 1}/{len(cameras)}: {Path(camera.path).name}")
         available = [asset for asset in recorders if (camera.id, asset.id) in fits]
         recorder = available[0]
         transcript = transcripts[recorder.id]
@@ -369,6 +377,7 @@ def _render_complex(context: StageContext) -> StageOutput:
         for asset_id, path in ambience.items():
             outputs[f"ambience:{asset_id}"] = [path]
         outputs["audio_processing"] = [processed[-1]]
+    context.progress(0.9, "checking rendered voices")
     if sync.get("self_check", "off") != "off":
         from studio.stages.sync_check_step import check_voices
 
@@ -462,7 +471,8 @@ def _run_camera_placement(context: StageContext) -> StageOutput:
     context.work_dir.mkdir(parents=True, exist_ok=True)
     with selected_media(context.project, context.work_dir,
                         context.settings.get("transcribe", {}).get("audio_streams")) as project:
-        return _place_cameras(StageContext(project, context.settings, context.work_dir))
+        return _place_cameras(StageContext(project, context.settings, context.work_dir,
+                                           context.progress))
 
 
 def _place_cameras(context: StageContext) -> StageOutput:

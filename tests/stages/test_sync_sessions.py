@@ -88,3 +88,17 @@ def test_clip_locate_could_not_find_is_placed_by_text_without_a_new_scan(tmp_pat
             acoustic_search=False,
         )
     assert result is text_map
+
+
+def test_fitting_reports_progress_per_pair(tmp_path: Path) -> None:
+    cameras = [Asset(f"cam{i}", Path(f"DJI_09{i}.mov"), AssetKind.VIDEO, AssetRole.CAMERA)
+               for i in range(3)]
+    recorder = Asset("rec", Path("rec.wav"), AssetKind.AUDIO, AssetRole.RECORDER)
+    project = Project(tmp_path, tmp_path / "work", assets=[*cameras, recorder])
+    transcripts = {a.id: Transcript(tmp_path / a.path, "en", 10, []) for a in project.assets}
+    calls = []
+    with patch("studio.stages.sync_sessions.align_sources",
+               return_value=AlignmentMap([], -2, 1, 0, "acoustic", 5, 8)):
+        plan_sessions(project, cameras, [recorder], transcripts, {}, acoustic_first=True,
+                      progress=lambda done, total, name: calls.append((done, total, name)))
+    assert calls == [(0, 3, "DJI_090.mov"), (1, 3, "DJI_091.mov"), (2, 3, "DJI_092.mov")]
