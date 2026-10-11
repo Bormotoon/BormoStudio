@@ -19,7 +19,7 @@ import numpy as np
 from studio.stages.sync_grid import RegimeModel, decode_range, fit_model, measure_grid
 from studio.stages.sync_models import AlignmentMap, Anchor
 from studio.stages.sync_refine import RefineSettings
-from studio.stages.sync_verify import VerifyReport
+from studio.stages.sync_verify import SHORT_CLIP_S, SHORT_GRID_WINDOWS, VerifyReport
 
 MIN_WINDOWS = 8
 MIN_COVERAGE = 0.5
@@ -33,9 +33,6 @@ COMPLEX_TOLERANCE_MS = 1.0
 # that agree on one offset (sony_run: dji-0935, 15 s, 3 windows of 5).
 PARTIAL_MIN_WINDOWS = 3
 PARTIAL_AGREE_MS = 20.0
-# Below this a clip gets a denser grid, and the text slope is noise: k = 1.
-SHORT_CLIP_S = 120.0
-SHORT_GRID_WINDOWS = 20
 ACOUSTIC_TOKEN = "acoustic:"
 # Anchors placed from the recorder jump map carry their regime the same way.
 JUMP_TOKEN = "jump:"

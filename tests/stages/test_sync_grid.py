@@ -98,3 +98,59 @@ def test_fit_model_prefers_a_line_for_real_drift() -> None:
     model = fit_model(_report([(t, 0.075 * t) for t in _grid()]))
     assert model is not None and model.kind == "line"
     assert model.regimes[0].slope == pytest.approx(0.075, rel=0.05)
+
+
+def test_fit_model_does_not_cut_a_slope_into_steps() -> None:
+    # sony_run dji-0926: read along a text line with k = 1.004, the clip drifts
+    # 4 ms/s between two real recorder losses (-300 ms at 100 s, -500 ms at 200 s);
+    # the model used to be a staircase with a "step" of 0 ms every 10 s.
+    rng = np.random.default_rng(5)
+    lags = [(t, 4.0 * t - (300.0 if t > 100 else 0.0) - (500.0 if t > 200 else 0.0)
+             + rng.normal(0, 0.3)) for t in _grid()]
+    model = fit_model(_report(lags))
+    assert model is not None and model.kind == "regimes"
+    assert [round(step.delta_ms / 100) for step in model.steps] == [-3, -5]
+    assert all(regime.slope == pytest.approx(4.0, abs=0.1) for regime in model.regimes)
+    assert model.p90_after_ms <= 2
+
+
+def test_the_recorders_silence_does_not_count_against_coverage() -> None:
+    # sony_run mvi-0844: 68 s, of which the first 45 s fall on the recorder's
+    # digital zeros; the rest measured 1-3 ms.
+    report = _report([(t, 1.5) for t in np.arange(47.0, 66.5, 2.5)], duration=68.0)
+    status, reason = report.verdict(20.0)
+    assert status == "inconclusive" and "26% of the clip" in reason
+    report.silent_s = 45.0
+    assert report.verdict(20.0)[0] == "passed"
+    assert report.summary()["silent_s"] == 45.0
+
+
+def test_short_clips_get_a_denser_grid() -> None:
+    from studio.stages.sync_verify import short_clip_grid
+
+    assert short_clip_grid(600.0, 2.5, 4.0) == (2.5, 4.0)
+    grid_s, window_s = short_clip_grid(14.7, 2.5, 4.0)  # sony_run dji-0935: 2 windows of 5
+    assert grid_s == pytest.approx(0.735) and window_s == 4.0
+    assert short_clip_grid(5.5, 2.5, 4.0) == pytest.approx((0.275, 5.5 / 3))
+
+
+def test_measure_counts_the_voices_digital_silence(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import wave
+
+    from studio.stages.sync_verify import measure
+
+    def write(path, data):  # type: ignore[no-untyped-def]
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(SR)
+            handle.writeframes((np.clip(data, -1, 1) * 32767).astype("<i2").tobytes())
+        return path
+
+    camera = _noise(30.0, seed=6) * 0.3
+    voice = camera.copy()
+    voice[:int(12 * SR)] = 0.0
+    report = measure(write(tmp_path / "cam.wav", camera), write(tmp_path / "voice.wav", voice),
+                     grid_s=2.5, window_s=4.0)
+    assert report.silent_s == pytest.approx(12.0, abs=0.01)
+    assert report.verdict(20.0)[0] == "passed"

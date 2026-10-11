@@ -38,10 +38,13 @@ __all__ = [
     "DEFAULT_MAX_LAG_S",
     "DEFAULT_MIN_SHARPNESS",
     "DEFAULT_WINDOW_S",
+    "SHORT_CLIP_S",
+    "SHORT_GRID_WINDOWS",
     "LagSample",
     "ShiftedInterval",
     "VerifyReport",
     "measure",
+    "short_clip_grid",
     "validate_parameters",
 ]
 
@@ -63,6 +66,16 @@ DEFAULT_MIN_SPAN_RATIO = 0.5
 # fails when more than this fraction of its confident windows is bad.
 DEFAULT_MIN_BAD_WINDOWS = 3
 DEFAULT_MAX_BAD_FRACTION = 0.1
+
+# Below this a clip gets a denser grid (the sync check also a shorter window),
+# so that a 15 s clip is measured by more than two windows; the drift check
+# takes its text slope for noise (k = 1).
+SHORT_CLIP_S = 120.0
+SHORT_GRID_WINDOWS = 20
+# Digital silence this long in the voice (the recorder wrote zeros, or the
+# clip lies outside it) has nothing to measure and does not count against
+# coverage (sony_run mvi-0844: 45 of its 68 s fall on the recorder's zeros).
+SILENT_MIN_S = 1.0
 
 
 @dataclass
@@ -94,6 +107,8 @@ class VerifyReport:
     duration_s: float = 0.0
     min_sharpness: float = DEFAULT_MIN_SHARPNESS
     grid_s: float = DEFAULT_GRID_S
+    # Seconds of the clip where the voice is digital silence.
+    silent_s: float = 0.0
 
     @property
     def confident(self) -> list[LagSample]:
@@ -117,6 +132,12 @@ class VerifyReport:
         times = [s.t for s in self.confident]
         return (max(times) - min(times)) if len(times) >= 2 else 0.0
 
+    @property
+    def coverage_ratio(self) -> float:
+        """Share of the measurable clip (not digital silence) the confident windows span."""
+        measurable = self.duration_s - self.silent_s
+        return min(1.0, self.coverage_span_s / measurable) if measurable > 0 else 0.0
+
     def summary(
         self, threshold_ms: float | None = None, min_bad_windows: int = DEFAULT_MIN_BAD_WINDOWS,
     ) -> dict[str, Any]:
@@ -127,9 +148,8 @@ class VerifyReport:
             "n_rejected": len(self.rejected),
             "duration_s": round(self.duration_s, 3),
             "coverage_span_s": round(self.coverage_span_s, 3),
-            "coverage_ratio": (
-                round(self.coverage_span_s / self.duration_s, 3) if self.duration_s > 0 else 0.0
-            ),
+            "coverage_ratio": round(self.coverage_ratio, 3),
+            **({"silent_s": round(self.silent_s, 3)} if self.silent_s else {}),
         }
         if not confident:
             return base
@@ -229,17 +249,21 @@ class VerifyReport:
         """
         summary = self.summary()
         confident = int(summary["n_confident"])
+        silent = (f"; the recorder is silent for {self.silent_s:.0f} of its "
+                  f"{self.duration_s:.0f} s" if self.silent_s else "")
         if confident < min_confident:
             return (
                 "inconclusive",
                 f"only {confident} usable window(s) out of {self.attempted} attempted "
-                f"(need {min_confident}) — the two tracks correlate too weakly to measure",
+                f"(need {min_confident}) — the two tracks correlate too weakly to measure"
+                + silent,
             )
         ratio = float(summary["coverage_ratio"])
         if ratio < min_span_ratio:
+            where = "of the clip outside the recorder's silence" if self.silent_s else "of the clip"
             return (
                 "inconclusive",
-                f"usable windows span only {ratio:.0%} of the clip "
+                f"usable windows span only {ratio:.0%} {where} "
                 f"(need {min_span_ratio:.0%}) — the rest was never measured",
             )
         intervals, outliers, fraction = self.bad_windows(threshold_ms, min_bad_windows)
@@ -296,6 +320,14 @@ def validate_parameters(
             raise ValueError(f"{name} must not be negative, got {value!r}")
 
 
+def short_clip_grid(duration_s: float, grid_s: float, window_s: float) -> tuple[float, float]:
+    """``(grid_s, window_s)`` for a clip: denser and shorter below ``SHORT_CLIP_S``."""
+    if duration_s >= SHORT_CLIP_S:
+        return grid_s, window_s
+    return (min(grid_s, max(0.25, duration_s / SHORT_GRID_WINDOWS)),
+            min(window_s, max(1.0, duration_s / 3.0)))
+
+
 def measure(
     video_audio_path: Path,
     voice_path: Path,
@@ -324,7 +356,13 @@ def measure(
         video_audio_path, start_s=source_start_s or None, duration_s=source_duration_s
     )
     voice_track = load_mono16k_track(voice_path, start_s=voice_start_s or None)
-    return measure_grid(
+    report = measure_grid(
         video_track, voice_track, grid_s=grid_s, window_s=window_s, max_lag_s=max_lag_s,
         min_sharpness=min_sharpness, video=str(video_audio_path), voice=str(voice_path),
     )
+    from studio.core.audio_spans import digital_silence
+
+    end = int(report.duration_s * 16000)
+    spans = digital_silence(voice_track[:end], int(SILENT_MIN_S * 16000))
+    report.silent_s = float((spans[:, 1] - spans[:, 0]).sum()) / 16000 if len(spans) else 0.0
+    return report

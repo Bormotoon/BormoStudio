@@ -13,6 +13,7 @@ from studio.stages.sync_recorder_clock import (
     Line,
     Loss,
     RecorderClock,
+    _locate,
     build_clock,
     clip_losses,
     refit,
@@ -130,3 +131,47 @@ def test_clips_and_words_follow_the_repaired_clock(session) -> None:  # type: ig
 def test_a_lone_false_peak_is_not_a_jump() -> None:
     clock = RecorderClock("rec", [Loss(10.0, -120.0, "fine", ["cam"])])
     assert clock.applied == []  # recorders lose samples; they do not gain them
+
+
+def test_a_loss_inside_a_tracking_window_is_still_located(session) -> None:  # type: ignore[no-untyped-def]
+    truth, _recorder, camera = session
+    # 1.1 s lost at real 100 s (clip 50 s): beyond the tracking lag, so the
+    # tracker reacquires seconds later, and the 3 s window centred 1.2 s after
+    # the loss still matched the old offset (sony_run dji-0927).
+    recorder = _drop(truth, [(100.0, 1.1)])
+    at = _locate(camera, recorder, 0.0, Line(-50.0), 51.2, 59.2, 0.0, -1.1)
+    assert at == pytest.approx(50.0, abs=0.06)
+
+
+def _observed(camera_id: str, loss: Loss, around: float) -> ClipTrack:
+    """A clip with windows every second around ``around`` and one loss of its own."""
+    points = [(t - around + 100.0, t, 100.0) for t in np.arange(around - 30, around + 30, 1.0)
+              if not loss.span or not loss.span[0] < t < loss.span[1]]
+    return ClipTrack(camera_id, points, Line(around - 100.0), 200.0, [loss])
+
+
+def test_a_loss_one_clip_located_and_another_only_bracketed_is_one_loss() -> None:
+    # sony_run: mvi-0853 located 1101 ms at 5955.6 s; dji-0927 lost the track
+    # there and put the same loss in the middle of its gap, at 5961.6 s.
+    fine = Loss(5955.56, 1101.5, "fine", ["mvi-0853"], span=(5955.6, 5963.6))
+    rough = Loss(5961.57, 1100.7, "between windows", ["dji-0927"], span=(5956.8, 5966.3))
+    clock = build_clock("rec", [_observed("mvi-0853", fine, 5955.0),
+                                _observed("dji-0927", rough, 5960.0)], [])
+    assert len(clock.losses) == 1
+    loss = clock.losses[0]
+    assert loss.seen_by == ["dji-0927", "mvi-0853"] and loss.contradicted_by == []
+    assert loss.applied and loss.rec_s == pytest.approx(5955.56)
+
+
+def test_silence_written_by_the_recorder_is_not_measured(session) -> None:  # type: ignore[no-untyped-def]
+    truth, _recorder, _camera = session
+    # Five minutes of zeros, then the recorder replays a 2.2 s old buffer and
+    # catches up (sony_run, 355 s): the windows next to the zeros agree on a
+    # false +2.2 s; the clip must keep its true offset and lose nothing.
+    recorder = truth.copy()
+    recorder[int(60 * SR):int(100 * SR)] = 0.0
+    recorder[int(100 * SR):int(102.2 * SR)] = truth[int(97.8 * SR):int(100 * SR)]
+    camera = truth[int(50 * SR):int(250 * SR)]
+    track = _track(camera, recorder)
+    assert track.losses == []
+    assert all(abs(point[1] - (point[0] + 50.0)) < 0.002 for point in track.points)

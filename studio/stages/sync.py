@@ -551,16 +551,18 @@ def _render_complex(context: StageContext,
         artifacts.append(master)
         outputs["master_wav"] = [master]
     if sync.get("verify", True):
-        from studio.stages.sync_verify import measure
+        from studio.stages.sync_verify import measure, short_clip_grid
 
         measurements = []
         threshold = float(sync.get("max_drift_ms", 20.0))
         for camera, candidate in zip(cameras, camera_transcripts, strict=True):
+            grid_s, window_s = short_clip_grid(candidate.duration,
+                                               float(sync.get("refine_grid_s", 2.5)),
+                                               float(sync.get("refine_window_s", 4.0)))
             try:
                 verification = measure(project.source_dir / camera.path,
                                        outputs[f"sync:{camera.id}"][0],
-                                       grid_s=float(sync.get("refine_grid_s", 2.5)),
-                                       window_s=float(sync.get("refine_window_s", 4.0)),
+                                       grid_s=grid_s, window_s=window_s,
                                        source_duration_s=candidate.duration)
             except (RuntimeError, OSError, ValueError) as exc:
                 # A camera without a readable audio stream cannot be measured.

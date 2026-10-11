@@ -324,9 +324,8 @@ def fit_model(
             best = RegimeModel("line", [line_regime], [], before, after, len(values),
                                [float(t) for t in times[~mask]])
 
-    ranges = segment_regimes(ordered, step_min_ms=step_min_ms, min_windows=min_windows,
-                             max_mad_ms=max_mad_ms)
-    if len(ranges) > 1:
+    def fit_ranges(ranges: list[tuple[int, int]]) -> tuple[
+            list[Regime], list[np.ndarray], list[Step]]:
         regimes: list[Regime] = []
         residuals: list[np.ndarray] = []
         steps: list[Step] = []
@@ -341,6 +340,20 @@ def fit_model(
                 previous = regimes[index - 1]
                 steps.append(Step(start, float(times[lo - 1]), float(times[lo]),
                                   regime.at(start) - previous.at(start)))
+        return regimes, residuals, steps
+
+    ranges = segment_regimes(ordered, step_min_ms=step_min_ms, min_windows=min_windows,
+                             max_mad_ms=max_mad_ms)
+    regimes, residuals, steps = fit_ranges(ranges)
+    # The segmentation compares constant offsets, so a slope (a clip read along
+    # a line with the wrong rate) comes out as a staircase of steps that its
+    # sloped regimes then join with no break at all (sony_run: dozens of
+    # "jumps" of 0 ms per clip). Neighbours a step does not separate are one.
+    while steps and min(abs(step.delta_ms) for step in steps) < step_min_ms:
+        index = min(range(len(steps)), key=lambda item: abs(steps[item].delta_ms))
+        ranges[index:index + 2] = [(ranges[index][0], ranges[index + 1][1])]
+        regimes, residuals, steps = fit_ranges(ranges)
+    if len(ranges) > 1:
         residual = np.concatenate(residuals)
         mad = max(_mad(item) for item in residuals)
         mask = ~outliers_of(residual, mad)

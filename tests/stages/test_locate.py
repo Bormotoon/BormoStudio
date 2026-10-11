@@ -315,3 +315,21 @@ def test_a_narrow_search_needs_a_stricter_vote() -> None:
     assert _vote(list(weak)) is not None
     assert _vote(list(weak), 2, STRICT_MIN_SHARPNESS) is None
     assert _vote([(10.0, 0, 90.0), (10.01, 1, 80.0)], 3) is None
+
+
+def test_the_next_chapter_may_start_inside_what_the_recorder_lost() -> None:
+    # sony_run: the recorder lost 4.2 s inside dji-0926 (965 s), so dji-0927's
+    # correct words were 4.6 s before 0926's start plus its length.
+    from studio.stages.locate import Located, _out_of_order
+
+    cameras = [_dji("DJI_0926", 964.66), _dji("DJI_0927", 954.09)]
+    fitted = {"dji_0926": Located(4850.25, 900.0, "text", 4850.25 + 964.66 / 1.0041),
+              "dji_0927": Located(5810.3, 900.0, "text")}
+    assert _out_of_order(cameras, fitted) == {}
+    # Without a fitted end the earlier file may overlap by 1 % of its length.
+    assert _out_of_order(cameras, {"dji_0926": Located(4850.25, 900.0, "full"),
+                                   "dji_0927": Located(5810.3, 900.0, "full")}) == {}
+    # A false peak far inside the previous file still breaks the order.
+    assert set(_out_of_order(cameras, {"dji_0926": Located(4850.25, 900.0, "full"),
+                                       "dji_0927": Located(5200.0, 60.0, "full")})) == {
+        "dji_0927"}

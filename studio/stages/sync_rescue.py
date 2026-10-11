@@ -6,11 +6,15 @@ transcript first. Whatever is left goes through, in this order:
 1. **File order.** Files of one camera follow each other in the recorder; a
    text match that breaks the order of its camera's files is a false one
    (repeated phrases) and is dropped (``locate._out_of_order``).
-2. **Acoustics between neighbours.** A clip whose neighbouring files are
+2. **The camera's clock.** The placed clips of a camera tell which moment its
+   ``recorded_at`` stamps and how its clock runs against the recorder; a clip
+   is searched a few seconds around where that puts it, with its whole sound
+   (``sync_camera_clock``). This finds false starts with no words.
+3. **Acoustics between neighbours.** A clip whose neighbouring files are
    placed is searched acoustically only between them, with the strict vote of
    ``locate``; a clip with no placed neighbour is searched in the whole
    recorder. A position found this way is fitted acoustically around it.
-3. **A stronger transcription** (``sync.rescue=quality``): Whisper in quality
+4. **A stronger transcription** (``sync.rescue=quality``): Whisper in quality
    mode, first on the camera's sound as it is, then band-limited, denoised
    and loudness-normalized, and the words are matched again.
 """
@@ -29,17 +33,21 @@ from studio.core.project import Asset
 from studio.core.transcript import Transcript
 from studio.stages.locate import (
     Located,
+    _group,
     _has_audio,
     _out_of_order,
     _search_between_files,
     camera_windows,
     search_many,
 )
+from studio.stages.sync_camera_clock import QUERY_MAX_S, camera_clocks, clock_search
 from studio.stages.sync_models import AlignmentMap
 from studio.stages.sync_sessions import Fit
 
 # Around an acoustic position the fine fit searches this much more recorder.
 FIT_MARGIN_S = 30.0
+# A fit around a clock match that starts further from it took another peak.
+CLOCK_FIT_AGREE_S = 0.1
 # Bad camera sound: speech band, FFT denoise, loudness normalization.
 CLEANUP_FILTER = "highpass=f=90,lowpass=f=7500,afftdn=nf=-25,dynaudnorm=f=150:g=15"
 
@@ -47,6 +55,11 @@ CLEANUP_FILTER = "highpass=f=90,lowpass=f=7500,afftdn=nf=-25,dynaudnorm=f=150:g=
 def recorder_start(alignment: AlignmentMap) -> float:
     """Recorder time of the clip's first sample (``cam = offset + k * rec``)."""
     return -alignment.offset / (alignment.k or 1.0)
+
+
+def recorder_end(alignment: AlignmentMap, duration_s: float) -> float:
+    """Recorder time of the clip's last sample."""
+    return (duration_s - alignment.offset) / (alignment.k or 1.0)
 
 
 def second_pass(
@@ -89,6 +102,15 @@ def second_pass(
             missing = [camera for camera in unplaced(fits) if _has_audio(camera)]
             if not missing:
                 break
+            note(f"searching {len(missing)} unplaced clip(s) by their cameras' clocks in "
+                 f"{Path(recorder.path).name}")
+            clocks = _clock_placement(fit, fits, rejected, cameras, missing, recorder,
+                                      source_dir, searched)
+            if clocks:
+                report.setdefault("camera_clocks", {})[recorder.id] = clocks
+            missing = [camera for camera in missing if camera in unplaced(fits)]
+            if not missing:
+                continue
             note(f"searching {len(missing)} unplaced clip(s) acoustically in "
                  f"{Path(recorder.path).name}")
             for camera, located in _acoustic_search(
@@ -139,6 +161,67 @@ def second_pass(
     return run
 
 
+def _clock_placement(
+    fit: Fit, fits: dict[tuple[str, str], AlignmentMap], rejected: dict[str, str],
+    cameras: list[Asset], missing: list[Asset], recorder: Asset, source_dir: Path,
+    searched: dict[str, Any],
+) -> dict[str, Any]:
+    """Place ``missing`` clips where their camera's clock says, when their sound agrees.
+
+    The clock is learned from the clips of the same camera already placed. A
+    clip found this way is fitted acoustically around its place; one too short
+    for that (no words, too few windows) keeps the found start at the
+    recorder's rate, which the recorder-clock tracking refines later.
+    """
+    starts = {camera.id: recorder_start(fits[camera.id, recorder.id])
+              for camera in cameras if (camera.id, recorder.id) in fits}
+    clocks = camera_clocks(cameras, starts)
+    source, duration, pan, stream = _recorder_audio(recorder, source_dir)
+    for camera in missing:
+        clock = clocks.get(_group(camera))
+        predictions = clock.predict(camera) if clock is not None else []
+        if not predictions:
+            continue
+        match = clock_search(source_dir / camera.path, _duration(camera), source, duration,
+                             predictions, pan=pan, stream=stream)
+        entry: dict[str, Any] = {
+            "recorder": recorder.id, "method": "clock",
+            "predicted_s": [round(start, 3) for start, _radius in predictions],
+            "placed": match is not None,
+        }
+        searched[camera.id] = entry
+        if match is None:
+            continue
+        entry.update(position_s=round(match.position_s, 3), sharpness=round(match.sharpness, 1),
+                     ratio=round(match.ratio, 2))
+        span = (max(0.0, match.position_s - FIT_MARGIN_S),
+                match.position_s + _duration(camera) + FIT_MARGIN_S)
+        result = fit(camera, recorder, source_range=span, acoustic_search=True)
+        if result is None or abs(recorder_start(result) - match.position_s) > CLOCK_FIT_AGREE_S:
+            result = AlignmentMap(
+                [], -match.position_s, 1.0, 0.0, "acoustic", 1,
+                min(_duration(camera), QUERY_MAX_S),
+                notes=[f"placed by its camera's clock (predicted at {match.predicted_s:.1f} s) "
+                       f"and its whole sound (peak {match.ratio:.1f} times the next one)"])
+            entry["map"] = "clock"
+        else:
+            entry["map"] = "fit"
+        fits[camera.id, recorder.id] = result
+        rejected.pop(f"{camera.id}:{recorder.id}", None)
+    return {group: clock.report() for group, clock in clocks.items()}
+
+
+def _recorder_audio(recorder: Asset, source_dir: Path) -> tuple[Path, float, str | None,
+                                                                int | None]:
+    """``(path, duration, pan, stream)`` of the recorder's sound as the searches read it."""
+    info = recorder.manual.get("media_info", {})
+    # Inside sync the selected stream is already decoded to its own file.
+    decoded = Path(recorder.path).is_absolute()
+    return (source_dir / recorder.path, float(info.get("duration_s") or 0.0),
+            None if decoded else effective_audio(recorder).pan,
+            None if decoded else info.get("audio_stream_index"))
+
+
 def _fit_into(fit: Fit, fits: dict[tuple[str, str], AlignmentMap], rejected: dict[str, str],
               camera: Asset, recorder: Asset) -> bool:
     result = fit(camera, recorder, acoustic_search=False)
@@ -151,10 +234,16 @@ def _fit_into(fit: Fit, fits: dict[tuple[str, str], AlignmentMap], rejected: dic
 
 def _found(cameras: list[Asset], recorder: Asset,
            fits: dict[tuple[str, str], AlignmentMap]) -> dict[str, Located]:
-    """Placed cameras of ``recorder`` as ``locate`` positions, weighted by evidence."""
+    """Placed cameras of ``recorder`` as ``locate`` positions, weighted by evidence.
+
+    The end comes from the map: its rate holds what the recorder lost inside
+    the clip (sony_run dji-0927 started 4.6 s before dji-0926's start plus its
+    length, and its correct words were dropped as out of order).
+    """
     return {
         camera.id: Located(recorder_start(fits[camera.id, recorder.id]),
-                           float(fits[camera.id, recorder.id].inliers), "text")
+                           float(fits[camera.id, recorder.id].inliers), "text",
+                           recorder_end(fits[camera.id, recorder.id], _duration(camera)))
         for camera in cameras if (camera.id, recorder.id) in fits
     }
 
@@ -165,13 +254,7 @@ def _acoustic_search(
     settings: dict[str, Any],
 ) -> list[tuple[Asset, Located]]:
     """Recorder positions of ``missing`` clips: between placed neighbours, else anywhere."""
-    source = source_dir / recorder.path
-    info = recorder.manual.get("media_info", {})
-    duration = float(info.get("duration_s") or 0.0)
-    # Inside sync the selected stream is already decoded to its own file.
-    decoded = Path(recorder.path).is_absolute()
-    pan = None if decoded else effective_audio(recorder).pan
-    stream = None if decoded else info.get("audio_stream_index")
+    source, duration, pan, stream = _recorder_audio(recorder, source_dir)
     workers = cpu_workers(settings)
     windows = {camera.id: camera_windows(source_dir / camera.path, _duration(camera))
                for camera in missing}

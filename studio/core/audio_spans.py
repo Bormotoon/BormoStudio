@@ -7,7 +7,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 from studio.core.transcript import Word
+
+# Exact zeros this long are digital silence (a dropout, padding), not a quiet room.
+DIGITAL_SILENCE_S = 0.1
 
 _SILENCE_START = re.compile(r"silence_start:\s*(-?[0-9.]+)")
 _SILENCE_END = re.compile(r"silence_end:\s*(-?[0-9.]+)")
@@ -21,6 +26,19 @@ class Span:
     @property
     def duration_s(self) -> float:
         return self.end_s - self.start_s
+
+
+def digital_silence(samples: np.ndarray, min_samples: int) -> np.ndarray:
+    """``[start, end)`` sample ranges of exact zeros at least ``min_samples`` long."""
+    zero = np.concatenate([[False], samples == 0, [False]])
+    runs = np.flatnonzero(np.diff(zero.astype(np.int8))).reshape(-1, 2)
+    return runs[runs[:, 1] - runs[:, 0] >= max(1, min_samples)]
+
+
+def overlaps(spans: np.ndarray, start: int, end: int) -> bool:
+    """Whether ``[start, end)`` overlaps one of ``spans`` (sorted, disjoint)."""
+    index = int(np.searchsorted(spans[:, 1], start, side="right"))
+    return index < len(spans) and int(spans[index, 0]) < end
 
 
 def word_gaps(words: list[Word], *, minimum_s: float) -> list[Span]:

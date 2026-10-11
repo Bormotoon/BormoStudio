@@ -36,6 +36,7 @@ from typing import Any
 
 import numpy as np
 
+from studio.core.audio_spans import DIGITAL_SILENCE_S, digital_silence, overlaps
 from studio.core.transcript import Segment, Transcript, Word
 from studio.stages.sync_acoustic import gcc_phat
 from studio.stages.sync_models import AlignmentMap, Anchor
@@ -151,8 +152,15 @@ def track_clip(
     ``BIG_JUMP_S``) lands on the same new offset; a lone peak elsewhere is a
     false one. After ``REACQUIRE_S`` without a confident window the search
     widens to ``REACQUIRE_LAG_S``, under the same confirmation.
+
+    Windows that touch digital silence are not measured. Around a stretch the
+    recorder wrote as zeros its sound is not to be trusted (sony_run: three
+    windows at the end of five minutes of zeros agreed on a sharp +2.2 s, the
+    next ones on 1-6 ms), and zeros inflate the sharpness of whatever matches.
     """
     half = int(TRACK_WINDOW_S * SR / 2)
+    silent_camera = digital_silence(camera, int(DIGITAL_SILENCE_S * SR))
+    silent_recorder = digital_silence(recorder, int(DIGITAL_SILENCE_S * SR))
     shift = 0.0
     pending: list[Point] = []
     pending_shift = 0.0
@@ -166,7 +174,9 @@ def track_clip(
         c = int(t * SR)
         r = int((line(t) + shift - recorder_origin_s) * SR)
         if c - half >= 0 and c + half <= len(camera) and r - half - reach >= 0 and (
-                r + half + reach <= len(recorder)):
+                r + half + reach <= len(recorder)) and not overlaps(
+                silent_camera, c - half, c + half) and not overlaps(
+                silent_recorder, r - half - reach, r + half + reach):
             query = camera[c - half:c + half]
             reference = recorder[r - half - reach:r + half + reach]
             if reach:
@@ -214,13 +224,19 @@ def _locate(
     offset and stops matching exactly there; the sound after the lost stretch
     matches with the new offset, starting ``lost`` seconds later (what was
     lost exists only in the camera). Short windows find both edges.
+
+    ``t0`` and ``t1`` are centres of tracking windows: one that still matched
+    the old offset may hold up to half a window of sound after the loss
+    (sony_run dji-0927: the loss at 145.3 s, the last old window at 146.5 s),
+    so the search starts half a window earlier.
     """
     lost = before - after
     half = int(FINE_WINDOW_S * SR / 2)
     slack = int(FINE_SLACK_S * SR)
     rows: list[tuple[float, float, float]] = []
-    t = t0 - TRACK_STEP_S
-    while t <= t1 + TRACK_STEP_S + lost + 1e-9:
+    reach = TRACK_WINDOW_S / 2 + TRACK_STEP_S
+    t = t0 - reach
+    while t <= t1 + reach + lost + 1e-9:
         c = int(t * SR)
         if c - half < 0 or c + half > len(camera):
             t += FINE_STEP_S
@@ -324,8 +340,7 @@ def build_clock(
     losses: list[Loss] = []
     for loss in sorted((item for track in tracks for item in track.losses),
                        key=lambda item: item.rec_s):
-        same = next((item for item in losses
-                     if abs(item.rec_s - loss.rec_s) <= MERGE_S
+        same = next((item for item in losses if _near(item, loss)
                      and abs(item.lost_ms - loss.lost_ms) <= max(20.0, 0.25 * abs(item.lost_ms))),
                     None)
         if same is None:
@@ -334,6 +349,9 @@ def build_clock(
         same.seen_by = sorted({*same.seen_by, *loss.seen_by})
         if same.located_by != "fine" and loss.located_by == "fine":
             same.rec_s, same.located_by, same.fill = loss.rec_s, "fine", loss.fill
+        elif same.located_by != "fine" and same.span and loss.span and (
+                max(same.span[0], loss.span[0]) < min(same.span[1], loss.span[1])):
+            same.span = (max(same.span[0], loss.span[0]), min(same.span[1], loss.span[1]))
     for loss in losses:
         if loss.located_by == "between windows" and loss.span is not None:
             # No sound to say where exactly: the longest pause, where an insert is harmless.
@@ -367,10 +385,25 @@ def build_clock(
                 continue
             before = np.sum((times < loss.rec_s) & (times >= loss.rec_s - CONTRADICT_S))
             after = np.sum((times > loss.rec_s) & (times <= loss.rec_s + CONTRADICT_S))
-            if before >= 2 and after >= 2 and not any(
-                    abs(own.rec_s - loss.rec_s) <= MERGE_S for own in track.losses):
+            if before >= 2 and after >= 2 and not any(_near(own, loss) for own in track.losses):
                 loss.contradicted_by.append(track.camera_id)
     return RecorderClock(recorder_id, sorted(losses, key=lambda item: item.rec_s))
+
+
+def _near(a: Loss, b: Loss) -> bool:
+    """Whether two clips may have seen one loss: close, or one inside the other's span.
+
+    A clip that lost the track at a loss sets it between its last window on
+    the old offset and its first on the new one, up to ``REACQUIRE_S`` apart;
+    its midpoint can be seconds from where another clip located the same loss
+    finely (sony_run: 1101 ms at 5961.6 s and at 5955.6 s; kept apart, each
+    contradicted the other and the loss was never repaired).
+    """
+    if abs(a.rec_s - b.rec_s) <= MERGE_S:
+        return True
+    margin = TRACK_WINDOW_S / 2
+    return any(item.span is not None and item.span[0] - margin <= other.rec_s
+               <= item.span[1] + margin for item, other in ((a, b), (b, a)))
 
 
 def _stable(track: ClipTrack, points: Sequence[Point]) -> bool:
@@ -595,6 +628,7 @@ def repair_recorders(
 
     from studio.core.channels import effective_audio
     from studio.stages.locate import _natural
+    from studio.stages.sync_camera_clock import camera_clocks
 
     repairs: dict[str, Repair] = {}
     for index, recorder in enumerate(list(recorders)):
@@ -614,7 +648,11 @@ def repair_recorders(
                 tracks = list(pool.map(_track_job, *zip(*jobs, strict=True)))
         else:
             tracks = [_track_job(*job) for job in jobs]
-        continuity = _continuity(placed, originals, _natural)
+        starts = {camera.id: -fits[camera.id, recorder.id].offset
+                  / (fits[camera.id, recorder.id].k or 1.0) for camera in placed}
+        stamps = {group: clock.stamps
+                  for group, clock in camera_clocks(placed, starts).items()}
+        continuity = _continuity(placed, originals, _natural, stamps)
         words = (matching.get(recorder.id) or transcripts[recorder.id]).words
         clock = build_clock(recorder.id, tracks, continuity,
                             [(word.start, word.end) for word in words])
@@ -672,24 +710,33 @@ def repair_recorders(
     return repairs
 
 
-def _continuity(cameras: Sequence[Any], originals: dict[str, Any],
-                natural: Any) -> list[tuple[str, str]]:
-    """Consecutive files of one camera whose recording times follow each other."""
+def _continuity(cameras: Sequence[Any], originals: dict[str, Any], natural: Any,
+                stamps: dict[str, tuple[str, ...]] | None = None) -> list[tuple[str, str]]:
+    """Consecutive files of one camera whose recording times follow each other.
+
+    ``stamps`` says per camera group whether ``recorded_at`` is the start or the
+    end of a recording (``sync_camera_clock``); start when unknown.
+    """
     groups: dict[str, list[Any]] = {}
     for camera in cameras:
         source = originals.get(camera.id, camera)
         groups.setdefault(source.group_id or source.device or source.id, []).append(source)
     pairs = []
-    for members in groups.values():
+    for group, members in groups.items():
         ordered = sorted(members, key=lambda item: natural(str(item.path)))
         for first, second in zip(ordered, ordered[1:], strict=False):
             a = first.manual.get("media_info", {})
             b = second.manual.get("media_info", {})
-            start_a = (a.get("recorded_at") or {}).get("epoch")
-            start_b = (b.get("recorded_at") or {}).get("epoch")
-            if start_a is None or start_b is None:
+            stamp_a = (a.get("recorded_at") or {}).get("epoch")
+            stamp_b = (b.get("recorded_at") or {}).get("epoch")
+            if stamp_a is None or stamp_b is None:
                 continue
-            if abs(float(start_b) - float(start_a) - float(a.get("duration_s") or 0.0)) <= (
-                    CONTINUOUS_S):
-                pairs.append((first.id, second.id))
+            length_a = float(a.get("duration_s") or 0.0)
+            length_b = float(b.get("duration_s") or 0.0)
+            for stamp in (stamps or {}).get(group, ("start",)):
+                start_a = float(stamp_a) - (length_a if stamp == "end" else 0.0)
+                start_b = float(stamp_b) - (length_b if stamp == "end" else 0.0)
+                if abs(start_b - start_a - length_a) <= CONTINUOUS_S:
+                    pairs.append((first.id, second.id))
+                    break
     return pairs

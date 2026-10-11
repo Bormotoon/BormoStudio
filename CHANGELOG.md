@@ -13,8 +13,31 @@ All notable changes to Studio will be documented in this file.
   manifests record the settings actually used, without modifying project YAML.
 - Invalid CLI settings return exit code 2 through the installed console entry
   point and write diagnostics to stderr, keeping JSON stdout clean.
+- A recorder loss seen by two clips is one loss even when one of them only
+  bracketed it between two windows; the fine location searches half a tracking
+  window earlier. On sony_run the largest loss (1.1 s) was never repaired:
+  the two observations, 6 s apart, contradicted each other.
+- Tracking windows that touch the recorder's digital silence are not measured:
+  the windows next to a dropout produced a false 2.2 s loss.
+- The acoustic model no longer cuts a slope into a staircase of 0 ms steps
+  (about 130 "sync jumps by +0 ms" warnings on sony_run).
+- The file-order check ends a placed clip where its map ends, so the next
+  chapter may start inside what the recorder lost (a correct text match of
+  dji-0927 was dropped and transcribed again in quality).
+- The sync check measures clips under 120 s on a denser grid, and stretches
+  where the recorder wrote zeros do not count against its coverage.
 
 ### Added
+
+- `scan.min_duration_s` (3 s): shorter files are false starts (a camera
+  switched on and off by mistake) and get the role `ignore` with a scan
+  warning; a manual role still wins, 0 keeps everything.
+- Clips neither words nor the neighbour search placed are searched by their
+  camera's clock (`stages/sync_camera_clock.py`): the placed clips of a camera
+  tell whether its `recorded_at` stamps the start (DJI) or the end (Canon) of
+  a recording, the clip's start is interpolated between its neighbours and its
+  whole sound is correlated a few seconds around it. A clip too short for a
+  fit keeps the found start (`map: clock` in `second_pass.acoustic_search`).
 
 - Text-first synchronization (`sync.placement: text`, the default): every camera
   is transcribed fast (`transcribe.camera_mode`) and placed by its words against

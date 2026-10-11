@@ -68,8 +68,11 @@ STRICT_MIN_SHARPNESS = 62.0
 # two Canon clips were 240-270 s off; the copy times spread over 10 000 s.
 HINT_AGREE_S = 30.0
 HINT_MAJORITY = 2 / 3
-# Consecutive files of one camera may overlap by this much in recorder time.
+# Consecutive files of one camera may overlap by this much in recorder time,
+# plus this share of the earlier file when its end is only start + duration:
+# the sony_run recorder lost 4.2 s inside one 965 s DJI file.
 ORDER_TOLERANCE_S = 2.0
+ORDER_TOLERANCE_RATE = 0.01
 DITHER = 3e-5  # about -90 dBFS
 BATCH_WINDOWS = 40
 
@@ -79,6 +82,9 @@ class Located:
     position_s: float  # recorder time of the camera's start
     sharpness: float
     method: str
+    # Recorder time of the camera's end when a fitted map knows it: a recorder
+    # that loses samples holds a clip in less time than the clip lasts.
+    end_s: float | None = None
 
 
 class LocateStage:
@@ -264,9 +270,8 @@ def _out_of_order(cameras: list[Asset], found: dict[str, Located]) -> dict[str, 
             weight = 1.0 + min(found[camera.id].sharpness, 999.0) / 1000.0
             score, link = weight, -1
             for before in range(index):
-                if found[camera.id].position_s >= (found[chain[before].id].position_s
-                                                   + _duration(chain[before])
-                                                   - ORDER_TOLERANCE_S):
+                if found[camera.id].position_s >= _order_end(found[chain[before].id],
+                                                             _duration(chain[before])):
                     if best[before][0] + weight > score:
                         score, link = best[before][0] + weight, before
             best.append((score, link))
@@ -281,6 +286,14 @@ def _out_of_order(cameras: list[Asset], found: dict[str, Located]) -> dict[str, 
                     f"match at {found[camera.id].position_s:.1f} s contradicts the order "
                     "of the camera's files")
     return rejected
+
+
+def _order_end(located: Located, duration_s: float) -> float:
+    """The earliest start the next file of the same camera may have."""
+    if located.end_s is not None:
+        return located.end_s - ORDER_TOLERANCE_S
+    return located.position_s + duration_s - max(ORDER_TOLERANCE_S,
+                                                 ORDER_TOLERANCE_RATE * duration_s)
 
 
 def _groups(cameras: list[Asset]) -> dict[str, list[Asset]]:
@@ -621,11 +634,12 @@ def stream_blocks(
         process.wait()
 
 
-def decode(path: Path, start: float, duration: float) -> np.ndarray:
+def decode(path: Path, start: float, duration: float, *, pan: str | None = None,
+           stream: int | None = None) -> np.ndarray:
     result = subprocess.run(
         ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
-         "-i", str(path), "-map", "0:a:0", "-vn", "-ac", "1", "-ar", str(SR), "-f", "f32le",
-         "-"],
+         "-i", str(path), "-map", f"0:{stream}" if stream is not None else "0:a:0", "-vn",
+         *(["-af", pan] if pan else ["-ac", "1"]), "-ar", str(SR), "-f", "f32le", "-"],
         capture_output=True,
     )
     if result.returncode:
