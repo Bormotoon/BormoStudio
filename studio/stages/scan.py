@@ -29,7 +29,8 @@ class ScanStage:
     title = "Material scan"
     after: tuple[str, ...] = ()
     # Settings that can change this stage's result; they alone enter its fingerprint.
-    settings_keys: tuple[str, ...] = ("scan.grouping", "scan.channel_analysis")
+    settings_keys: tuple[str, ...] = ("scan.grouping", "scan.channel_analysis",
+                                      "scan.min_duration_s")
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
@@ -60,9 +61,11 @@ class ScanStage:
 
     def run(self, context: StageContext) -> StageOutput:
         assets, warnings = scan(context.project.source_dir)
-        assets = apply_manual_overrides(context.project.assets, assets)
         conf = context.settings.get("scan", {})
-        if not isinstance(conf, dict) or conf.get("channel_analysis", "auto") != "off":
+        conf = conf if isinstance(conf, dict) else {}
+        warnings += ignore_short(assets, float(conf.get("min_duration_s", 3.0)))
+        assets = apply_manual_overrides(context.project.assets, assets)
+        if conf.get("channel_analysis", "auto") != "off":
             analyze_assets(context.project.source_dir, assets)
         report = context.work_dir / "stages" / "scan" / "report.json"
         report.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +79,8 @@ class ScanStage:
         from studio.core.recorder_tracks import refresh_tracks
 
         tracks = refresh_tracks(assets, context.project.recorder_tracks)
-        return StageOutput((report,), {"assets": assets, "recorder_tracks": tracks})
+        return StageOutput((report,), {"assets": assets, "recorder_tracks": tracks},
+                           tuple(warnings))
 
 
 def scan(source_dir: Path) -> tuple[list[Asset], list[str]]:
@@ -127,6 +131,23 @@ def scan(source_dir: Path) -> tuple[list[Asset], list[str]]:
         if kind is AssetKind.VIDEO and not info.audio_codec:
             warnings.append(f"{relative}: video has no audio; acoustic sync is unavailable")
     return assets, warnings
+
+
+def ignore_short(assets: list[Asset], min_duration_s: float) -> list[str]:
+    """Ignore files shorter than ``min_duration_s``: false starts, not material.
+
+    A second-long clip (a camera switched on and off by mistake) has nothing to
+    place on a recorder and nothing to edit. A manual role override still wins.
+    """
+    warnings = []
+    for asset in assets:
+        duration = float(asset.manual.get("media_info", {}).get("duration_s") or 0.0)
+        if asset.role is AssetRole.IGNORE or not 0 < duration < min_duration_s:
+            continue
+        asset.role = AssetRole.IGNORE
+        warnings.append(f"{asset.path}: {duration:.1f} s, shorter than scan.min_duration_s "
+                        f"({min_duration_s:g} s); ignored as a false start")
+    return warnings
 
 
 def analyze_assets(source_dir: Path, assets: list[Asset]) -> None:

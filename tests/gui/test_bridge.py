@@ -66,6 +66,10 @@ def test_gui_and_cli_export_identical_outputs_and_repair_corruption(tmp_path: Pa
         "sine=frequency=440:duration=1", "-c:v", "libx264", "-c:a", "pcm_s16le",
         str(video),
     ], check=True)
+    # A one-second camera is a false start by default (scan.min_duration_s).
+    (tmp_path / "_studio").mkdir()
+    (tmp_path / "_studio" / "settings.yaml").write_text(
+        "sync:\n  mode: auto\nscan:\n  min_duration_s: 0\n", encoding="utf-8")
     project = _run_discovery(tmp_path, include_prepare=True)
     transcript = project.work_dir / "fixture-transcript.json"
     Transcript(video, "en", 1, [Segment(0, 1, (Word("Hello.", 0, 1),))]).save(transcript)

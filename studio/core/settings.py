@@ -26,6 +26,9 @@ class ScanSettings:
     verify_digests: str = "cached"
     # Compare the channels of multichannel audio (dual mono, safety copy, dead input).
     channel_analysis: str = "auto"
+    # Files shorter than this are false starts (a camera switched on and off by
+    # mistake) and are ignored; 0 keeps everything.
+    min_duration_s: float = 3.0
 
 
 @dataclass(slots=True)
@@ -401,6 +404,7 @@ def validate_settings(settings: Settings) -> None:
     _positive("scan.probe_timeout_s", settings.scan.probe_timeout_s)
     _one_of("scan.verify_digests", settings.scan.verify_digests, {"cached", "always"})
     _one_of("scan.channel_analysis", settings.scan.channel_analysis, {"auto", "off"})
+    _non_negative("scan.min_duration_s", settings.scan.min_duration_s)
     _one_of("sync.mode", settings.sync.mode, {"auto", "camera", "simple", "complex"})
     if settings.sync.strategy not in {1, 2, 3}:
         raise SettingsError("sync.strategy must be 1, 2, or 3")
