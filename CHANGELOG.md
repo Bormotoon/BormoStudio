@@ -16,6 +16,36 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- Text-first synchronization (`sync.placement: text`, the default): every camera
+  is transcribed fast (`transcribe.camera_mode`) and placed by its words against
+  the whole recorder, as WhisperSync did; the acoustics then refine around that
+  place, an acoustic match that contradicts the words is dropped, clips the words
+  did not place are searched acoustically between their neighbouring files and
+  then transcribed again in quality (`sync.rescue`), as is and with cleaned-up sound.
+- Camera words are matched against a recorder transcript in the cameras' Whisper
+  mode (`match_transcripts`): on sony_run the fast recorder transcript gave
+  anchors with a third of the p90 timing error of the quality one.
+- Short clips get a denser acoustic grid, and a few windows that agree on one
+  offset confirm a text placement (`used: acoustic offset`).
+- Recorder clock repair (`sync.recorder_repair`, `sync.recorder_fill`): samples a
+  recorder lost (a phone dropping buffers) are found by tracking every camera
+  against it, put back from the camera's sound or as silence, and every later
+  stage reads the repaired recorder and its transcript.
+- One map of recorder jumps from all cameras (`recorder_jumps` in
+  `stages/sync/output.json`); clips without acoustics of their own follow it.
+- The drift check and refinement see lags up to `sync.refine_max_lag_s` (1 s):
+  recorder jumps of 0.2–0.8 s were invisible at 0.25 s.
+- Failed or inconclusive sync checks are stage warnings and set the run report
+  to `needs_review`; `report.json` lists every stage warning.
+
+### Changed
+
+- `recorded_at` prefers `com.apple.quicktime.creationdate` (the recording time)
+  over `creation_time`, which is often the time the files were copied.
+- `locate` keeps a group's clock delta as a hint only when most of its clips agree,
+  narrow searches need a stricter vote, and a position that breaks the order of
+  the camera's files is searched again between its neighbours.
+
 - Reel layouts (`reels.layout`): a hook-title band over the framed picture and an
   audiogram that needs no camera; per-reel framing, crop, tracking and title
   (`uvf reel`, Subtitles page) with an instant crop preview over an unframed still.
