@@ -28,6 +28,8 @@ from studio.core.transcript_sanity import (
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 
 CACHE_SCHEMA = "studio/transcript-cache/3"
+# Quality (sequential) decoding is fed at most this much audio per call.
+QUALITY_BLOCK_S = 600.0
 TEMPERATURES = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
 
@@ -157,9 +159,7 @@ class FasterWhisperBackend:
                 beam_size=settings.quality_beam_size,
                 condition_on_previous_text=True,
             )
-            generated, info = model.transcribe(
-                samples, clip_timestamps=[value for clip in clips for value in clip], **kwargs
-            )
+            stream, info = self._quality_blocks(model, samples, clips, kwargs)
         else:
             from faster_whisper import BatchedInferencePipeline  # type: ignore[import-not-found]
 
@@ -169,15 +169,16 @@ class FasterWhisperBackend:
                 clip_timestamps=[{"start": start, "end": end} for start, end in clips],
                 **kwargs,
             )
+            stream = ((0.0, segment) for segment in generated)
         segments = [
             Segment(
-                float(segment.start),
-                float(segment.end),
+                offset + float(segment.start),
+                offset + float(segment.end),
                 tuple(
                     Word(
                         str(word.word).strip(),
-                        float(word.start),
-                        float(word.end),
+                        offset + float(word.start),
+                        offset + float(word.end),
                         float(word.probability),
                     )
                     for word in (segment.words or [])
@@ -185,12 +186,12 @@ class FasterWhisperBackend:
                 avg_logprob=_optional_float(getattr(segment, "avg_logprob", None)),
                 text_override=str(segment.text).strip(),
             )
-            for segment in self._reporting(generated, len(samples) / 16000)
+            for offset, segment in self._reporting(stream, len(samples) / 16000)
         ]
         return Transcript(
             source_audio=audio,
             language=str(getattr(info, "language", settings.language or "")),
-            duration=float(getattr(info, "duration", 0.0)),
+            duration=len(samples) / 16000,
             segments=segments,
             model=settings.model,
             device=self.device,
@@ -198,12 +199,63 @@ class FasterWhisperBackend:
             mode=settings.mode,
         )
 
-    def _reporting(self, generated: Any, duration_s: float) -> Any:
-        """Pass segments through while reporting how far recognition has got."""
-        for segment in generated:
+    @staticmethod
+    def _quality_blocks(
+        model: Any, samples: Any, clips: list[tuple[float, float]], kwargs: dict[str, Any],
+    ) -> tuple[Any, Any]:
+        """Sequential decoding in blocks of at most ``QUALITY_BLOCK_S`` of audio.
+
+        WhisperModel.transcribe computes the log-mel features of everything it
+        is given before decoding: for a 3.75-hour recorder that is tens of
+        gigabytes and the machine stalls (sony_run: no GPU work for 70 min, then
+        systemd-oomd killed the session). Blocks follow clip boundaries, so the
+        clips are unchanged; the previous block's text continues as prompt.
+        """
+        blocks: list[list[tuple[float, float]]] = []
+        for clip in clips:
+            if blocks and clip[1] - blocks[-1][0][0] <= QUALITY_BLOCK_S:
+                blocks[-1].append(clip)
+            else:
+                blocks.append([clip])
+        first: list[Any] = []
+
+        def generate() -> Any:
+            prompt = kwargs.get("initial_prompt")
+            for index, block in enumerate(blocks):
+                start, end = block[0][0], block[-1][1]
+                part = samples[int(start * 16000):int(end * 16000) + 1]
+                options = dict(kwargs)
+                if index and prompt:
+                    options["initial_prompt"] = prompt
+                generated, info = model.transcribe(
+                    part, clip_timestamps=[value - start for clip in block for value in clip],
+                    **options,
+                )
+                if not first:
+                    first.append(info)
+                tail: list[str] = []
+                for segment in generated:
+                    tail.append(str(segment.text))
+                    yield start, segment
+                # Keep the glossary prompt and add the end of what was just said.
+                said = " ".join(tail)[-200:]
+                prompt = " ".join(text for text in (kwargs.get("initial_prompt"), said) if text)
+
+        class _Info:
+            """Language of the first block, read lazily after decoding starts."""
+
+            @property
+            def language(self) -> Any:
+                return getattr(first[0], "language", None) if first else None
+
+        return generate(), _Info()
+
+    def _reporting(self, stream: Any, duration_s: float) -> Any:
+        """Pass ``(offset, segment)`` through while reporting how far recognition got."""
+        for offset, segment in stream:
             if self.progress is not None and duration_s > 0:
-                self.progress(min(1.0, float(segment.end) / duration_s))
-            yield segment
+                self.progress(min(1.0, (offset + float(segment.end)) / duration_s))
+            yield offset, segment
 
     @staticmethod
     def _speech_clips(
@@ -216,13 +268,12 @@ class FasterWhisperBackend:
         earlier. A clip is a real range of the file, so word times need no
         restoring.
         """
-        from faster_whisper import decode_audio  # type: ignore[import-not-found]
         from faster_whisper.vad import (  # type: ignore[import-not-found]
             VadOptions,
             get_speech_timestamps,
         )
 
-        samples = decode_audio(str(audio), sampling_rate=16000)
+        samples = decode_mono16k(audio)
         fragments = get_speech_timestamps(
             samples, VadOptions(max_speech_duration_s=30, min_silence_duration_ms=160))
         return samples, speech_clips(
@@ -631,6 +682,24 @@ def mlx_available() -> bool:
 
     return (sys.platform == "darwin" and platform.machine() == "arm64"
             and importlib.util.find_spec("mlx_whisper") is not None)
+
+
+def decode_mono16k(audio: Path) -> Any:
+    """Mono 16 kHz float32 samples through ffmpeg.
+
+    faster-whisper's own decoder needs a matching PyAV release (1.2.1 breaks
+    on PyAV 17); ffmpeg is a requirement anyway and streams long files fast.
+    """
+    import numpy as np
+
+    result = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-i", str(audio), "-map", "0:a:0", "-vn",
+         "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
+        capture_output=True,
+    )
+    if result.returncode:
+        raise RuntimeError(f"audio decode failed: {result.stderr.decode(errors='replace')}")
+    return np.frombuffer(result.stdout, dtype="<f4").copy()
 
 
 def energy_probe(audio: Path) -> Callable[[float, float], float]:

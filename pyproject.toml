@@ -78,5 +78,5 @@ warn_unused_configs = true
 [[tool.mypy.overrides]]
 # Optional ML/download dependencies live in managed module environments and ship
 # without type information; Studio code imports them lazily inside those workers.
-module = ["cv2", "torch", "torch.*", "ctranslate2", "faster_whisper"]
+module = ["cv2", "torch", "torch.*", "ctranslate2", "faster_whisper", "faster_whisper.*"]
 ignore_missing_imports = true

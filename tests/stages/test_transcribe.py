@@ -91,3 +91,40 @@ def test_quality_backend_passes_glossary_controls_and_preserves_unaligned_text()
     assert model.transcribe.call_args.kwargs["no_repeat_ngram_size"] == 3
     assert transcript.segments[0].text == "Unaligned speech."
     assert transcript.to_dict()["sentences"][0]["text"] == "Unaligned speech."
+
+
+def test_quality_mode_feeds_the_model_bounded_blocks() -> None:
+    # sony_run: one sequential call over 3.75 h built the features of the whole
+    # recording at once and the machine ran out of memory.
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    import numpy as np
+
+    settings = TranscribeSettings(device="cpu", mode="quality")
+    backend = FasterWhisperBackend(settings)
+    calls = []
+
+    def transcribe(audio, clip_timestamps, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append((len(audio) / 16000, list(clip_timestamps), kwargs.get("initial_prompt")))
+        first = clip_timestamps[0]
+        word = SimpleNamespace(word="слово", start=first + 0.1, end=first + 0.4, probability=0.9)
+        return [SimpleNamespace(start=first, end=first + 0.5, text=f"блок {len(calls)}",
+                                words=[word], avg_logprob=-0.1)], SimpleNamespace(language="ru")
+
+    model = Mock()
+    model.transcribe.side_effect = transcribe
+    hour = 3600 * 16000
+    clips = [(start, start + 20.0) for start in range(100, 3500, 60)]
+    with patch.object(backend, "_ensure_model", return_value=model), patch.object(
+        backend, "_speech_clips", return_value=(np.zeros(hour, np.float32), clips)
+    ):
+        transcript = backend.transcribe(Path("long.wav"), settings)
+    assert len(calls) > 1 and all(length <= 600.1 for length, _clips, _prompt in calls)
+    assert all(values[0] == 0.0 for _length, values, _prompt in calls)  # block-relative
+    assert calls[1][2] and "блок 1" in calls[1][2]  # the previous block continues as prompt
+    starts = [segment.start for segment in transcript.segments]
+    assert starts[0] == 100.0 and starts == sorted(starts)
+    second_block = clips[len(calls[0][1]) // 2]  # first clip of the second call
+    assert abs(transcript.words[1].start - (second_block[0] + 0.1)) < 1e-6
+    assert transcript.duration == 3600.0 and transcript.language == "ru"
