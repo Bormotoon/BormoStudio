@@ -35,6 +35,8 @@ def test_migrated_matcher_matches_frozen_ransac(offset: float, k: float) -> None
 
     expected = frozen_align(old(cam_times), old(rec_times), WhisperSyncConfig())
     actual = align(new(cam_times), new(rec_times), MatchSettings())
-    assert asdict(actual) == asdict(expected)
+    # ``notes`` is new: the frozen WhisperSync map has nothing to explain.
+    assert {key: value for key, value in asdict(actual).items() if key != "notes"} == asdict(
+        expected)
     assert actual.k == pytest.approx(k)
     assert actual.offset == pytest.approx(offset + 0.1 * (1 - k))

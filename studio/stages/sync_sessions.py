@@ -11,6 +11,9 @@ from studio.core.transcript import Transcript
 from studio.stages.sync_alignment import align_sources
 from studio.stages.sync_models import AlignmentMap
 
+# fit(target, source, source_range=None, acoustic_search=None): an accepted map or None.
+Fit = Callable[..., AlignmentMap | None]
+
 
 def plan_sessions(
     project: Project, cameras: list[Asset], recorders: list[Asset],
@@ -19,23 +22,36 @@ def plan_sessions(
     search_ranges: dict[tuple[str, str], tuple[float, float]] | None = None,
     text_only: set[tuple[str, str]] | None = None,
     progress: Callable[[int, int, str], None] | None = None,
+    skipped_search: str | None = None,
+    second_pass: Callable[[Fit, dict[tuple[str, str], AlignmentMap], dict[str, str]], None]
+    | None = None,
+    matching: dict[str, Transcript] | None = None,
 ) -> tuple[list[SourcePlacement], dict[tuple[str, str], AlignmentMap], dict[str, str]]:
     """Fit every camera to the recorders and place all files on one timeline.
 
     ``check`` may replace an accepted camera–recorder map (the acoustic drift
-    check) before placements are derived from it.
+    check) before placements are derived from it. ``second_pass`` gets the
+    fitting function and the results of the first pass and may drop or add
+    camera–recorder maps (neighbour search, a stronger transcription) before
+    the cameras are placed. ``matching`` replaces a file's transcript for word
+    matching only (a recorder transcribed in the cameras' Whisper mode).
     """
     fits: dict[tuple[str, str], AlignmentMap] = {}
     rejected: dict[str, str] = {}
 
-    def fit(target: Asset, source: Asset) -> AlignmentMap | None:
+    def fit(target: Asset, source: Asset, source_range: tuple[float, float] | None = None,
+            acoustic_search: bool | None = None) -> AlignmentMap | None:
+        extra = {"skipped_search": skipped_search} if skipped_search else {}
         try:
             result = align_sources(
-                transcripts[target.id], transcripts[source.id],
+                (matching or {}).get(target.id, transcripts[target.id]),
+                (matching or {}).get(source.id, transcripts[source.id]),
                 project.source_dir / target.path, project.source_dir / source.path,
                 conf, acoustic_first=acoustic_first,
-                source_range=(search_ranges or {}).get((target.id, source.id)),
-                acoustic_search=(target.id, source.id) not in (text_only or set()),
+                source_range=source_range or (search_ranges or {}).get((target.id, source.id)),
+                acoustic_search=((target.id, source.id) not in (text_only or set())
+                                 if acoustic_search is None else acoustic_search),
+                **extra,
             )
         except ValueError as exc:
             reason = str(exc)
@@ -63,6 +79,8 @@ def plan_sessions(
             result = fit(camera, recorder)
             if result is not None:
                 fits[camera.id, recorder.id] = result
+    if second_pass is not None:
+        second_pass(fit, fits, rejected)
     # A clip no recorder matches (a one-second false start, a test shot) is left
     # out with its reasons; only a project where nothing matches fails.
     unplaced = [camera for camera in cameras

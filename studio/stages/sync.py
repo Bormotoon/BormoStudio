@@ -55,12 +55,13 @@ class SyncStage:
         transcripts = {
             asset_id: path.read_text(encoding="utf-8")
             for asset_id, path in project.transcripts.items()
-            if asset_id in {asset.id for asset in project.assets} and path.is_file()
+            if asset_id.removeprefix("match:") in {asset.id for asset in project.assets}
+            and path.is_file()
         }
         from studio.stages.transcribe import _sha256
 
         return stable_fingerprint(
-            "sync-v5", transcripts, project.assets,
+            "sync-v6", transcripts, project.assets,
             {asset.id: _sha256(project.source_dir / asset.path, project.work_dir)
              for asset in project.assets if asset.role in {AssetRole.CAMERA, AssetRole.RECORDER}},
             settings.get("sync", {}), settings.get("transcribe", {}).get("audio_streams", {}),
@@ -174,13 +175,15 @@ def _run_complex(context: StageContext) -> StageOutput:
     from studio.stages.sync_media import selected_media
 
     context.work_dir.mkdir(parents=True, exist_ok=True)
+    originals = {asset.id: asset for asset in context.project.assets}
     with selected_media(context.project, context.work_dir,
                         context.settings.get("transcribe", {}).get("audio_streams")) as project:
         return _render_complex(StageContext(project, context.settings, context.work_dir,
-                                            context.progress))
+                                            context.progress), originals)
 
 
-def _render_complex(context: StageContext) -> StageOutput:
+def _render_complex(context: StageContext,
+                    originals: dict[str, Asset] | None = None) -> StageOutput:
     project = context.project
     cameras = _ordered_cameras(project, context.settings)
     recorders = [asset for asset in project.assets if asset.role is AssetRole.RECORDER]
@@ -191,13 +194,15 @@ def _render_complex(context: StageContext) -> StageOutput:
     artifacts = []
     warps = []
     outputs = {key: paths for key, paths in project.outputs.items()
-               if not key.startswith(("sync:", "sync-tracks:", "voice-segments:", "ambience:"))
+               if not key.startswith(("sync:", "sync-tracks:", "voice-segments:", "ambience:",
+                                      "recorder:"))
                and key not in {"master_wav", "self_check", "repair", "verify", "audio_processing"}}
     sync = context.settings.get("sync", {})
     sync = sync if isinstance(sync, dict) else {}
     if sync.get("self_check") == "repair" and sync.get("voice_enhance", "off") != "off":
         raise ValueError("sync.self_check=repair currently requires voice_enhance=off")
     mode = _sync_mode(context.settings)
+    placement = str(sync.get("placement", "text"))
     from studio.stages.sync_sessions import plan_sessions
 
     # A camera located acoustically needs no transcript: its length comes from probe.
@@ -213,6 +218,10 @@ def _render_complex(context: StageContext) -> StageOutput:
         for camera_id, missing in positions.get("missing", {}).items()
         for recorder_id in missing
     }
+    if placement == "text":
+        # Words first for every clip; the acoustics search only around
+        # neighbours placed by text, in the second pass.
+        text_only = {(camera.id, recorder.id) for camera in cameras for recorder in recorders}
     search_ranges = {
         (camera.id, recorder_id): (max(0.0, entry["position_s"] - 30.0),
                                    entry["position_s"] + transcripts[camera.id].duration + 30.0)
@@ -224,6 +233,12 @@ def _render_complex(context: StageContext) -> StageOutput:
     stage_warnings: list[str] = []
     drift_reports: dict[str, Any] = {}
     constant_only: set[tuple[str, str]] = set()
+    drift_checks: dict[tuple[str, str], Any] = {}
+    # Clips given the recorder jumps without acoustics of their own: their jumps
+    # are absorbed by the piece plan (strategy 3). A clip with its own acoustic
+    # steps keeps strategy 1: the refinement finds each step to a millisecond
+    # (a click or the fine grid), which sentence pieces cannot.
+    stepped: set[tuple[str, str]] = set()
 
     def check(target: Asset, source: Asset, alignment: Any) -> Any:
         refine = refine_settings(sync, target)
@@ -242,6 +257,7 @@ def _render_complex(context: StageContext) -> StageOutput:
             drift_reports[f"{target.id}:{source.id}"] = {"used": "text", "reason": str(exc)}
             return alignment
         drift_reports[f"{target.id}:{source.id}"] = checked.report
+        drift_checks[target.id, source.id] = checked
         if checked.constant_only:
             constant_only.add((target.id, source.id))
             if mode == "complex":
@@ -253,10 +269,90 @@ def _render_complex(context: StageContext) -> StageOutput:
     def fitting(done: int, total: int, name: str) -> None:
         context.progress(0.6 * done / max(1, total), f"fitting {done + 1}/{total}: {name}")
 
-    placements, fits, rejected = plan_sessions(
-        project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
-        check=check, search_ranges=search_ranges, text_only=text_only, progress=fitting,
+    from studio.stages.sync_jumps import apply_jumps, recorder_jumps, unseen_jumps
+    from studio.stages.sync_rescue import quality_transcriber, second_pass
+
+    second_report: dict[str, Any] = {}
+    jumps: list[Any] = []
+    rescue = second_pass(
+        cameras=cameras, recorders=recorders, transcripts=transcripts,
+        originals=originals or {asset.id: asset for asset in project.assets},
+        source_dir=project.source_dir, settings=context.settings,
+        output_dir=context.work_dir / "stages" / "sync" / "rescue",
+        report=second_report, warnings=stage_warnings,
+        progress=lambda message: context.progress(0.55, message),
+        transcriber=quality_transcriber(context.settings, project.source_dir,
+                                        project.work_dir),
+        acoustic=placement == "text",
     )
+
+    repairs: dict[str, Any] = {}
+
+    def after_fitting(fit: Any, fits: dict[tuple[str, str], Any],
+                      rejected: dict[str, str]) -> None:
+        rescue(fit, fits, rejected)
+        if sync.get("recorder_repair", "auto") != "off":
+            # The recorder's own clock: samples it lost are found against
+            # every camera and put back; every clip is refitted to the
+            # repaired recorder by one line.
+            from studio.core.parallel import cpu_workers
+            from studio.stages.sync_recorder_clock import repair_recorders
+
+            repairs.update(repair_recorders(
+                source_dir=project.source_dir, cameras=cameras, recorders=recorders,
+                originals=originals or {asset.id: asset for asset in project.assets},
+                transcripts=transcripts, matching=matching, fits=fits, sync=sync,
+                workers=cpu_workers(context.settings),
+                output_dir=context.work_dir / "stages" / "sync" / "recorder",
+                published_dir=project.work_dir / "stages" / "sync" / "recorder",
+                scratch_dir=context.work_dir / "stages" / "sync" / "scratch",
+                progress=lambda message: context.progress(0.58, message)))
+            for recorder_id, repair in repairs.items():
+                assets_by_id[recorder_id] = next(
+                    asset for asset in recorders if asset.id == recorder_id)
+                stage_warnings.append(
+                    f"{Path(originals_by_id[recorder_id].path).name}: the recorder lost "
+                    f"{repair.clock.total_ms / 1000:.1f} s in {len(repair.clock.applied)} "
+                    "place(s); repaired"
+                    + (" (filled from the cameras' sound)"
+                       if sync.get("recorder_fill", "camera") == "camera" else ""))
+        # One map of recorder jumps from every camera; clips without an
+        # acoustic model of their own follow it (when the recorder was not repaired).
+        jumps.extend(recorder_jumps(drift_checks, fits))
+        for (camera_id, recorder_id), alignment in list(fits.items()):
+            if camera_id not in transcripts or (camera_id, recorder_id) in stepped or (
+                    recorder_id in repairs):
+                continue
+            checked = drift_checks.get((camera_id, recorder_id))
+            if checked is not None and checked.model is not None:
+                for jump in unseen_jumps(checked, jumps, transcripts[camera_id].duration):
+                    stage_warnings.append(
+                        f"{Path(assets_by_id[camera_id].path).name}: recorder jump of "
+                        f"{jump.delta_ms:+.0f} ms at {jump.rec_s:.1f} s is not in its own "
+                        "acoustic model; check by ear")
+                continue
+            bent = apply_jumps(alignment, [jump for jump in jumps
+                                           if jump.recorder_id == recorder_id],
+                               transcripts[camera_id].duration)
+            if bent is not None:
+                fits[camera_id, recorder_id] = bent
+                stepped.add((camera_id, recorder_id))
+
+    assets_by_id = {asset.id: asset for asset in [*cameras, *recorders]}
+    originals_by_id = originals or assets_by_id
+    matching = {asset.id: Transcript.load(project.transcripts[f"match:{asset.id}"])
+                for asset in recorders
+                if f"match:{asset.id}" in project.transcripts
+                and project.transcripts[f"match:{asset.id}"].is_file()}
+    placements, fits, rejected = plan_sessions(
+        project, cameras, recorders, transcripts, sync,
+        acoustic_first=placement == "acoustic" and mode in {"auto", "simple"},
+        check=check, search_ranges=search_ranges, text_only=text_only, progress=fitting,
+        skipped_search=("text placement searches acoustically between placed neighbours "
+                        "in its second pass" if placement == "text" else None),
+        second_pass=after_fitting, matching=matching,
+    )
+    camera_transcripts = [transcripts[camera.id] for camera in cameras]
     left_out = [camera for camera in cameras
                 if not any(target == camera.id for target, _ in fits)]
     if left_out:
@@ -281,6 +377,8 @@ def _render_complex(context: StageContext) -> StageOutput:
         )
         if (camera.id, recorder.id) in constant_only:
             selected = "simple"  # the acoustics support only the constant plan
+        if mode == "auto" and (camera.id, recorder.id) in stepped:
+            selected = "complex"  # recorder jumps from other cameras, cut in pauses
         strategy = int(sync.get("strategy", 3)) if selected == "complex" else 1
         refine = refine_settings(sync, camera)
         plan = render_aligned_clip(
@@ -311,6 +409,8 @@ def _render_complex(context: StageContext) -> StageOutput:
             )
             if (camera.id, extra.id) in constant_only:
                 extra_mode = "simple"
+            if mode == "auto" and (camera.id, extra.id) in stepped:
+                extra_mode = "complex"
             extra_plan = render_aligned_clip(
                 fitted, PieceConfig(), project.source_dir / extra.path, extra_voice,
                 clip_duration_s=candidate.duration, recorder_duration_s=extra_transcript.duration,
@@ -350,6 +450,23 @@ def _render_complex(context: StageContext) -> StageOutput:
             )
         if sync.get("recorder_mode") == "all":
             outputs[f"sync-tracks:{camera.id}"] = [item[1] for item in choices]
+    clip_report = {}
+    for camera in cameras:
+        pairs = [(recorder.id, fits[camera.id, recorder.id]) for recorder in recorders
+                 if (camera.id, recorder.id) in fits]
+        recorder_id, alignment = pairs[0]
+        acoustic = alignment.provenance.startswith("acoustic")
+        clip_report[camera.id] = {
+            "recorder": recorder_id, "method": alignment.provenance,
+            "precision": "acoustic" if acoustic else "text",
+            "start_s": round(-alignment.offset / (alignment.k or 1.0), 3),
+            "inliers": alignment.inliers, "residual_ms": round(alignment.residual_ms, 1),
+            "notes": list(alignment.notes),
+        }
+        if not acoustic:
+            stage_warnings.append(
+                f"{Path(camera.path).name}: placed by its words only (about ±0.1 s); "
+                "the acoustics did not confirm it")
     report = context.work_dir / "stages" / "sync" / "output.json"
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps({
@@ -358,10 +475,15 @@ def _render_complex(context: StageContext) -> StageOutput:
         "voices": {camera.id: str(outputs[f"sync:{camera.id}"][0].relative_to(report.parent))
                    for camera in cameras},
         "padding": "silence is outside invertible source maps",
+        "placement": placement,
+        "clips": clip_report,
         "rejected_pairs": rejected,
+        "second_pass": second_report,
+        "recorder_jumps": [jump.to_dict() for jump in jumps],
+        "recorder_clock": {recorder_id: repair.report() for recorder_id, repair in repairs.items()},
         "acoustic_refine": refine_reports,
         "acoustic_fit": drift_reports,
-    }, indent=2) + "\n", encoding="utf-8")
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     artifacts.append(report)
     if sync.get("voice_enhance", "off") != "off" or sync.get("ambience"):
         from studio.stages.sync_audio_steps import process_audio
@@ -448,6 +570,11 @@ def _render_complex(context: StageContext) -> StageOutput:
             status, reason = verification.verdict(threshold)
             measurements.append({"asset_id": camera.id, "status": status, "reason": reason,
                                  **verification.summary(threshold)})
+        for item in measurements:
+            if item["status"] != "passed":
+                name = Path(next(camera.path for camera in cameras
+                                 if camera.id == item["asset_id"])).name
+                stage_warnings.append(f"{name}: sync check {item['status']}: {item['reason']}")
         verify_path = report.with_name("verify.json")
         verify_path.write_text(json.dumps({"schema_version": 1, "clips": measurements},
                                           indent=2) + "\n", encoding="utf-8")
@@ -460,9 +587,19 @@ def _render_complex(context: StageContext) -> StageOutput:
     }
     report_data["strategies"] = {warp.id: warp.strategy for warp in warps}
     report.write_text(json.dumps(report_data, indent=2) + "\n", encoding="utf-8")
-    return StageOutput(tuple(artifacts), {
+    changes: dict[str, Any] = {
         "placements": placements, "audio_warp_maps": warps, "outputs": outputs,
-    }, tuple(stage_warnings))
+    }
+    # The repaired recorder replaces the original for every later stage.
+    transcript_keys = {key: path for key, path in project.transcripts.items()
+                       if not key.startswith("repaired:")}
+    for recorder_id, repair in repairs.items():
+        outputs[f"recorder:{recorder_id}"] = [repair.audio]
+        transcript_keys[f"repaired:{recorder_id}"] = repair.transcript
+        artifacts.extend([repair.audio, repair.transcript])
+    if transcript_keys != project.transcripts:
+        changes["transcripts"] = transcript_keys
+    return StageOutput(tuple(artifacts), changes, tuple(stage_warnings))
 
 
 def _run_camera_placement(context: StageContext) -> StageOutput:

@@ -10,7 +10,7 @@ placement and the fallback for cameras without usable sound.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,16 @@ TEXT_GAP_S = 10.0
 DRIFT_MIN_MS = 5.0
 # complex may be worse than the constant (auto) plan by at most this much.
 COMPLEX_TOLERANCE_MS = 1.0
+# A clip too short or too quiet for a model is still confirmed by a few windows
+# that agree on one offset (sony_run: dji-0935, 15 s, 3 windows of 5).
+PARTIAL_MIN_WINDOWS = 3
+PARTIAL_AGREE_MS = 20.0
+# Below this a clip gets a denser grid, and the text slope is noise: k = 1.
+SHORT_CLIP_S = 120.0
+SHORT_GRID_WINDOWS = 20
 ACOUSTIC_TOKEN = "acoustic:"
+# Anchors placed from the recorder jump map carry their regime the same way.
+JUMP_TOKEN = "jump:"
 
 
 @dataclass(slots=True)
@@ -38,6 +47,10 @@ class DriftCheck:
     report: dict[str, Any]
     # Only the constant plan (strategy 1) is supported by the acoustics.
     constant_only: bool = False
+    # The acoustic model and the clip times of its confident windows, for the
+    # recorder jump map shared by all cameras.
+    model: RegimeModel | None = None
+    confident_s: list[float] = field(default_factory=list)
 
 
 def check_alignment(
@@ -72,9 +85,12 @@ def check_alignment(
     def mapping(t: float) -> float:
         return (t - alignment.offset) / k
 
+    grid_s = settings.grid_s
+    if clip_duration_s < SHORT_CLIP_S:
+        grid_s = min(grid_s, max(0.5, clip_duration_s / SHORT_GRID_WINDOWS))
     grid = measure_grid(
         camera_track, recorder_track, mapping, duration_s=clip_duration_s,
-        other_origin_s=rec0, grid_s=settings.grid_s, window_s=settings.window_s,
+        other_origin_s=rec0, grid_s=grid_s, window_s=settings.window_s,
         max_lag_s=settings.max_lag_s, min_sharpness=settings.min_sharpness,
     )
     times = [item.t for item in grid.confident]
@@ -82,10 +98,24 @@ def check_alignment(
     report.update(windows=grid.attempted, confident=len(times), coverage=round(coverage, 3))
     model = fit_model(grid, step_min_ms=settings.step_min_ms)
     if model is None or len(times) < MIN_WINDOWS or coverage < MIN_COVERAGE:
-        report.update(used="text", reason=(
-            f"{len(times)} confident window(s) over {coverage:.0%} of the clip "
-            f"(need {MIN_WINDOWS} over {MIN_COVERAGE:.0%})"))
-        return DriftCheck(alignment, report)
+        reason = (f"{len(times)} confident window(s) over {coverage:.0%} of the clip "
+                  f"(need {MIN_WINDOWS} over {MIN_COVERAGE:.0%})")
+        partial = _agreed_offset(grid)
+        if partial is None:
+            report.update(used="text", reason=reason)
+            return DriftCheck(alignment, report, confident_s=times)
+        # Too little for drift or steps, enough for where the clip is: the
+        # windows agree on one offset from the text line.
+        lag_ms, agreeing = partial
+        new_k = 1.0 if clip_duration_s < SHORT_CLIP_S else k
+        middle = float(np.median([item.t for item in agreeing]))
+        rec_middle = mapping(middle) + lag_ms / 1000.0
+        offset = middle - new_k * rec_middle
+        report.update(used="acoustic offset", reason=reason, offset=offset, k=new_k,
+                      lag_ms=round(lag_ms, 2), agreeing=len(agreeing))
+        return DriftCheck(replace(alignment, offset=offset, k=new_k, provenance="acoustic",
+                                  inliers=max(alignment.inliers, len(agreeing))),
+                          report, confident_s=times)
     offset, new_k = _line_from_model(model, alignment.offset, k)
     anchors = _anchors(grid, mapping, model, alignment)
     constant_p90 = _constant_p90(grid, model)
@@ -112,7 +142,19 @@ def check_alignment(
             f"complex rejected: drift is not confirmed by the acoustics "
             f"(k_text = {alignment.k:.7f}; p90 {model.p90_before_ms:.0f} ms against "
             f"{constant_p90:.0f} ms)")
-    return DriftCheck(checked, report, constant_only)
+    return DriftCheck(checked, report, constant_only, model, times)
+
+
+def _agreed_offset(grid: VerifyReport) -> tuple[float, list[Any]] | None:
+    """The offset (ms) most confident windows agree on, with those windows."""
+    confident = list(grid.confident)
+    if len(confident) < PARTIAL_MIN_WINDOWS:
+        return None
+    middle = float(np.median([item.lag_ms for item in confident]))
+    agreeing = [item for item in confident if abs(item.lag_ms - middle) <= PARTIAL_AGREE_MS]
+    if len(agreeing) < PARTIAL_MIN_WINDOWS or len(agreeing) < 0.6 * len(confident):
+        return None
+    return float(np.median([item.lag_ms for item in agreeing])), agreeing
 
 
 def _line_from_model(model: RegimeModel, offset: float, k: float) -> tuple[float, float]:
@@ -163,6 +205,7 @@ def _anchors(
 
 def anchor_regime(anchor: Anchor) -> int | None:
     token = getattr(anchor, "token", "")
-    if isinstance(token, str) and token.startswith(ACOUSTIC_TOKEN):
-        return int(token[len(ACOUSTIC_TOKEN):])
+    for prefix in (ACOUSTIC_TOKEN, JUMP_TOKEN):
+        if isinstance(token, str) and token.startswith(prefix):
+            return int(token[len(prefix):])
     return None

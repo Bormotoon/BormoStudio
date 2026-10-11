@@ -91,3 +91,26 @@ def test_smoothing_does_not_mix_regimes_across_a_step() -> None:
     after, _rate = _smoothed_map_at(alignment, 115.0)
     assert before == pytest.approx(55.0, abs=1e-6)
     assert after == pytest.approx(65.088, abs=1e-6)
+
+
+def test_a_short_clip_is_confirmed_by_a_few_agreeing_windows() -> None:
+    # sony_run dji-0935: 15 s, text start 13434.684 s, acoustics 13434.694 s.
+    recorder = _speech(200, seed=4)
+    camera = recorder[int(100.04 * SR):int(115.04 * SR)].copy()  # true start 100.04 s
+    camera[int(6 * SR):] = 0.0  # the camera hears only its first seconds
+    anchors = [Anchor(t, t + 100.0, f"w{t}", 1.0) for t in (2.0, 6.0, 11.0)]
+    text = AlignmentMap(anchors, -100.0 * 0.9988, 0.9988, 40.0, "text", 12, 9.0)
+    checked = _check(camera, recorder, text)
+    assert checked.report["used"] == "acoustic offset"
+    assert checked.alignment.provenance == "acoustic" and checked.alignment.k == 1.0
+    assert -checked.alignment.offset == pytest.approx(100.04, abs=0.002)
+    assert checked.report["windows"] >= 15  # the dense grid of a short clip
+
+
+def test_windows_that_disagree_leave_the_text_map() -> None:
+    rng = np.random.default_rng(5)
+    recorder = _speech(200, seed=6)
+    camera = rng.standard_normal(int(15 * SR)).astype(np.float32) * 0.2  # unrelated sound
+    text = AlignmentMap([], -100.0, 1.0, 40.0, "text", 12, 9.0)
+    checked = _check(camera, recorder, text)
+    assert checked.report["used"] == "text" and checked.alignment is text

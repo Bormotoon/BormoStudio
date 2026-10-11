@@ -25,6 +25,7 @@ class PrepareStage:
     settings_keys: tuple[str, ...] = (
         "sync.mode", "sync.self_check", "transcribe.audio_streams", "transcribe.recorder_scope",
         "transcribe.ranges", "transcribe.window_margin_s", "transcribe.camera_transcripts",
+        "transcribe.camera_mode", "sync.placement",
     )
     gpu = GpuUse.NONE
 
@@ -40,7 +41,7 @@ class PrepareStage:
         inputs = [(asset.id, asset.role.value, asset.manual) for asset in project.assets]
         positions = project.work_dir / "stages" / "locate" / "positions.json"
         return stable_fingerprint(
-            "prepare-v3", inputs, project.plan_revision,
+            "prepare-v5", inputs, project.plan_revision,
             select_settings(settings, self.settings_keys),
             positions.read_text(encoding="utf-8") if positions.is_file() else None,
         )
@@ -58,11 +59,17 @@ class PrepareStage:
         reasons: dict[str, str] = {
             asset_id: "primary recorder transcript" for asset_id in transcripts
         }
+        text_first = mode != "camera" and bool(recorders) and (
+            sync.get("placement", "text") == "text")
         always = transcribe.get("camera_transcripts", "auto") == "always"
         self_check = sync.get("self_check", "off") != "off"
+        camera_mode = str(transcribe.get("camera_mode", "fast"))
+        modes: dict[str, str] = {}
         for camera in cameras:
             why = ("camera mode places cameras by their speech" if mode == "camera"
                    else "no recorder" if not recorders
+                   else "sync.placement=text places every camera by its speech"
+                   if text_first
                    else "transcribe.camera_transcripts=always" if always
                    else "self-check compares the rendered voice with the camera" if self_check
                    else "not located acoustically; text placement needs it"
@@ -70,16 +77,39 @@ class PrepareStage:
             if why is not None:
                 transcripts.append(camera.id)
                 reasons[camera.id] = why
-        ranges, range_reasons = transcribe_ranges(
-            recorders, cameras, positions, transcribe if isinstance(transcribe, dict) else {},
-        ) if mode != "camera" else ({}, {})
+                # Only placement reads these words; a camera without a recorder
+                # is the content itself and keeps transcribe.mode.
+                if recorders and mode != "camera":
+                    modes[camera.id] = camera_mode
+        ranges: dict[str, list[list[float]]]
+        if text_first:
+            # Text placement searches each camera in the whole recorder.
+            ranges, range_reasons = {}, {
+                asset.id: "whole recorder: sync.placement=text" for asset in recorders}
+        else:
+            ranges, range_reasons = transcribe_ranges(
+                recorders, cameras, positions,
+                transcribe if isinstance(transcribe, dict) else {},
+            ) if mode != "camera" else ({}, {})
         reasons.update(range_reasons)
+        # Words are matched between transcripts of one Whisper mode: on
+        # sony_run the fast recorder transcript gave anchors with p90 error
+        # 38-58 ms against 117-129 ms for the quality one (worse timestamps),
+        # and half the false anchors. The content keeps transcribe.mode.
+        match_transcripts = {
+            asset.id: camera_mode for asset in recorders
+            if text_first and camera_mode != str(transcribe.get("mode", "fast"))}
+        for asset_id in match_transcripts:
+            reasons[f"match:{asset_id}"] = (
+                f"{camera_mode} transcript of the recorder for matching camera words")
         data = {
             "schema_version": 2,
             "plan_revision": project.plan_revision,
             "assets": [asset.id for asset in cameras + recorders],
             "transcripts": list(dict.fromkeys(transcripts)),
             "transcribe_ranges": ranges,
+            "transcribe_modes": modes,
+            "match_transcripts": match_transcripts,
             "audio_streams": {
                 asset.id: context.settings.get("transcribe", {}).get("audio_streams", {}).get(
                     asset.id, asset.manual.get("media_info", {}).get("audio_stream_index")

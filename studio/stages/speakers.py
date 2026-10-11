@@ -13,7 +13,13 @@ from typing import Any, cast
 import numpy as np
 
 from studio.core.channels import effective_audio
-from studio.core.project import AssetRole, Project, describe_artifact, stable_fingerprint
+from studio.core.project import (
+    Asset,
+    AssetRole,
+    Project,
+    describe_artifact,
+    stable_fingerprint,
+)
 from studio.core.timeline import AudioWarpMap, SourcePlacement, TimeDomain
 from studio.core.transcript import Transcript, Word
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
@@ -119,7 +125,7 @@ class SpeakersStage:
             if asset_id not in decoded:
                 asset = assets[asset_id]
                 decoded[asset_id] = decode_channels(
-                    context.project.source_dir / asset.path,
+                    recorder_audio(context.project, asset),
                     int(asset.manual.get("media_info", {}).get("audio_channels") or 1),
                 )
         identities: dict[str, object] | None = None
@@ -383,7 +389,7 @@ def run_pyannote(context: StageContext, transcript: Transcript, conf: dict) -> S
     assets = {asset.id: asset for asset in project.assets}
     results = []
     for order, (asset_id, placement, intervals) in enumerate(sources):
-        path = project.source_dir / assets[asset_id].path
+        path = recorder_audio(project, assets[asset_id])
         diarization = speaker_backend.diarize(
             path, directory if order == 0 else directory / "sources" / asset_id,
             model=str(conf.get("model", "pyannote/speaker-diarization-3.1")),
@@ -473,6 +479,13 @@ def run_pyannote(context: StageContext, transcript: Transcript, conf: dict) -> S
     return StageOutput((output, raw_output, report, *logs), {"outputs": {
         **project.outputs, "speakers": [output, report], "speakers_raw": [raw_output],
     }})
+
+
+def recorder_audio(project: Project, asset: Asset) -> Path:
+    """The recorder's sound on its repaired clock when sync repaired it."""
+    repaired = next((path for path in project.outputs.get(f"recorder:{asset.id}", [])
+                     if path.is_file()), None)
+    return repaired or project.source_dir / asset.path
 
 
 def decode_channels(path: Path, channels: int, sample_rate: int = 16000) -> np.ndarray:

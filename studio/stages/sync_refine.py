@@ -64,7 +64,8 @@ class RefineSettings:
     threshold_ms: float = 20.0
     seam_snap_max_s: float = 0.4
     min_sharpness: float = 50.0
-    max_lag_s: float = 0.25
+    # Jumps of the recorder reach 0.8 s; a narrower lag range does not see them.
+    max_lag_s: float = 1.0
 
     @classmethod
     def from_sync(cls, sync: dict[str, Any], seam_snap_max_s: float = 0.4) -> RefineSettings:
@@ -75,6 +76,7 @@ class RefineSettings:
             threshold_ms=float(sync.get("max_drift_ms", 20.0)),
             seam_snap_max_s=seam_snap_max_s,
             min_sharpness=float(sync.get("acoustic_min_sharpness", 50.0)),
+            max_lag_s=float(sync.get("refine_max_lag_s", 1.0)),
         )
 
 

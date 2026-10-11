@@ -263,3 +263,20 @@ def test_reel_command_edits_and_clears_overrides(tmp_path: Path, capsys) -> None
     capsys.readouterr()
     assert main(["reel", str(tmp_path), "--reel", "c1", "--clear"]) == 0
     assert _json.loads(capsys.readouterr().out) == {"reels": {}}
+
+
+def test_failed_sync_check_is_listed_for_review(tmp_path: Path) -> None:
+    import json
+
+    from studio.cli.main import _sync_review
+
+    assert _sync_review(tmp_path) == {}
+    verify = tmp_path / "stages" / "sync" / "verify.json"
+    verify.parent.mkdir(parents=True)
+    verify.write_text(json.dumps({"clips": [
+        {"asset_id": "dji-0921", "status": "failed", "reason": "shifted beyond 20.0 ms"},
+        {"asset_id": "dji-0924", "status": "passed", "reason": "median 1.7 ms"},
+        {"asset_id": "mvi-0844", "status": "inconclusive", "reason": "29% of the clip"},
+    ]}))
+    assert _sync_review(tmp_path) == {"dji-0921": "failed: shifted beyond 20.0 ms",
+                                      "mvi-0844": "inconclusive: 29% of the clip"}

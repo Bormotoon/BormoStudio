@@ -49,6 +49,20 @@ class SyncSettings:
     step_min_ms: float = 10.0
     # locate: search other cameras of a group this far around their predicted place.
     locate_search_s: float = 120.0
+    # "text": every camera is transcribed and placed by its speech first (the
+    # WhisperSync way), the acoustics then refine around that place;
+    # "acoustic": locate searches the recorders first, text only for the rest.
+    placement: str = "text"
+    # A clip neither text nor acoustics placed is transcribed again in quality.
+    rescue: str = "quality"
+    # Acoustic grid of the drift check and refinement: largest lag it can see.
+    # Recorder jumps of 0.2-0.8 s (sony_run) are invisible at 0.25 s.
+    refine_max_lag_s: float = 1.0
+    # A recorder that loses samples (a phone dropping buffers) is repaired
+    # against the cameras: "auto" does it when losses are found, "off" never.
+    recorder_repair: str = "auto"
+    # What fills the lost time: the camera that heard it, or silence.
+    recorder_fill: str = "camera"
     voice_segment_minutes: float = 0.0
     master_wav: bool = False
     master_crossfade_ms: float = 10.0
@@ -89,6 +103,9 @@ class TranscribeSettings:
     # "auto": camera transcripts only where needed (not located, self-check,
     # camera mode, no recorder); "always": every camera.
     camera_transcripts: str = "auto"
+    # Whisper mode of the camera transcripts that only place a camera on the
+    # recorder; the content transcripts follow ``mode``.
+    camera_mode: str = "fast"
 
 
 @dataclass(slots=True)
@@ -420,6 +437,12 @@ def validate_settings(settings: Settings) -> None:
             {"auto", "always"})
     _non_negative("transcribe.window_margin_s", settings.transcribe.window_margin_s)
     _positive("sync.locate_search_s", settings.sync.locate_search_s)
+    _one_of("sync.placement", settings.sync.placement, {"text", "acoustic"})
+    _one_of("sync.rescue", settings.sync.rescue, {"quality", "off"})
+    _positive("sync.refine_max_lag_s", settings.sync.refine_max_lag_s)
+    _one_of("sync.recorder_repair", settings.sync.recorder_repair, {"auto", "off"})
+    _one_of("sync.recorder_fill", settings.sync.recorder_fill, {"camera", "silence"})
+    _one_of("transcribe.camera_mode", settings.transcribe.camera_mode, {"fast", "quality"})
     for asset_id, spans in settings.transcribe.ranges.items():
         if not asset_id.strip() or any(
                 len(span) != 2 or not 0 <= span[0] < span[1] for span in spans):

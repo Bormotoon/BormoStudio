@@ -111,8 +111,9 @@ def _smoothed_map_at(
 
 
 def _regime(anchor: object) -> int | None:
+    """Regime of an acoustic or jump-map anchor (``acoustic:N``, ``jump:N``)."""
     token = getattr(anchor, "token", "")
-    if isinstance(token, str) and token.startswith("acoustic:"):
+    if isinstance(token, str) and token.startswith(("acoustic:", "jump:")):
         return int(token.split(":", 1)[1])
     return None
 

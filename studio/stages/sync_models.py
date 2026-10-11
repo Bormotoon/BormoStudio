@@ -72,4 +72,6 @@ class AlignmentMap:
     # A map fitted from evidence covering 3 s of a 10-minute clip is an
     # extrapolation, however small its residual.
     evidence_span_s: float = 0.0
+    # Why this map was chosen over another one (text against acoustics).
+    notes: list[str] = field(default_factory=list)
 

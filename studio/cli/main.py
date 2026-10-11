@@ -108,7 +108,11 @@ def _run_pipeline(
     def forward(event: StageEvent) -> None:
         print(event.to_json(), flush=True)
 
+    warnings: dict[str, list[str]] = {}
+
     def relay(event: StageEvent) -> None:
+        if event.type is EventType.WARNING:
+            warnings.setdefault(event.stage, []).append(str(event.payload.get("message", "")))
         if stream:
             forward(event)
         elif event.type is EventType.WARNING:
@@ -187,10 +191,15 @@ def _run_pipeline(
                     break
                 failures[candidate.stage_id] = str(exc)
                 print(str(exc), file=sys.stderr)
+        review = _sync_review(project.work_dir)
         report = {
             "schema_version": 1,
-            "status": "cancelled" if cancelled_run else "failed" if failures else "ok",
+            "status": "cancelled" if cancelled_run else "failed" if failures
+            else "needs_review" if review else "ok",
             "failures": failures,
+            # Clips whose rendered voice failed or could not pass the sync check.
+            "review": review,
+            "warnings": warnings,
             "stages": [
                 {
                     "id": item.stage_id,
@@ -213,6 +222,17 @@ def _run_pipeline(
         if failures:
             raise StageProcessError(f"pipeline failed: {', '.join(failures)}; see report.json")
     return Project.load(project_path)
+
+
+def _sync_review(work_dir: Path) -> dict[str, str]:
+    """``{clip: "status: reason"}`` of every clip the sync check did not pass."""
+    try:
+        data = json.loads((work_dir / "stages" / "sync" / "verify.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(item.get("asset_id")): f"{item.get('status')}: {item.get('reason', '')}"
+            for item in data.get("clips", []) if item.get("status") != "passed"}
 
 
 def _doctor() -> int:

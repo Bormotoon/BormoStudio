@@ -581,6 +581,9 @@ class TranscribeStage:
         requested = json.loads(requirements.read_text(encoding="utf-8")).get("transcripts", [])
         published = {Path(artifact.path).stem for artifact in manifest.artifacts}
         missing = [asset_id for asset_id in requested if asset_id not in published]
+        missing += [f"{asset_id}.match" for asset_id in json.loads(
+            requirements.read_text(encoding="utf-8")).get("match_transcripts", {})
+            if f"{asset_id}.match" not in published]
         return f"needs transcript {', '.join(missing)}" if missing else None
 
     def run(self, context: StageContext) -> StageOutput:
@@ -588,7 +591,11 @@ class TranscribeStage:
         requirements = json.loads(requirements_path.read_text(encoding="utf-8"))
         asset_by_id = {asset.id: asset for asset in context.project.assets}
         settings = TranscribeSettings.from_mapping(context.settings.get("transcribe", {}))
-        engine = WhisperEngine(settings, digest_cache=context.project.work_dir)
+        base = WhisperEngine(settings, digest_cache=context.project.work_dir)
+        # One loaded model serves every mode: camera transcripts that only place
+        # a camera may use a faster mode than the content (prepare decides).
+        engines = {settings.mode: base}
+        modes = requirements.get("transcribe_modes", {})
         artifacts: list[Path] = []
         warnings: list[str] = []
         transcripts = dict(context.project.transcripts)
@@ -602,6 +609,11 @@ class TranscribeStage:
                                  f"Whisper {number + 1}/{len(requested)}: {name} "
                                  f"{fraction:.0%}")
 
+            mode = str(modes.get(asset_id, settings.mode))
+            if mode not in engines:
+                engines[mode] = WhisperEngine(replace(settings, mode=mode), base.backend,
+                                              base.cache_dir, context.project.work_dir)
+            engine = engines[mode]
             engine.progress = report
             source = context.project.source_dir / asset.path
             stream = requirements.get("audio_streams", {}).get(asset_id)
@@ -623,6 +635,25 @@ class TranscribeStage:
                 words = ", ".join(f"«{item['text']}» at {item['start']:.1f} s"
                                   for item in transcript.metadata["suspect_words"][:5])
                 warnings.append(f"{asset.path}: words placed in silence, check them: {words}")
+        matching = requirements.get("match_transcripts", {})
+        for number, (asset_id, mode) in enumerate(matching.items()):
+            asset = asset_by_id[asset_id]
+            if mode not in engines:
+                engines[mode] = WhisperEngine(replace(settings, mode=str(mode)), base.backend,
+                                              base.cache_dir, context.project.work_dir)
+            engine = engines[mode]
+            label = f"Whisper {mode} for matching {number + 1}/{len(matching)}: {asset.path}"
+            engine.progress = lambda fraction, label=label: context.progress(
+                1.0, f"{label} {fraction:.0%}")
+            source = context.project.source_dir / asset.path
+            stream = requirements.get("audio_streams", {}).get(asset_id)
+            pan = effective_audio(asset).pan
+            transcript = engine.transcribe(source, stream, pan) if pan else (
+                engine.transcribe(source, stream))
+            output = context.work_dir / "stages" / "transcribe" / f"{asset_id}.match.json"
+            transcript.save(output)
+            artifacts.append(output)
+            transcripts[f"match:{asset_id}"] = output
         return StageOutput(tuple(artifacts), {"transcripts": transcripts}, tuple(warnings))
 
 

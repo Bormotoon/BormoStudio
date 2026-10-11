@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from studio.core.project import AssetRole, Project, stable_fingerprint
@@ -39,7 +40,7 @@ class TimelineStage:
 
     def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
         source_id = _transcript_source_id(project, settings)
-        transcript = project.transcripts.get(source_id or "")
+        transcript = _transcript_path(project, source_id or "")
         content = (
             transcript.read_text(encoding="utf-8")
             if transcript and transcript.is_file()
@@ -49,11 +50,12 @@ class TimelineStage:
             (item for item in project.placements if item.asset_id == source_id), None
         )
         session_inputs = {
-            asset.id: project.transcripts[asset.id].read_text(encoding="utf-8")
+            asset.id: path.read_text(encoding="utf-8")
             for asset in project.assets if asset.role is AssetRole.RECORDER
-            and asset.id in project.transcripts and project.transcripts[asset.id].is_file()
+            for path in [_transcript_path(project, asset.id)]
+            if path is not None and path.is_file()
         }
-        return stable_fingerprint("timeline-v3", source_id, content, placement,
+        return stable_fingerprint("timeline-v4", source_id, content, placement,
                                   session_inputs, project.placements,
                                   select_settings(settings, self.settings_keys))
 
@@ -61,7 +63,8 @@ class TimelineStage:
         source_id = _transcript_source_id(context.project, context.settings)
         if source_id is None:
             raise ValueError("no transcript source is available")
-        source = Transcript.load(context.project.transcripts[source_id])
+        source = Transcript.load(_transcript_path(context.project, source_id)
+                                 or context.project.transcripts[source_id])
         placement = next(
             (item for item in context.project.placements if item.asset_id == source_id),
             _identity_placement(source_id, source.duration),
@@ -112,7 +115,7 @@ class TimelineStage:
                 break
             if asset.role is not AssetRole.RECORDER or asset.id == source_id:
                 continue
-            path = context.project.transcripts.get(asset.id)
+            path = _transcript_path(context.project, asset.id)
             mapped = next((item for item in context.project.placements
                            if item.asset_id == asset.id), None)
             if path is None or mapped is None:
@@ -152,6 +155,11 @@ class TimelineStage:
         if len(cameras) == 1 and not context.project.placements and source_id == cameras[0].id:
             changes["placements"] = [placement]
         return StageOutput((output,), changes)
+
+
+def _transcript_path(project: Project, asset_id: str) -> Path | None:
+    """A recorder's transcript, on its repaired clock when sync repaired it."""
+    return project.transcripts.get(f"repaired:{asset_id}") or project.transcripts.get(asset_id)
 
 
 def _mapped_coverage(

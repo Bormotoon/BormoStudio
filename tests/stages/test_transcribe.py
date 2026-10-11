@@ -128,3 +128,44 @@ def test_quality_mode_feeds_the_model_bounded_blocks() -> None:
     second_block = clips[len(calls[0][1]) // 2]  # first clip of the second call
     assert abs(transcript.words[1].start - (second_block[0] + 0.1)) < 1e-6
     assert transcript.duration == 3600.0 and transcript.language == "ru"
+
+
+def test_camera_transcripts_use_the_mode_prepare_asked_for(tmp_path: Path) -> None:
+    import json
+
+    from studio.core.project import Asset, AssetKind, AssetRole, Project
+    from studio.stages.base import StageContext
+    from studio.stages.transcribe import TranscribeStage
+
+    class Recording(_Backend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.modes: dict[str, str] = {}
+
+        def transcribe(self, audio: Path, settings: TranscribeSettings) -> Transcript:
+            self.modes[audio.stem] = settings.mode
+            return super().transcribe(audio, settings)
+
+    for name in ("cam.wav", "rec.wav"):
+        (tmp_path / name).write_bytes(name.encode())
+    project = Project(tmp_path, tmp_path / "_studio", assets=[
+        Asset("cam", Path("cam.wav"), AssetKind.AUDIO, AssetRole.CAMERA),
+        Asset("rec", Path("rec.wav"), AssetKind.AUDIO, AssetRole.RECORDER),
+    ])
+    requirements = project.work_dir / "stages" / "prepare" / "requirements.json"
+    requirements.parent.mkdir(parents=True)
+    requirements.write_text(json.dumps({"transcripts": ["rec", "cam"],
+                                        "transcribe_modes": {"cam": "fast"},
+                                        "match_transcripts": {"rec": "fast"}}))
+    backend = Recording()
+    with patch("studio.stages.transcribe.whisper_backend", return_value=backend), \
+            patch("studio.stages.transcribe.user_cache_path", return_value=tmp_path / "cache"), \
+            patch("studio.stages.transcribe.energy_probe", return_value=lambda a, b: 0.0):
+        output = TranscribeStage().run(StageContext(
+            project, {"transcribe": {"mode": "quality"}}, project.work_dir))
+    # The recorder: quality for the content, then fast for matching camera words.
+    assert backend.modes == {"rec": "fast", "cam": "fast"}
+    assert backend.calls == 3
+    transcripts = output.project_changes["transcripts"]
+    assert transcripts["match:rec"].name == "rec.match.json"
+    assert transcripts["rec"].name == "rec.json"
