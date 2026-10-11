@@ -16,6 +16,7 @@ def plan_sessions(
     transcripts: dict[str, Transcript], conf: dict[str, Any], *, acoustic_first: bool,
     check: Callable[[Asset, Asset, AlignmentMap], AlignmentMap] | None = None,
     search_ranges: dict[tuple[str, str], tuple[float, float]] | None = None,
+    text_only: set[tuple[str, str]] | None = None,
 ) -> tuple[list[SourcePlacement], dict[tuple[str, str], AlignmentMap], dict[str, str]]:
     """Fit every camera to the recorders and place all files on one timeline.
 
@@ -32,6 +33,7 @@ def plan_sessions(
                 project.source_dir / target.path, project.source_dir / source.path,
                 conf, acoustic_first=acoustic_first,
                 source_range=(search_ranges or {}).get((target.id, source.id)),
+                acoustic_search=(target.id, source.id) not in (text_only or set()),
             )
         except ValueError as exc:
             reason = str(exc)

@@ -63,3 +63,28 @@ def test_shared_recorder_connects_camera_clocks(tmp_path: Path) -> None:
     assert positions["cam1"].offset_s == pytest.approx(5)
     assert positions["cam1"].k == pytest.approx(1)
     assert positions["rec"].k == pytest.approx(1.001)
+
+
+def test_clip_locate_could_not_find_is_placed_by_text_without_a_new_scan(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from studio.core.transcript import Segment, Transcript, Word
+    from studio.stages import sync_alignment
+    from studio.stages.sync_models import AlignmentMap
+
+    words = (Word("слово", 1.0, 1.4),)
+    camera = Transcript(Path("cam.mov"), "ru", 900.0, [Segment(1.0, 1.4, words)])
+    recorder = Transcript(Path("rec.wav"), "ru", 13500.0, [Segment(1.0, 1.4, words)])
+    text_map = AlignmentMap([], -4850.0, 1.0, 40.0, "text", 12, 800.0)
+    with patch.object(sync_alignment, "acoustic_coarse_align",
+                      side_effect=AssertionError("full recorder scan repeated")), \
+            patch.object(sync_alignment, "align", return_value=text_map), \
+            patch.object(sync_alignment, "evaluate_alignment",
+                         return_value=SimpleNamespace(accepted=True, reason_text="")):
+        result = sync_alignment.align_sources(
+            camera, recorder, Path("cam.mov"), Path("rec.wav"), {}, acoustic_first=True,
+            acoustic_search=False,
+        )
+    assert result is text_map

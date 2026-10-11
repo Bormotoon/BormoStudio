@@ -204,7 +204,14 @@ def _render_complex(context: StageContext) -> StageOutput:
                    for asset in [*recorders, *cameras]}
     from studio.stages.locate import load_positions
 
-    located = load_positions(project).get("positions", {})
+    positions = load_positions(project)
+    located = positions.get("positions", {})
+    # Pairs locate searched in full without a match: only text can place them.
+    text_only = {
+        (camera_id, recorder_id)
+        for camera_id, missing in positions.get("missing", {}).items()
+        for recorder_id in missing
+    }
     search_ranges = {
         (camera.id, recorder_id): (max(0.0, entry["position_s"] - 30.0),
                                    entry["position_s"] + transcripts[camera.id].duration + 30.0)
@@ -242,7 +249,7 @@ def _render_complex(context: StageContext) -> StageOutput:
 
     placements, fits, rejected = plan_sessions(
         project, cameras, recorders, transcripts, sync, acoustic_first=mode in {"auto", "simple"},
-        check=check, search_ranges=search_ranges,
+        check=check, search_ranges=search_ranges, text_only=text_only,
     )
     left_out = [camera for camera in cameras
                 if not any(target == camera.id for target, _ in fits)]

@@ -14,13 +14,21 @@ from studio.stages.sync_models import AlignmentMap
 def align_sources(
     target: Transcript, source: Transcript, target_path: Path, source_path: Path,
     conf: dict[str, Any], *, acoustic_first: bool,
-    source_range: tuple[float, float] | None = None,
+    source_range: tuple[float, float] | None = None, acoustic_search: bool = True,
 ) -> AlignmentMap:
-    """``target = offset + k * source``; ``source_range`` bounds the acoustic search."""
+    """``target = offset + k * source``; ``source_range`` bounds the acoustic search.
+
+    ``acoustic_search=False`` skips the waveform scan: ``locate`` already
+    searched the whole source for this clip and found nothing, and repeating
+    that scan cost ~20 min per long clip on a 3.75 h recorder.
+    """
     settings = MatchSettings()
     reasons = []
 
     def acoustic() -> AlignmentMap | None:
+        if not acoustic_search:
+            reasons.append("locate found no acoustic match in the whole source")
+            return None
         try:
             fit = acoustic_coarse_align(
                 target_path, source_path, target.duration, source.duration,
