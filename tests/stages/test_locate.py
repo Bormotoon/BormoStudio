@@ -167,3 +167,39 @@ def test_cpu_workers_default_leaves_a_core_free(monkeypatch: pytest.MonkeyPatch)
     assert cpu_workers({"compute": {"cpu_workers": 2}}) == 2
     monkeypatch.setattr(os, "cpu_count", lambda: 1)
     assert cpu_workers({"compute": {"cpu_workers": 0}}) == 1
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_next_file_is_searched_after_the_previous_but_never_placed_blindly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, confirmed: bool,
+) -> None:
+    from studio.core.project import Project
+    from studio.stages import locate as module
+
+    def camera(name: str, duration: float) -> Asset:
+        return Asset(name.lower(), Path(f"{name}.mov"), AssetKind.VIDEO, AssetRole.CAMERA,
+                     group_id="dji", manual={"media_info": {"duration_s": duration,
+                                                            "audio_channels": 2}})
+
+    recorder = _asset("rec", AssetRole.RECORDER, 5000.0)
+    project = Project(tmp_path, tmp_path / "_studio",
+                      [camera("DJI_0925", 939.0), camera("DJI_0926", 964.0), recorder])
+    monkeypatch.setattr(module, "camera_windows", lambda path, duration: [(1.0, np.zeros(8))])
+    spans = []
+
+    def fake_search(source, cameras, span, **kwargs):  # type: ignore[no-untyped-def]
+        spans.append((sorted(cameras), span))
+        if span is None:
+            return {"dji_0925": (3911.0, 120.0)}
+        return {"dji_0926": (4850.5, 60.0)} if confirmed else {}
+
+    monkeypatch.setattr(module, "search_many", fake_search)
+    data = module.locate_project(project, {})
+    assert spans[-1][0] == ["dji_0926"]
+    # From 2 min before the previous file's end, clipped to the recorder's end.
+    assert spans[-1][1] == pytest.approx((3911.0 + 939.0 - 120.0, 5000.0))
+    if confirmed:
+        entry = data["positions"]["dji_0926"]["rec"]
+        assert entry["method"] == "after_previous_file" and entry["position_s"] == 4850.5
+    else:
+        assert "dji_0926" not in data["positions"] and "dji_0926" in data["missing"]

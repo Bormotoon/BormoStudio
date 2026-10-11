@@ -84,7 +84,7 @@ class LocateStage:
              if (project.source_dir / asset.path).is_file() else None)
             for asset in project.assets if asset.role in {AssetRole.CAMERA, AssetRole.RECORDER}
         ]
-        return stable_fingerprint("locate-v1", sources,
+        return stable_fingerprint("locate-v2", sources,
                                   select_settings(settings, self.settings_keys))
 
     def run(self, context: StageContext) -> StageOutput:
@@ -163,6 +163,10 @@ def locate_project(
                     source, rest, None, pan=pan, stream=stream, progress=report,
                     duration_s=duration, workers=workers).items():
                 found[camera_id] = Located(position, sharpness, "full")
+        _search_after_previous_files(
+            cameras, windows, found, source, duration, search_s, pan=pan, stream=stream,
+            workers=workers,
+        )
         for camera in cameras:
             if camera.id not in windows or not windows[camera.id]:
                 continue
@@ -183,6 +187,49 @@ def locate_project(
         if camera_id in data["positions"]:  # found in another recorder
             del data["missing"][camera_id]
     return data
+
+
+def _search_after_previous_files(
+    cameras: list[Asset], windows: dict[str, list[tuple[float, np.ndarray]]],
+    found: dict[str, Located], source: Path, duration: float, search_s: float, *,
+    pan: str | None, stream: int | None, workers: int,
+) -> None:
+    """A second, narrow search for clips the full pass missed.
+
+    Files of one camera are often consecutive: split at a size limit (DJI and
+    Canon at 4 GB) or recorded one after another. That is only a hint — pauses
+    happen — so the clip is searched around the end of the previous file of
+    the same camera, and placed only when its windows agree acoustically. In a
+    narrow range far fewer false peaks compete with a weak real match.
+    """
+    by_group: dict[str, list[Asset]] = {}
+    for camera in cameras:
+        by_group.setdefault(_group(camera), []).append(camera)
+    changed = True
+    while changed:  # a clip found this way can lead to the next one
+        changed = False
+        for members in by_group.values():
+            ordered = sorted(members, key=lambda item: _natural(str(item.path)))
+            for previous, camera in zip(ordered, ordered[1:], strict=False):
+                if camera.id in found or previous.id not in found or not windows.get(camera.id):
+                    continue
+                expected = found[previous.id].position_s + _duration(previous)
+                span = (max(0.0, expected - search_s),
+                        min(duration, expected + _duration(camera) + search_s))
+                if span[1] <= span[0]:
+                    continue
+                result = search_many(source, {camera.id: windows[camera.id]}, span, pan=pan,
+                                     stream=stream, workers=workers).get(camera.id)
+                if result is not None:
+                    found[camera.id] = Located(result[0], result[1], "after_previous_file")
+                    changed = True
+
+
+def _natural(value: str) -> list[tuple[int, int, str]]:
+    import re
+
+    return [(0, int(part), "") if part.isdigit() else (1, 0, part.lower())
+            for part in re.split(r"(\d+)", value)]
 
 
 def locate_camera(
