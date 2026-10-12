@@ -390,6 +390,43 @@ voice or the transcript source through its placement, so no master is required.
 crossfades that keep the exact program length: constant-power on edit joins,
 linear where only the camera changes. `0` restores hard joins.
 
+## Final Cut Pro (multicam FCPXML)
+
+By default `export/Studio.fcpxml` is a multicam clip plus a project that uses
+it (`export.targets` defaults to `[multicam, xmeml]`). With a single camera
+(one camera group) and a recorder it is a **synchronized clip** instead: the
+camera files form its storyline, the recorder is connected below, and the
+camera's own sound is switched off in the clip (re-enable it in the audio
+inspector). The multicam clip has one
+angle per camera (a camera group such as all `DJI_*` or all `MVI_*` files, each
+in its place on the synchronized clock, holes as gaps) and one **Recorder**
+angle: the whole recorder, repaired where it lost samples, on the same clock.
+Each angle keeps its own sound. The project takes picture from a camera angle
+and sound from the recorder; switch cameras in the angle viewer or by blading
+the project. With a rough cut, the angles stay uncut and the project holds one
+multicam clip per kept piece, so every cut can be reopened by trimming.
+
+The event, the project and the multicam clip are named after the material
+folder (`sony_run`, `sony_run Multicam`); set another name with `export.name`. The event lists the multicam or
+synchronized clip and every video file of the material, so they can be used
+outside the project. Files sync could not place and ignored false starts carry
+the keyword **Not synchronized**.
+The recorder appears as **Recorder (repaired)** when sync repaired its losses.
+
+Media links are relative to the document (`../../DJI_0921.mov`), so import
+straight from the material folder as Final Cut sees it (for example over a
+network share); no relink is needed while the folder layout stays intact. A manual relink by name
+could offer the original recorder for the repaired one, which is too short;
+new runs name the repaired file `repaired-<recorder>.wav` so it never matches.
+Asset lengths are the real file lengths on the file's own frame grid.
+
+Markers: `export.markers` is `cuts` (default; one marker per accepted cut),
+`all` (adds filler and untranscribed-sound review hints, often thousands) or
+`none`. `export.marker_min_s` leaves cuts shorter than it unmarked (default 0:
+every accepted cut). The untranscribed-sound hints themselves come from sound
+longer than `roughcut.unknown_sound_min_s`. Add `fcpxml` to the targets for the earlier flat timeline as well
+(the multicam then goes to `Studio-multicam.fcpxml`).
+
 ## DaVinci Resolve (OTIO)
 
 Add `otio` to `export.targets` (for example

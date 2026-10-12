@@ -146,8 +146,15 @@ class RoughcutSettings:
 
 @dataclass(slots=True)
 class ExportSettings:
-    targets: list[str] = field(default_factory=lambda: ["fcpxml", "xmeml"])
+    targets: list[str] = field(default_factory=lambda: ["multicam", "xmeml"])
     fcpxml_version: str = "1.9"
+    # Which rough-cut markers reach the NLE: cuts, all (adds filler and
+    # untranscribed-sound review hints) or none.
+    markers: str = "cuts"
+    # Cuts shorter than this get no marker (0 marks every accepted cut).
+    marker_min_s: float = 0.0
+    # Final Cut event, project and multicam name; empty: the material folder's name.
+    name: str = ""
 
 
 @dataclass(slots=True)
@@ -653,6 +660,10 @@ def validate_settings(settings: Settings) -> None:
     unknown = set(settings.export.targets) - {"fcpxml", "xmeml", "multicam", "otio"}
     if unknown:
         raise SettingsError(f"export.targets contains unsupported values: {sorted(unknown)}")
+    _one_of("export.markers", settings.export.markers, {"cuts", "all", "none"})
+    _non_negative("export.marker_min_s", settings.export.marker_min_s)
+    if not isinstance(settings.export.name, str):
+        raise SettingsError("export.name must be text")
 
 
 LLM_ROLES = {"proofread", "article", "context", "scout", "cleanup", "judge", "roughcut"}

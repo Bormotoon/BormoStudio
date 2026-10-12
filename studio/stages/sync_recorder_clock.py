@@ -676,7 +676,7 @@ def repair_recorders(
             progress(f"writing the repaired {Path(original.path).name}: "
                      f"{len(clock.applied)} loss(es), {clock.total_ms / 1000:.1f} s")
         audio = write_repaired(
-            source_dir / original.path, output_dir / f"{recorder.id}.wav", clock, fills,
+            source_dir / original.path, output_dir / f"repaired-{recorder.id}.wav", clock, fills,
             sample_rate=sample_rate, channels=int(info.get("audio_channels") or 1),
             codec="pcm_s16le" if bits <= 16 else "pcm_s24le" if bits <= 24 else "pcm_s32le",
             stream=info.get("audio_stream_index"))

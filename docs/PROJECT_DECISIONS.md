@@ -338,3 +338,24 @@ entry points and recorded project paths in the same change.
   depth (e.g. AAC) stays unknown and XMEML omits depth rather than inventing 16-bit
   precision. Scan fingerprint advances to invalidate cached metadata without the
   new field; existing MediaInfo constructors remain compatible via default None.
+
+### Multicam is the Final Cut export (2026-10-12)
+
+- First Final Cut import of sony_run failed: "unexpected value format=r1"
+  (custom format name), every clip offline (relative links resolved from the
+  document, not the material folder), relink refused ("not long enough": 25 fps
+  asset length rounded on the 29.97 grid), 1,783 markers (filler and
+  untranscribed-sound hints), no recorder track and a flat timeline.
+- Decision: the default FCPXML is a multicam clip. Angles are camera groups
+  (`Asset.group_id`), laid out as storylines with explicit gaps, plus one angle
+  per placed recorder (the repaired recorder output on its placement). Angles are
+  uncut and keep their own sound; the project selects picture from a camera and
+  sound from the recorder, one multicam clip per kept range and camera choice.
+  Camera plans stay in original time. Without a recorder each angle supplies
+  its own sound.
+- A placed recorder replaces the per-camera voices rendered from it in every
+  export; their warps are single affine pieces matching the recorder placement.
+- Markers default to accepted cuts only (`export.markers`).
+- Checked: sony_run export resolves all 35 links, no asset is longer than its
+  file, and the document validates against Apple's FCPXML 1.9 DTD. Final Cut
+  import itself is still to be confirmed.

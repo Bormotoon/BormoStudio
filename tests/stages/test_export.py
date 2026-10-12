@@ -8,6 +8,7 @@ from studio.stages.export import (
     Sequence,
     SequenceClip,
     SequenceMarker,
+    _parse_time,
     build_sequence,
     fcpxml_intervals,
     write_fcpxml,
@@ -136,3 +137,87 @@ def test_cut_and_filler_markers_use_edited_time_in_both_formats(tmp_path: Path) 
     assert not uncut.markers
     assert len(uncut.clips) == 1
     assert uncut.clips[0].duration_s == 6
+
+
+def test_fcpxml_names_formats_and_links_media_from_the_document(tmp_path: Path) -> None:
+    source = tmp_path / "MVI_1.mov"
+    # A 25 fps file on a 29.97 timeline: rounding to timeline frames must not
+    # make the clip, or the asset, longer than the file.
+    sequence = Sequence("episode", Fraction(30000, 1001), 1920, 1080, (
+        SequenceClip("mvi", source, 0, 486.08, 0, 0, True, source_fps=Fraction(25),
+                     source_duration_s=486.08),
+    ))
+    output = write_fcpxml(sequence, tmp_path / "_studio" / "export" / "e.fcpxml",
+                          media_base=tmp_path)
+    root = ET.parse(output).getroot()
+    formats = {item.get("id"): item for item in root.findall("./resources/format")}
+    assert formats["r1"].get("name") == "FFVideoFormat1080p2997"
+    asset = root.find("./resources/asset")
+    assert formats[asset.get("format")].get("name") == "FFVideoFormat1080p25"
+    assert asset.get("duration") == "12152/25s"
+    assert asset.find("media-rep").get("src") == "../../MVI_1.mov"
+    clip = root.find(".//asset-clip")
+    assert _parse_time(clip.get("start")) + _parse_time(clip.get("duration")) <= 486.08
+
+
+def test_marker_kinds_keep_only_cuts_by_request(tmp_path: Path) -> None:
+    edit = tmp_path / "edit.json"
+    edit.write_text(
+        '{"mode":"cut","keep":[{"start":0,"end":2},{"start":4,"end":6}],'
+        '"cuts":[{"start":2,"end":4,"reason":"pause","note":"quiet pause"}],'
+        '"markers":[{"at":5,"kind":"unknown-sound","text":"untranscribed audio 0.6s"}]}'
+    )
+    project = Project(tmp_path, tmp_path / "_studio")
+    project.assets = [Asset("cam", Path("camera.mov"), "video", AssetRole.CAMERA)]
+    project.placements = [SourcePlacement("cam", 0, 0, 6)]
+    project.outputs["roughcut"] = [edit]
+    assert [marker.kind for marker in build_sequence(project, marker_kinds="cuts").markers] \
+        == ["pause"]
+    assert not build_sequence(project, marker_kinds="none").markers
+    # The 2 s pause reaches the threshold; a longer threshold leaves it unmarked.
+    assert build_sequence(project, marker_kinds="cuts", marker_min_s=2.0).markers
+    assert not build_sequence(project, marker_kinds="cuts", marker_min_s=2.5).markers
+
+
+def test_stage_links_media_from_where_the_runner_publishes(tmp_path: Path) -> None:
+    from studio.stages.base import StageContext
+    from studio.stages.export import ExportStage
+
+    project = Project(tmp_path, tmp_path / "_studio")
+    asset = Asset("cam", Path("camera.mov"), "video", AssetRole.CAMERA)
+    asset.manual["media_info"] = {"fps": "25", "duration_s": 6}
+    project.assets = [asset]
+    project.placements = [SourcePlacement("cam", 0, 0, 6)]
+    result = ExportStage().run(StageContext(project, {}, tmp_path / "runner" / "output"))
+    fcpxml = next(path for path in result.artifacts if path.suffix == ".fcpxml")
+    assert fcpxml == tmp_path / "runner" / "output" / "export" / "Studio.fcpxml"
+    root = ET.parse(fcpxml).getroot()
+    assert root.find(".//media-rep").get("src") == "../../camera.mov"
+    assert root.find("./resources/media/multicam") is not None
+    assert root.find("./library/event").get("name") == tmp_path.name
+    assert root.find(".//project").get("name") == tmp_path.name
+    named = ExportStage().run(StageContext(project, {"export": {"name": "Episode 7"}},
+                                           tmp_path / "again"))
+    root = ET.parse(next(path for path in named.artifacts if path.suffix == ".fcpxml")).getroot()
+    assert root.find("./library/event").get("name") == "Episode 7"
+
+
+def test_unplaced_files_are_listed_in_the_event(tmp_path: Path) -> None:
+    project = Project(tmp_path, tmp_path / "_studio")
+    placed = Asset("cam", Path("camera.mov"), "video", AssetRole.CAMERA)
+    placed.manual["media_info"] = {"fps": "25", "duration_s": 6}
+    lost = Asset("lost", Path("lost.mov"), "video", AssetRole.CAMERA)
+    lost.manual["media_info"] = {"fps": "25", "duration_s": 3, "audio_codec": "aac"}
+    false_start = Asset("short", Path("short.mov"), "video", AssetRole.IGNORE)
+    false_start.manual["media_info"] = {"fps": "25", "duration_s": 1}
+    project.assets = [placed, lost, false_start]
+    project.placements = [SourcePlacement("cam", 0, 0, 6)]
+    sequence = build_sequence(project)
+    assert [clip.asset_id for clip in sequence.unplaced] == ["lost", "short"]
+    root = ET.parse(write_fcpxml(sequence, tmp_path / "e.fcpxml", media_base=tmp_path)).getroot()
+    event = root.find("./library/event")
+    listed = {clip.get("name"): clip for clip in event.findall("asset-clip")}
+    assert set(listed) == {"camera", "lost", "short"}
+    assert listed["lost"].find("keyword").get("value") == "Not synchronized"
+    assert listed["camera"].find("keyword") is None
+    assert [clip.get("name") for clip in root.findall(".//spine//asset-clip")] == ["camera"]

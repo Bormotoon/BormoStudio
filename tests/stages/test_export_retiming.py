@@ -23,7 +23,7 @@ def test_flat_exports_retime_all_media_after_roughcut(tmp_path: Path, rate: floa
     for path in (voice, room):
         with wave.open(str(path), "wb") as audio:
             audio.setparams((1, 2, 48000, 0, "NONE", "PCM"))
-            audio.writeframes(b"\x00\x00" * 48000)
+            audio.writeframes(b"\x00\x00" * 48000 * 10)
     start, end = 2 + rate, 2 + 3 * rate
     edit = tmp_path / "edit.json"
     edit.write_text(json.dumps({"mode": "cut", "keep": [{"start": start, "end": end}]}))

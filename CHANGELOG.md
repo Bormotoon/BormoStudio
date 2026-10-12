@@ -6,6 +6,25 @@ All notable changes to Studio will be documented in this file.
 
 ### Fixed
 
+- Final Cut import of sony_run: the timeline format carries Final Cut's own
+  name (`FFVideoFormat1080p2997`), which removes the "unexpected value
+  format=r1" warning; media links start at the document's published folder
+  (they pointed into `_studio/export`, so every clip was offline); asset
+  lengths are the files' real lengths on their own frame grid (a 25 fps clip
+  rounded to 29.97 frames ran one frame past its file, so relinking failed
+  with "not long enough"); clips are shortened where rounding passes the end.
+- One camera with a recorder exports as a Final Cut synchronized clip, not
+  a one-angle multicam. The event also lists video files sync did not place
+  and ignored false starts, under the keyword "Not synchronized".
+- The Final Cut event lists the multicam clip and every file, not only the
+  project; event, project and multicam take the material folder's name
+  (`export.name`, also in the GUI settings) instead of always "Studio".
+- The repaired recorder is written as `repaired-<recorder>.wav` and shown as
+  "Recorder (repaired)": relinking by name no longer offers the shorter
+  original recorder for it.
+- The NLE export carries the whole (repaired) recorder as its own track;
+  per-camera voices rendered from it are no longer exported beside it.
+
 - Worker cancellation remains responsive without stdout output, both pipes are
   drained concurrently, and buffered events receive the same protocol checks.
 - Worker diagnostics use stderr; failures emit a protocol-valid failed event.
@@ -37,6 +56,9 @@ All notable changes to Studio will be documented in this file.
   grid as the sync check.
 
 ### Added
+
+- `export.marker_min_s`: cuts shorter than it get no marker in Final Cut or
+  Premiere (default 0, every accepted cut is marked).
 
 - `scan.min_duration_s` (3 s): shorter files are false starts (a camera
   switched on and off by mistake) and get the role `ignore` with a scan
@@ -71,6 +93,11 @@ All notable changes to Studio will be documented in this file.
   to `needs_review`; `report.json` lists every stage warning.
 
 ### Changed
+
+- `export.targets` defaults to `[multicam, xmeml]`: `Studio.fcpxml` is a
+  multicam clip (one angle per camera group, one for the recorder; the edit
+  lives in the project over uncut angles). `export.markers` (default `cuts`)
+  leaves the filler and untranscribed-sound hints out of the NLE.
 
 - `recorded_at` prefers `com.apple.quicktime.creationdate` (the recording time)
   over `creation_time`, which is often the time the files were copied.
