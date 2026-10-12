@@ -520,6 +520,18 @@ SECTIONS: tuple[Section, ...] = (
             Item("cpu_workers", "CPU workers", "0: all cores but one."),
             Item("allow_cpu", "Allow CPU fallback", "Not used yet."),
         )),
+        Group("Virtual machines", (
+            Item("host_memory", "Free VM memory during runs",
+                 "Shrinks running libvirt VMs and shuts down the listed ones; "
+                 "all given back at the end (uvf host-memory restore after a crash)."),
+            Item("vm_domains", "VMs to shrink", "Empty: every running VM."),
+            Item("vm_stop_domains", "VMs to shut down",
+                 "VMs with a passed-through GPU: a balloon frees nothing there."),
+            Item("vm_shutdown_timeout_s", "Wait for a shutdown, s", "A VM is never forced off."),
+            Item("vm_headroom_mb", "Leave each VM above its use, MB"),
+            Item("vm_min_mb", "Never shrink a VM below, MB"),
+            Item("vm_connect", "libvirt connection"),
+        )),
     )),
     Section("fetch", "Download", (
         Group("YouTube and links", (

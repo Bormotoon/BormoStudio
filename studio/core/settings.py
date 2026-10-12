@@ -178,6 +178,18 @@ class ComputeSettings:
     allow_cpu: bool = False
     # Processes for CPU-heavy steps (locating cameras); 0 = all cores but one.
     cpu_workers: int = 0
+    # Free RAM held by libvirt VMs while a run (or a whole queue) lasts: shrink
+    # vm_domains (empty: every running one) by balloon down to their use plus
+    # vm_headroom_mb (never below vm_min_mb), and shut vm_stop_domains down
+    # (GPU-passthrough VMs, whose memory a balloon cannot free); all given back
+    # at the end.
+    host_memory: bool = False
+    vm_domains: list[str] = field(default_factory=list)
+    vm_stop_domains: list[str] = field(default_factory=list)
+    vm_shutdown_timeout_s: int = 180
+    vm_headroom_mb: int = 1536
+    vm_min_mb: int = 1024
+    vm_connect: str = "qemu:///system"
 
 
 @dataclass(slots=True)
@@ -550,6 +562,10 @@ def validate_settings(settings: Settings) -> None:
         not settings.llm.model_path.strip() or not settings.llm.executable.strip()
     ):
         raise SettingsError("managed llama requires executable and model_path")
+    if settings.compute.vm_shutdown_timeout_s < 30:
+        raise SettingsError("compute.vm_shutdown_timeout_s must be at least 30")
+    if settings.compute.vm_headroom_mb < 0 or settings.compute.vm_min_mb < 64:
+        raise SettingsError("compute.vm_headroom_mb must be >= 0 and vm_min_mb >= 64")
     if settings.compute.cpu_workers < 0:
         raise SettingsError("compute.cpu_workers must be 0 (auto) or a positive count")
     _positive("scan.probe_timeout_s", settings.scan.probe_timeout_s)

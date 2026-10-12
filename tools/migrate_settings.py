@@ -285,6 +285,15 @@ FORGE_RULES = (
     Rule("autonomy.notify.when", "batch.notify_when"),
     Rule("autonomy.notify.webhook", "batch.notify_webhook", _text),
     Rule("autonomy.min_free_disk_gb", "batch.min_free_disk_gb", float),
+    Rule("host_memory.enabled", "compute.host_memory", bool),
+    Rule("host_memory.domains", "compute.vm_domains", lambda value: [str(v) for v in value or []]),
+    Rule("host_memory.stop_domains", "compute.vm_stop_domains",
+         lambda value: [str(v) for v in value or []]),
+    Rule("host_memory.shutdown_timeout_s", "compute.vm_shutdown_timeout_s", int),
+    Rule("host_memory.headroom_mb", "compute.vm_headroom_mb", int),
+    Rule("host_memory.min_mb", "compute.vm_min_mb", int),
+    Rule("host_memory.connect", "compute.vm_connect", _text),
+    Rule("cache.enabled", "transcribe.use_cache", bool),
 )
 
 # Forge sections by their planned Studio home (table 6.3) when not migrated.
@@ -293,7 +302,7 @@ _FORGE_PLANNED = {
     "article": "text", "processing": "reels", "subtitles": "reels", "video": "reels",
     "audio": "reels", "exports": "reels", "prompts": "reels", "llama_cpp": "llm",
     "autonomy": "batch", "cli": "batch", "youtube": "fetch",
-    "cache": "transcribe.cache + llm.cache", "host_memory": "contrib/hooks/host_memory + hooks",
+    "cache": "transcribe.use_cache", "host_memory": "compute",
     "paths": "project work folder + batch",
 }
 
@@ -323,6 +332,11 @@ _FORGE_REPLACED = {
     "subtitles.wrap_words": "reel captions always wrap into reels.caption_max_lines lines",
     "subtitles.keep_nosubs": "Studio always keeps the uncaptioned reel next to the captioned",
     "processing.analysis.llm_cache": "Studio always caches LLM answers in _studio/cache/llm",
+    "host_memory.state_file":
+        "Studio keeps the original VM sizes in its user state folder (uvf host-memory)",
+    "cache.validate_json": "Studio parses every cached answer and asks again when it is invalid",
+    "paths.input_dir": "Studio works on the material folder given to uvf run, batch or channel",
+    "paths.output_dir": "each material folder keeps its results in its own _studio",
     "processing.clips.highlights.count":
         "Forge never read it; reels.highlight_count sets the moments",
     "processing.reel_padding":

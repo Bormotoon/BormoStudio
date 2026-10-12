@@ -14,6 +14,7 @@ from typing import Any
 
 from studio import __version__
 from studio.core.digest import configure_from_settings, set_rehash
+from studio.core.host_memory import held_host_memory
 from studio.core.project import AssetRole, Project
 from studio.core.publication import recover_publications
 from studio.core.settings import SettingsError, load_settings
@@ -120,6 +121,8 @@ def _run_pipeline(
 
     with project_lock(project.work_dir), ExitStack() as cleanup:
         if batch_session is None:
+            # A queue frees VM memory once for all its projects (_run_batch).
+            cleanup.enter_context(held_host_memory(settings.get("compute", {})))
             session = ManagedLlamaSession(
                 settings.get("llm", {}),
                 project.work_dir,
@@ -427,6 +430,32 @@ def _tracks_document(project: Project) -> dict[str, Any]:
     }
 
 
+def _host_memory(action: str, source: Path | None) -> dict[str, Any]:
+    from studio.core import host_memory
+
+    compute = (_settings(_project(source)[2]) if source else load_settings([]).to_dict())[
+        "compute"]
+    config = host_memory.config_from_compute({**compute, "host_memory": True})
+    directory = host_memory.state_dir()
+    pending = (directory / config.state_file).is_file()
+    if action == "restore":
+        return {"restored_mb": host_memory.restore_host_memory(config, state_dir=directory),
+                "pending_before": pending}
+    if not host_memory.virsh_available():
+        return {"virsh": False, "pending_restore": pending}
+    domains = []
+    for name in host_memory.list_running_domains(connect=config.connect):
+        memory = host_memory.domain_memory(name, connect=config.connect)
+        domains.append({
+            "domain": name,
+            "actual_mb": memory.actual_kib // 1024 if memory else None,
+            "locked_mb": host_memory.locked_memory_kib(name) // 1024,
+            "stopped_for_runs": name in config.stop_domains,
+        })
+    return {"virsh": True, "pending_restore": pending, "running": domains,
+            "enabled": bool(compute.get("host_memory"))}
+
+
 def _run_batch(
     sources: list[Path],
     overrides: list[str],
@@ -436,9 +465,27 @@ def _run_batch(
     stream: bool,
     cancel_file: Path | None = None,
     min_free_gb: float = 0.0,
+    compute: dict[str, Any] | None = None,
 ) -> tuple[int, list[dict[str, str]]]:
     results: list[dict[str, str]] = []
     owner = BatchLlamaSession(lambda: cancel_file is not None and cancel_file.exists())
+    with held_host_memory(compute or {}):
+        return _run_queue(sources, overrides, owner, only=only, skip=skip, stream=stream,
+                          cancel_file=cancel_file, min_free_gb=min_free_gb, results=results)
+
+
+def _run_queue(
+    sources: list[Path],
+    overrides: list[str],
+    owner: BatchLlamaSession,
+    *,
+    only: set[str] | None,
+    skip: set[str] | None,
+    stream: bool,
+    cancel_file: Path | None,
+    min_free_gb: float,
+    results: list[dict[str, str]],
+) -> tuple[int, list[dict[str, str]]]:
     try:
         for index, source in enumerate(sources):
             if cancel_file is not None and cancel_file.exists():
@@ -526,6 +573,11 @@ def build_parser() -> argparse.ArgumentParser:
     compute = commands.add_parser("compute")
     compute.add_argument("--probe-whisper", action="store_true", help=argparse.SUPPRESS)
     compute.add_argument("--bench-whisper", metavar="JSON", help=argparse.SUPPRESS)
+    memory = commands.add_parser(
+        "host-memory", help="VM memory freed for runs: status, restore after a crash")
+    memory.add_argument("action", choices=("status", "restore"))
+    memory.add_argument("source", type=Path, nargs="?",
+                        help="material folder whose compute.vm_* settings apply")
     tune = commands.add_parser("tune", help="measure Whisper/llama settings on this machine")
     tune.add_argument("source", type=Path)
     tune.add_argument("--whisper", action="store_true", help="tune Whisper only")
@@ -673,6 +725,9 @@ def _main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "tune":
         print(json.dumps(_tune(args), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "host-memory":
+        print(json.dumps(_host_memory(args.action, args.source), ensure_ascii=False, indent=2))
         return 0
     install_options = {}
     if getattr(args, "cancel_file", None):
@@ -832,6 +887,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
                 stream=args.events,
                 cancel_file=args.cancel_file,
                 min_free_gb=defaults.min_free_disk_gb,
+                compute=queue_settings.to_dict()["compute"],
             )
         data = {
             "schema_version": 1,

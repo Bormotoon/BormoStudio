@@ -61,6 +61,12 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- Forge's `host_memory`: `compute.host_memory` shrinks running libvirt VMs by
+  balloon and shuts down `compute.vm_stop_domains` (GPU-passthrough VMs) for a
+  run or a whole queue, gives everything back at the end, on signals and, after a
+  crash, on the next run or `uvf host-memory restore` (`status` lists the VMs).
+  Forge's own tests of the module run against the port.
+
 - Reel face tracking takes Forge's options (`reels.face_min_size`,
   `face_follow`, `two_speaker_layout`, `speaker_switch`) and rejects reels with
   too few faces (`face_min_ratio`); the framing report carries the face rate and

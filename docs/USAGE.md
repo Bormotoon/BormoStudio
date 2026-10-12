@@ -198,6 +198,21 @@ The PyInstaller executable exposes `--gui`, `--cli COMMAND ...` and the internal
 `pyinstaller packaging/pyinstaller/studio.spec`. The binary is named
 `ultimate-video-forge`; `--check-resources` checks bundled application resources.
 
+## Memory held by virtual machines
+
+On a machine that also runs libvirt VMs, `compute.host_memory: true` frees their
+RAM while a run lasts, as Forge's `host_memory` did: running VMs
+(`compute.vm_domains`, empty = all) are shrunk live by balloon down to what the
+guest uses plus `vm_headroom_mb` (1536), never below `vm_min_mb` (1024), and the
+VMs in `vm_stop_domains` are shut down (a VM with a passed-through GPU keeps all
+its memory locked, so a balloon frees nothing there; it is never forced off, see
+`vm_shutdown_timeout_s`). Everything is given back when the run ends, also on
+Ctrl-C or SIGTERM; a queue (`uvf batch`, `uvf channel`) frees once for all its
+projects with the queue's settings. The original sizes are written to the user
+state folder before the first change, so after a crash or reboot the next run,
+or `uvf host-memory restore`, puts them back; `uvf host-memory status` lists the
+running VMs and whether a restore is pending.
+
 ## Desktop settings and running
 
 The desktop app opens in the **basic mode**: **Choose material folder**, check
