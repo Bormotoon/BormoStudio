@@ -561,8 +561,8 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--json", action="store_true")
         command.add_argument("--set", action="append", default=[])
         if name == "run":
-            command.add_argument("--only", nargs="+", metavar="STAGE")
-            command.add_argument("--skip", nargs="+", metavar="STAGE")
+            command.add_argument("--only", nargs="+", action="extend", metavar="STAGE")
+            command.add_argument("--skip", nargs="+", action="extend", metavar="STAGE")
             command.add_argument("--events", action="store_true")
             command.add_argument(
                 "--rehash", action="store_true",
@@ -658,8 +658,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("sources", nargs="+", type=Path)
     batch.add_argument("--json", action="store_true")
     batch.add_argument("--set", action="append", default=[])
-    batch.add_argument("--only", nargs="+", metavar="STAGE")
-    batch.add_argument("--skip", nargs="+", metavar="STAGE")
+    batch.add_argument("--only", nargs="+", action="extend", metavar="STAGE")
+    batch.add_argument("--skip", nargs="+", action="extend", metavar="STAGE")
     batch.add_argument("--events", action="store_true")
     batch.add_argument("--cancel-file", type=Path)
     batch.add_argument("--report", type=Path)
@@ -674,8 +674,8 @@ def build_parser() -> argparse.ArgumentParser:
     channel.add_argument("destination", type=Path)
     channel.add_argument("--limit", type=int, default=10)
     channel.add_argument("--set", action="append", default=[])
-    channel.add_argument("--only", nargs="+")
-    channel.add_argument("--skip", nargs="+")
+    channel.add_argument("--only", nargs="+", action="extend")
+    channel.add_argument("--skip", nargs="+", action="extend")
     channel.add_argument("--events", action="store_true")
     channel.add_argument("--cancel-file", type=Path)
     channel.add_argument("--report", type=Path)
