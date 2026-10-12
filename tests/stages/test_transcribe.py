@@ -186,3 +186,15 @@ def test_later_decoding_knobs_keep_existing_fingerprints() -> None:
     assert TranscribeSettings(mode="quality").conditioned()
     assert not TranscribeSettings(mode="fast").conditioned()
     assert not TranscribeSettings(mode="quality", condition_on_previous_text=False).conditioned()
+
+
+def test_engines_of_one_model_share_its_backend() -> None:
+    from dataclasses import replace
+
+    from studio.stages.transcribe import TranscribeSettings, WhisperEngine
+
+    base = TranscribeSettings(model="tiny", device="cpu", compute_type="int8")
+    rescue = WhisperEngine(replace(base, mode="quality"))
+    check = WhisperEngine(base)
+    assert rescue.backend is check.backend
+    assert WhisperEngine(replace(base, model="base")).backend is not check.backend

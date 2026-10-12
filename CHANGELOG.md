@@ -163,6 +163,10 @@ All notable changes to Studio will be documented in this file.
 
 ### Changed
 
+- Whisper engines with the same model, device and compute type share one
+  loaded model per process: the sync stage's rescue pass, self-check and
+  repair no longer each load their own copy.
+
 - `export.targets` defaults to `[multicam, xmeml]`: `Studio.fcpxml` is a
   multicam clip (one angle per camera group, one for the recorder; the edit
   lives in the project over uncut angles). `export.markers` (default `cuts`)

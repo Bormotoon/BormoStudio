@@ -406,10 +406,19 @@ class MlxWhisperBackend:
         """MLX frees the model with the Python objects; nothing is held here."""
 
 
+# One loaded model per (model, device, compute type) and process: the sync
+# stage's rescue pass, self-check and repair share it instead of each loading
+# its own copy of large-v3 into the GPU.
+_BACKENDS: dict[tuple[str, str, str], WhisperBackend] = {}
+
+
 def whisper_backend(settings: TranscribeSettings) -> WhisperBackend:
-    if _resolve_device(settings.device) == "mlx":
-        return MlxWhisperBackend(settings)
-    return FasterWhisperBackend(settings)
+    device = _resolve_device(settings.device)
+    key = (settings.model, device, _resolve_compute_type(device, settings.compute_type))
+    if key not in _BACKENDS:
+        _BACKENDS[key] = (MlxWhisperBackend(settings) if device == "mlx"
+                          else FasterWhisperBackend(settings))
+    return _BACKENDS[key]
 
 
 class WhisperEngine:
