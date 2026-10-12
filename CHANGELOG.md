@@ -26,6 +26,13 @@ All notable changes to Studio will be documented in this file.
   dji-0927 was dropped and transcribed again in quality).
 - The sync check measures clips under 120 s on a denser grid, and stretches
   where the recorder wrote zeros do not count against its coverage.
+- In clips under 120 s the sync check counts overlapping windows once per
+  stretch of one window length, rejects a window whose peak does not stand
+  2.5 times above every other lag, and correlates the whole clip against the
+  voice: a decisive whole-clip peak within the threshold stands for the
+  windows the clip lacks, one beyond it fails the clip. On sony_run
+  mvi-0848, 0849 and 0856 pass (they were failed or inconclusive); a voice
+  shifted by 30-800 ms fails or stays inconclusive.
 
 ### Added
 

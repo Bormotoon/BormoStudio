@@ -154,3 +154,62 @@ def test_measure_counts_the_voices_digital_silence(tmp_path) -> None:  # type: i
                      grid_s=2.5, window_s=4.0)
     assert report.silent_s == pytest.approx(12.0, abs=0.01)
     assert report.verdict(20.0)[0] == "passed"
+
+
+def test_overlapping_windows_of_a_short_clip_count_once() -> None:
+    # sony_run mvi-0848: 4 s windows every 0.6 s; two neighbours at the start
+    # are one measurement, not 2 of 10.
+    lags = [(2.0 + 0.6 * index, 60.0 if index < 2 else 0.3) for index in range(14)]
+    report = _report(lags, duration=12.0)
+    report.grid_s, report.window_s = 0.6, 4.0
+    assert report.bad_windows(20.0)[2] == pytest.approx(1 / 3)
+    report.window_s = 0.5  # windows that do not overlap count one by one
+    assert report.bad_windows(20.0)[2] == pytest.approx(2 / 14)
+
+
+def test_the_whole_clip_stands_for_the_windows_a_short_clip_lacks() -> None:
+    from studio.stages.sync_verify import WholeClip
+
+    report = _report([(t, 2.0) for t in (2.0, 2.6, 3.2)], duration=12.0)
+    assert report.verdict(20.0)[0] == "inconclusive"
+    report.whole = WholeClip(-0.3, 1.8)  # not decisive
+    assert report.verdict(20.0)[0] == "inconclusive"
+    report.whole = WholeClip(-0.3, 7.8)
+    status, reason = report.verdict(20.0)
+    assert status == "passed" and "7.8 times" in reason
+    report.samples = []
+    assert report.verdict(20.0)[0] == "passed"
+    report.whole = WholeClip(-300.0, 8.0)
+    status, reason = report.verdict(20.0)
+    assert status == "failed" and "-300.0 ms" in reason
+
+
+def test_measure_rejects_ambiguous_windows_of_a_short_clip(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import wave
+
+    from studio.stages.sync_verify import measure
+
+    def write(path, data):  # type: ignore[no-untyped-def]
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(SR)
+            handle.writeframes((np.clip(data, -1, 1) * 32767).astype("<i2").tobytes())
+        return path
+
+    # Four seconds of clicks every 256 ms correlate equally well at every
+    # multiple of 256 ms; speech after them pins the lag.
+    rng = np.random.default_rng(7)
+    camera = _noise(12.0, seed=8) * 0.3
+    camera[:int(4 * SR)] = 0.0
+    click = (rng.standard_normal(int(0.02 * SR)) * 0.5).astype(np.float32)
+    for start in range(0, int(4 * SR) - click.size, int(0.256 * SR)):
+        camera[start:start + click.size] = click
+    voice = camera.copy()
+    report = measure(write(tmp_path / "cam.wav", camera), write(tmp_path / "voice.wav", voice),
+                     grid_s=0.6, window_s=2.0)
+    assert report.whole is not None and report.whole.decisive
+    assert abs(report.whole.lag_ms) < 1.0
+    assert any("ambiguous" in reason for t, reason in report.rejected if t < 3.0)
+    assert all(sample.ratio is not None and sample.ratio >= 2.5 for sample in report.confident)
+    assert report.verdict(20.0)[0] == "passed"

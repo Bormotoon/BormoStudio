@@ -43,6 +43,7 @@ __all__ = [
     "LagSample",
     "ShiftedInterval",
     "VerifyReport",
+    "WholeClip",
     "measure",
     "short_clip_grid",
     "validate_parameters",
@@ -76,6 +77,14 @@ SHORT_GRID_WINDOWS = 20
 # clip lies outside it) has nothing to measure and does not count against
 # coverage (sony_run mvi-0844: 45 of its 68 s fall on the recorder's zeros).
 SILENT_MIN_S = 1.0
+# A short clip is also measured the way the camera clock finds a false start:
+# its whole sound against the voice within the lag range, and each window's
+# peak against the best other one more than 50 ms away (sync_camera_clock).
+# A window whose peak does not stand MIN_PEAK_RATIO above the rest is not a
+# measurement: sony_run mvi-0848's first 4 s peak at +256 ms only 1.8 times
+# above the true lag, while the whole clip peaks at -0.3 ms 7.8 times above
+# everything else.
+MIN_PEAK_RATIO = 2.5
 
 
 @dataclass
@@ -86,6 +95,8 @@ class LagSample:
     t: float
     lag_ms: float
     sharpness: float
+    # The peak over the best one more than 50 ms away (short clips only).
+    ratio: float | None = None
 
 
 @dataclass
@@ -94,6 +105,19 @@ class ShiftedInterval:
     end_s: float
     median_lag_ms: float
     windows: int
+
+
+@dataclass(frozen=True, slots=True)
+class WholeClip:
+    """The whole clip against the voice: residual of the best peak and how far it
+    stands above the best other one."""
+
+    lag_ms: float
+    ratio: float
+
+    @property
+    def decisive(self) -> bool:
+        return self.ratio >= MIN_PEAK_RATIO
 
 
 @dataclass
@@ -107,8 +131,15 @@ class VerifyReport:
     duration_s: float = 0.0
     min_sharpness: float = DEFAULT_MIN_SHARPNESS
     grid_s: float = DEFAULT_GRID_S
+    window_s: float = DEFAULT_WINDOW_S
     # Seconds of the clip where the voice is digital silence.
     silent_s: float = 0.0
+    # Short clips: the whole clip correlated against the voice.
+    whole: WholeClip | None = None
+
+    @property
+    def short(self) -> bool:
+        return self.duration_s < SHORT_CLIP_S
 
     @property
     def confident(self) -> list[LagSample]:
@@ -150,6 +181,8 @@ class VerifyReport:
             "coverage_span_s": round(self.coverage_span_s, 3),
             "coverage_ratio": round(self.coverage_ratio, 3),
             **({"silent_s": round(self.silent_s, 3)} if self.silent_s else {}),
+            **({"whole_clip": {"lag_ms": round(self.whole.lag_ms, 1),
+                               "ratio": round(self.whole.ratio, 2)}} if self.whole else {}),
         }
         if not confident:
             return base
@@ -194,6 +227,11 @@ class VerifyReport:
         as long as the neighbouring confident windows are closer than three
         grid steps: the measurement could not see there, which is no evidence
         that the shift stopped.
+
+        In a short clip the windows overlap (a 4 s window every 0.6 s), so
+        neighbours repeat one measurement: windows count by the non-overlapping
+        stretches of one window length they fall in, both for the bad fraction
+        and for the length of a run.
         """
         confident = sorted(self.confident, key=lambda item: item.t)
         if not confident:
@@ -211,11 +249,16 @@ class VerifyReport:
                 start = index
         if start is not None:
             runs.append((start, len(confident)))
+        stretch = self.window_s if self.short and self.window_s > self.grid_s else 0.0
+
+        def independent(items: list[LagSample]) -> int:
+            return len({int(item.t // stretch) for item in items}) if stretch else len(items)
+
         intervals: list[ShiftedInterval] = []
         outliers: list[LagSample] = []
         for first, end in runs:
             members = confident[first:end]
-            if len(members) < min_bad_windows:
+            if independent(members) < min_bad_windows:
                 outliers.extend(members)
                 continue
             before = confident[first - 1] if first > 0 else None
@@ -228,7 +271,8 @@ class VerifyReport:
                 self.duration_s if after is None else members[-1].t + self.grid_s / 2)
             lags = sorted(item.lag_ms for item in members)
             intervals.append(ShiftedInterval(left, right, lags[len(lags) // 2], len(members)))
-        return intervals, outliers, sum(bad) / len(bad)
+        flagged = [item for item, flag in zip(confident, bad, strict=True) if flag]
+        return intervals, outliers, independent(flagged) / independent(confident)
 
     def verdict(
         self,
@@ -246,12 +290,23 @@ class VerifyReport:
         of a clip shifted by 88 ms leaves the median at zero, so the clip
         fails on any sustained run of bad windows or on too many bad windows
         overall, and the reason names the shifted intervals.
+
+        A short clip has few windows; when its whole sound peaks decisively
+        within the threshold, that stands for the windows it lacks, and a
+        decisive peak beyond the threshold fails it.
         """
         summary = self.summary()
         confident = int(summary["n_confident"])
         silent = (f"; the recorder is silent for {self.silent_s:.0f} of its "
                   f"{self.duration_s:.0f} s" if self.silent_s else "")
-        if confident < min_confident:
+        whole = self.whole if self.whole is not None and self.whole.decisive else None
+        whole_note = (f"the whole clip peaks at {whole.lag_ms:+.1f} ms, "
+                      f"{whole.ratio:.1f} times above any other lag" if whole else "")
+        if whole is not None and abs(whole.lag_ms) > threshold_ms:
+            return "failed", f"{whole_note} (beyond {threshold_ms:.1f} ms)"
+        if confident == 0 and whole is not None:
+            return "passed", whole_note
+        if confident < min_confident and whole is None:
             return (
                 "inconclusive",
                 f"only {confident} usable window(s) out of {self.attempted} attempted "
@@ -259,7 +314,7 @@ class VerifyReport:
                 + silent,
             )
         ratio = float(summary["coverage_ratio"])
-        if ratio < min_span_ratio:
+        if ratio < min_span_ratio and whole is None:
             where = "of the clip outside the recorder's silence" if self.silent_s else "of the clip"
             return (
                 "inconclusive",
@@ -284,6 +339,7 @@ class VerifyReport:
         if median > threshold_ms:
             return "failed", f"median |lag| {median:.1f} ms exceeds {threshold_ms:.1f} ms"
         note = f", {len(outliers)} outlier window(s)" if outliers else ""
+        note += f"; {whole_note}" if whole else ""
         return "passed", f"median |lag| {median:.1f} ms over {confident} window(s){note}"
 
 
@@ -365,4 +421,42 @@ def measure(
     end = int(report.duration_s * 16000)
     spans = digital_silence(voice_track[:end], int(SILENT_MIN_S * 16000))
     report.silent_s = float((spans[:, 1] - spans[:, 0]).sum()) / 16000 if len(spans) else 0.0
+    if report.short:
+        _measure_peaks(report, video_track[:end], voice_track, max_lag_s)
     return report
+
+
+def _measure_peaks(report: VerifyReport, camera: Any, voice: Any, max_lag_s: float) -> None:
+    """The whole clip's peak, and each window's: a window without a decisive one
+    is rejected as ambiguous."""
+    import numpy as np
+
+    from studio.stages.sync_camera_clock import _peak
+
+    rate = 16000
+    lag = int(max_lag_s * rate)
+    padded = np.concatenate([np.zeros(lag, np.float32), voice[:len(camera)],
+                             np.zeros(lag, np.float32)])
+
+    def peak(start: int, end: int) -> tuple[float, float] | None:
+        query = camera[start:end]
+        if not np.any(query):
+            return None
+        found = _peak(query, padded[start:end + 2 * lag])
+        return None if found is None else ((found[0] - lag) * 1000.0 / rate, found[2])
+
+    whole = peak(0, len(camera))
+    if whole is not None:
+        report.whole = WholeClip(*whole)
+    kept = []
+    half = int(report.window_s * rate / 2)
+    for sample in report.samples:
+        centre = int(sample.t * rate)
+        found = peak(max(0, centre - half), centre + half)
+        sample.ratio = None if found is None else found[1]
+        if sample.sharpness >= report.min_sharpness and (
+                sample.ratio is None or sample.ratio < MIN_PEAK_RATIO):
+            report.rejected.append((sample.t, f"ambiguous peak (ratio {sample.ratio or 0:.1f})"))
+        else:
+            kept.append(sample)
+    report.samples = kept

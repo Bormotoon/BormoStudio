@@ -95,7 +95,7 @@ def measure_grid(
     else:
         duration = camera_s if duration_s is None else min(duration_s, camera_s)
     report = VerifyReport(video, voice, duration_s=duration, min_sharpness=min_sharpness,
-                          grid_s=grid_s)
+                          grid_s=grid_s, window_s=window_s)
     half = window_s / 2.0
     t = half
     while t <= duration - half + 1e-9:
