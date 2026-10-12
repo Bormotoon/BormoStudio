@@ -15,20 +15,21 @@ WORKER = """
 import json, os, sys
 import torch
 from pyannote.audio import Pipeline
-model, device, audio, output = sys.argv[1:]
+model, device, audio, output = sys.argv[1:5]
+known = {'num_speakers': int(sys.argv[5])} if len(sys.argv) > 5 and int(sys.argv[5]) else {}
 pipeline = Pipeline.from_pretrained(model, use_auth_token=os.environ.get('HF_TOKEN'))
 if pipeline is None:
     raise RuntimeError('diarization model unavailable; check model access and HF_TOKEN')
 pipeline.to(torch.device(device))
 embeddings = {}
 try:
-    annotation, centroids = pipeline(audio, return_embeddings=True)
+    annotation, centroids = pipeline(audio, return_embeddings=True, **known)
     for label, vector in zip(annotation.labels(), centroids):
         values = [float(value) for value in vector]
         if all(value == value for value in values):
             embeddings[str(label)] = values
 except TypeError:
-    annotation = pipeline(audio)
+    annotation = pipeline(audio, **known)
 turns = [{'start': segment.start, 'end': segment.end, 'speaker': str(speaker)}
          for segment, _, speaker in annotation.itertracks(yield_label=True)]
 with open(output, 'w', encoding='utf-8') as stream:
@@ -44,8 +45,9 @@ class Diarization:
 
 
 def diarize(
-    source: Path, directory: Path, *, model: str, device: str
+    source: Path, directory: Path, *, model: str, device: str, num_speakers: int = 0
 ) -> Diarization:
+    """pyannote turns of ``source``; ``num_speakers`` > 0 tells it how many people talk."""
     manager = ModuleManager()
     if not manager.installed("diarization"):
         raise RuntimeError("diarization module is missing; install the diarization module")
@@ -57,7 +59,7 @@ def diarize(
                         "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", str(audio)],
                        capture_output=True, check=True)
         result = run_logged([str(manager.interpreter("diarization")), "-c", WORKER,
-                             model, device, str(audio), str(output)],
+                             model, device, str(audio), str(output), str(num_speakers)],
                             log_dir=directory / "logs", timeout=7200, keep_logs=True)
         if result.returncode:
             raise RuntimeError("pyannote worker failed; inspect speakers backend logs")

@@ -106,7 +106,10 @@ class SpeakersStage:
                       for asset in project.assets if asset.id in selected]
         return stable_fingerprint(
             "speakers-v7", content, tracks, identities, project.placements,
-            [warp for warp in project.audio_warp_maps if warp.source_asset_id in selected], conf,
+            [warp for warp in project.audio_warp_maps if warp.source_asset_id in selected],
+            # num_speakers came later: at its default it leaves results reusable.
+            {key: value for key, value in conf.items()
+             if not (key == "num_speakers" and not value)},
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -394,6 +397,7 @@ def run_pyannote(context: StageContext, transcript: Transcript, conf: dict) -> S
             path, directory if order == 0 else directory / "sources" / asset_id,
             model=str(conf.get("model", "pyannote/speaker-diarization-3.1")),
             device=str(conf.get("device", "cpu")),
+            num_speakers=int(conf.get("num_speakers", 0) or 0),
         )
         results.append((asset_id, placement, intervals, path, diarization))
     names: dict[tuple[str, str], str] = {

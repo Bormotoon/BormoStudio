@@ -38,3 +38,22 @@ def test_missing_module_fails_before_decode(tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="module is missing"):
             diarize(tmp_path / "missing.wav", tmp_path, model="test", device="cpu")
         decode.assert_not_called()
+
+
+def test_known_speaker_count_reaches_pyannote(tmp_path: Path) -> None:
+    project = Project(tmp_path, tmp_path / "work")
+    project.assets = [Asset("rec", Path("rec.wav"), "audio", AssetRole.RECORDER)]
+    project.placements = [SourcePlacement("rec", 0, 0, 8, 1)]
+    transcript = Transcript(tmp_path / "rec.wav", "en", 8, [],
+                            metadata={"source_asset_id": "rec"})
+    with patch("studio.stages.speaker_backend.diarize", return_value=Diarization([
+        {"start": 0, "end": 2, "speaker": "S0"}])) as fake:
+        run_pyannote(StageContext(project, {}, project.work_dir), transcript,
+                     {"num_speakers": 2})
+    assert fake.call_args.kwargs["num_speakers"] == 2
+
+
+def test_worker_passes_the_count_only_when_known() -> None:
+    from studio.stages.speaker_backend import WORKER
+
+    assert "sys.argv[1:5]" in WORKER and "'num_speakers': int(sys.argv[5])" in WORKER

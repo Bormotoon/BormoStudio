@@ -23,14 +23,17 @@ class JsonRequestBudget:
         provider: CompletionProvider,
         prompt: str,
         validate: Callable[[Any], Any] | None = None,
+        schemas: tuple[dict[str, Any], ...] = (),
     ) -> Any:
+        """``schemas`` (strictest first) constrain the answer on providers that take them."""
+        extra: dict[str, Any] = {"schemas": schemas} if schemas else {}
         for attempt in range(self.retries + 1):
             self.attempts += 1
             try:
                 text = (
-                    provider.complete(prompt, refresh=True)
+                    provider.complete(prompt, refresh=True, **extra)
                     if attempt
-                    else provider.complete(prompt)
+                    else provider.complete(prompt, **extra)
                 )
                 payload = parse_json_response(text)
                 return validate(payload) if validate else payload

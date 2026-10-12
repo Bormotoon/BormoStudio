@@ -19,7 +19,8 @@ from studio.llm.json_utils import extract_first_json_value
 
 class CompletionProvider(Protocol):
     def complete(
-        self, prompt: str, *, grammar: str | None = None, refresh: bool = False
+        self, prompt: str, *, grammar: str | None = None, refresh: bool = False,
+        schemas: tuple[dict[str, Any], ...] = (),
     ) -> str: ...
 
 
@@ -62,8 +63,13 @@ class LlamaProvider:
     timeout_s: float = 600.0
     options: RequestOptions = field(default_factory=RequestOptions)
 
-    def complete(self, prompt: str, *, grammar: str | None = None, refresh: bool = False) -> str:
-        cache = self._cache_path(prompt, grammar)
+    def complete(
+        self, prompt: str, *, grammar: str | None = None, refresh: bool = False,
+        schemas: tuple[dict[str, Any], ...] = (),
+    ) -> str:
+        """``schemas``: JSON schemas the answer is sampled under, strictest first;
+        a server that rejects one (HTTP 400 naming the schema) gets the next, then none."""
+        cache = self._cache_path(prompt, grammar, schemas[0] if schemas else None)
         if not refresh and cache and cache.is_file():
             text = cache.read_text(encoding="utf-8")
             if text.strip():
@@ -77,12 +83,22 @@ class LlamaProvider:
             body["max_tokens"] = self.options.n_predict
         if grammar:
             body["grammar"] = grammar
+        remaining = list(schemas)
+        if remaining:
+            body["response_format"] = _response_format(remaining.pop(0))
         attempt = 0
         while True:
             try:
                 text = self._stream(body) if self.options.watchdog else self._request(body)
                 break
             except HTTPError as exc:
+                if exc.code == 400 and "response_format" in body and _blames_schema(exc):
+                    # This build cannot compile the schema: a simpler one, then none.
+                    if remaining:
+                        body["response_format"] = _response_format(remaining.pop(0))
+                    else:
+                        del body["response_format"]
+                    continue
                 # The same request fails the same way on a client error.
                 if exc.code < 500 or attempt >= self.options.max_retries:
                     raise
@@ -159,7 +175,9 @@ class LlamaProvider:
             _abort(response)
         return "".join(parts)
 
-    def _cache_path(self, prompt: str, grammar: str | None) -> Path | None:
+    def _cache_path(
+        self, prompt: str, grammar: str | None, schema: dict[str, Any] | None = None
+    ) -> Path | None:
         if self.cache_dir is None:
             return None
         material = json.dumps(
@@ -170,6 +188,7 @@ class LlamaProvider:
                 "model_identity": self.model_identity,
                 "prompt": prompt,
                 "grammar": grammar,
+                **({"schema": schema} if schema else {}),
                 "temperature": 0,
                 # Only non-default sampling enters the key, so older caches stay valid.
                 **({"sampling": [self.options.temperature, self.options.n_predict]}
@@ -180,6 +199,19 @@ class LlamaProvider:
         )
         digest = hashlib.sha256(material.encode()).hexdigest()
         return self.cache_dir / f"{digest}.txt"
+
+
+def _response_format(schema: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}}
+
+
+def _blames_schema(error: HTTPError) -> bool:
+    """Whether an HTTP 400 body blames the schema or its grammar."""
+    try:
+        body = error.read().decode("utf-8", "replace").lower()
+    except (OSError, ValueError):
+        return False
+    return any(token in body for token in ("schema", "grammar", "gbnf", "response_format"))
 
 
 def _abort(response: Any) -> None:

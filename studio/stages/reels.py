@@ -14,6 +14,14 @@ from studio.core.transcript_index import TranscriptIndex
 from studio.llm.providers import LlamaProvider
 from studio.llm.retries import JsonRequestBudget
 from studio.llm.roles import role_provider
+from studio.llm.schemas import (
+    ANY_OBJECT_SCHEMA,
+    CLEANUP_DECISIONS_SCHEMA,
+    EPISODE_CONTEXT_SCHEMA,
+    FALLBACK_SCHEMAS,
+    JUDGE_REVIEWS_SCHEMA,
+    SCOUT_JSON_SCHEMA,
+)
 from studio.llm.session import model_identity
 from studio.reels.analysis.audio_features import (
     analysis_audio,
@@ -207,6 +215,14 @@ class ReelsStage:
                 overlap_seconds=overlap_s,
             )
 
+        def schemas(role: str) -> tuple[dict[str, Any], ...]:
+            """The role's answer schema, its simplified form and any object (Forge)."""
+            if not reels["strict_json_schema"]:
+                return ()
+            full = {"context": EPISODE_CONTEXT_SCHEMA, "scout": SCOUT_JSON_SCHEMA,
+                    "cleanup": CLEANUP_DECISIONS_SCHEMA, "judge": JUDGE_REVIEWS_SCHEMA}[role]
+            return (full, FALLBACK_SCHEMAS[role], ANY_OBJECT_SCHEMA)
+
         def routed(role: str) -> LlamaProvider:
             return role_provider(
                 context.settings,
@@ -261,6 +277,7 @@ class ReelsStage:
                         "{transcript_digest}", (metadata_context + "\n\n" + digest).strip()
                     ),
                     validate_context,
+                    schemas=schemas("context"),
                 )
                 episode_context = format_episode_context(context_payload)
             except Exception as exc:
@@ -289,7 +306,8 @@ class ReelsStage:
             )
             try:
                 found = normalize_candidate_list(
-                    requests.request(routed("scout"), prompt), stage="scout"
+                    requests.request(routed("scout"), prompt, schemas=schemas("scout")),
+                    stage="scout",
                 )
             except Exception as exc:
                 scout_failures += 1
@@ -358,7 +376,7 @@ class ReelsStage:
                 )
                 cleaned.extend(self._review(
                     requests, routed("cleanup"), prompt, batch, "cleanup", offset,
-                    review_reports, failures,
+                    review_reports, failures, schemas("cleanup"),
                 ))
             cleaned = dedupe_moments(cleaned) if cleaned else list(ordered)
             cleaned, untraced = guard_stage_output(cleaned, cleanup_input, enabled=guard)
@@ -438,7 +456,7 @@ class ReelsStage:
                 )
                 judged.extend(self._review(
                     requests, routed("judge"), prompt, batch, "judge", offset,
-                    review_reports, failures,
+                    review_reports, failures, schemas("judge"),
                 ))
             if not judged:
                 # The judge rejected everything: fall back to the pre-judge pool.
@@ -606,12 +624,13 @@ class ReelsStage:
         offset: int,
         reports: list[dict[str, Any]],
         failures: list[str],
+        schemas: tuple[dict[str, Any], ...] = (),
     ) -> list[MomentRecord]:
         """One cleanup or judge request; a failed batch keeps its input."""
         try:
             outcome = apply_stage_decisions(
                 batch,
-                requests.request(provider, prompt),
+                requests.request(provider, prompt, schemas=schemas),
                 stage=stage,
                 editable=CLEANUP_EDITABLE if stage == "cleanup" else JUDGE_EDITABLE,
                 record_judge_score=stage == "judge",
@@ -678,6 +697,7 @@ def _settings(settings: dict[str, Any]) -> dict[str, Any]:
         "chunk_seconds": 600,
         "max_chars_chunk": 6000,
         "prompt_variant": "default",
+        "strict_json_schema": True,
         "max_candidates": 10,
         "target_min_s": 30.0,
         "target_max_s": 60.0,

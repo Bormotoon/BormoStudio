@@ -13,7 +13,8 @@ class FakeProvider:
     def __init__(self) -> None:
         self.prompts: list[str] = []
 
-    def complete(self, prompt: str, *, grammar: str | None = None, refresh: bool = False) -> str:
+    def complete(self, prompt: str, *, grammar: str | None = None, refresh: bool = False,
+                 **_kwargs: object) -> str:
         self.prompts.append(prompt)
         if "# Transcript digest" in prompt:
             return '{"summary": "A discussion of valid evidence", "topics": ["evidence"]}'
@@ -169,7 +170,7 @@ def test_judge_budget_limits_actual_request(tmp_path: Path, monkeypatch) -> None
     prompts = []
 
     class Provider:
-        def complete(self, prompt):
+        def complete(self, prompt, **_kwargs):
             prompts.append(prompt)
             if len(prompts) > 1:
                 return '{"decisions": []}'

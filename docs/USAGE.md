@@ -350,6 +350,9 @@ transcript and the same LLM answers it selects the same moments
 its reason; `report.json` has the counts after each step, survival rates, quote
 match rates, boundary shifts, topic diversity and the quota fill rate.
 `reels.prompt_variant` picks `chunk_a.txt`/`chunk_b.txt` style prompt variants.
+`reels.strict_json_schema` (default on) samples each answer under Forge's JSON
+schema of its stage; a llama.cpp build that cannot compile a schema gets a
+simpler one, then any object, then none, so the setting never blocks a run.
 
 The episode overview is one extra request before scouting; it reaches the scout
 and judge prompts (as in Forge). Set `reels.episode_context: false` to skip

@@ -61,6 +61,16 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- The remaining Forge and WhisperSync settings get Studio homes: article
+  faithfulness thresholds and window (`text.article_*`), term check
+  occurrences and pause (`text.term_min_occurrences`, `term_pause_s`), Whisper
+  `best_of`, `patience` and `condition_on_previous_text` (left out of
+  fingerprints at their defaults, so cached transcripts stay valid), pyannote
+  `speakers.num_speakers`, and JSON-schema constrained reels answers
+  (`reels.strict_json_schema`, Forge's schemas, stepping down to simpler ones
+  when the server cannot compile a schema). The migration report of Forge's
+  own `config.yaml` now names a Studio key or a reason for every key.
+
 - Forge's `host_memory`: `compute.host_memory` shrinks running libvirt VMs by
   balloon and shuts down `compute.vm_stop_domains` (GPU-passthrough VMs) for a
   run or a whole queue, gives everything back at the end, on signals and, after a

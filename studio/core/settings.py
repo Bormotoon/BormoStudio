@@ -109,6 +109,11 @@ class TranscribeSettings:
     # Whisper mode of the camera transcripts that only place a camera on the
     # recorder; the content transcripts follow ``mode``.
     camera_mode: str = "fast"
+    # Decoding: candidates sampled at a fallback temperature, beam patience,
+    # and whether each window sees the previous text (null: quality mode only).
+    best_of: int = 5
+    patience: float = 1.0
+    condition_on_previous_text: bool | None = None
 
 
 @dataclass(slots=True)
@@ -203,6 +208,8 @@ class SpeakerSettings:
     tracks: dict[str, str] = field(default_factory=dict)
     model: str = "pyannote/speaker-diarization-3.1"
     device: str = "cpu"
+    # How many people talk, when known (pyannote); 0 lets it decide.
+    num_speakers: int = 0
     # One name per person across recorder files / diarized sources that do not
     # play together (separate sessions); thresholds are cosine similarities.
     match_files: bool = True
@@ -219,11 +226,23 @@ class TextSettings:
     prompt_language: str = "auto"
     max_chars_chunk: int = 4000
     article_max_chars_chunk: int = 6000
+    # Transcript window per article request (seconds; 0: characters only).
+    article_chunk_seconds: float = 600.0
+    # An article chunk is flagged as rewritten, not edited, beyond these: share
+    # of words not in its source, length against the source (most and least)
+    # and share of the source's words that must survive.
+    article_max_novel_word_ratio: float = 0.15
+    article_max_length_ratio: float = 1.15
+    article_min_length_ratio: float = 0.25
+    article_min_source_coverage: float = 0.45
     min_similarity: float = 0.8
     term_check: bool = False
     term_check_network: bool = False
     term_fixes: dict[str, str] = field(default_factory=dict)
     term_max_candidates: int = 10
+    # A word is a suspect term from this many occurrences; pause between lookups.
+    term_min_occurrences: int = 2
+    term_pause_s: float = 1.0
 
 
 @dataclass(slots=True)
@@ -234,6 +253,9 @@ class ReelsSettings:
     prompt_language: str = "auto"
     # Prompt variant: chunk_<variant>.txt and friends, else the default ones.
     prompt_variant: str = "default"
+    # Sample every answer under its JSON schema (a simpler one, then none, when
+    # the server cannot compile it), so the JSON parses the first time.
+    strict_json_schema: bool = True
     chunk_seconds: int = 600
     max_chars_chunk: int = 6000
     # Overlap of neighbouring scout chunks; -1: chunk_seconds/8 within 20-45 s.
@@ -587,6 +609,9 @@ def validate_settings(settings: Settings) -> None:
     for name in ("acoustic_grid_s", "acoustic_window_s", "acoustic_min_sharpness"):
         _positive(f"sync.{name}", getattr(settings.sync, name))
     _positive("transcribe.repetition_penalty", settings.transcribe.repetition_penalty)
+    _positive("transcribe.patience", settings.transcribe.patience)
+    if settings.transcribe.best_of < 1:
+        raise SettingsError("transcribe.best_of must be at least 1")
     _positive("transcribe.vad_merge_gap_s", settings.transcribe.vad_merge_gap_s)
     _positive("transcribe.max_word_gap_s", settings.transcribe.max_word_gap_s)
     _non_negative("transcribe.window_margin_s", settings.transcribe.window_margin_s)
@@ -613,6 +638,8 @@ def validate_settings(settings: Settings) -> None:
         raise SettingsError("transcribe.glossary must be a list of strings")
     _validate_roughcut_llm(settings.roughcut)
     _non_negative("speakers.margin_db", settings.speakers.margin_db)
+    if settings.speakers.num_speakers < 0:
+        raise SettingsError("speakers.num_speakers must be 0 (automatic) or a count")
     _positive("speakers.step_s", settings.speakers.step_s)
     _non_negative("speakers.min_turn_s", settings.speakers.min_turn_s)
     _non_negative("speakers.max_gap_s", settings.speakers.max_gap_s)
@@ -671,6 +698,17 @@ def validate_settings(settings: Settings) -> None:
     _non_negative("roughcut.head_tail_pad_s", settings.roughcut.head_tail_pad_s)
     _non_negative("roughcut.retake_max_gap_s", settings.roughcut.retake_max_gap_s)
     _positive("roughcut.phrase_gap_threshold", settings.roughcut.phrase_gap_threshold)
+    for name in ("article_chunk_seconds", "term_pause_s"):
+        _non_negative(f"text.{name}", getattr(settings.text, name))
+    for name in ("article_max_novel_word_ratio", "article_min_length_ratio",
+                 "article_min_source_coverage"):
+        value = getattr(settings.text, name)
+        if not math.isfinite(value) or not 0 <= value <= 1:
+            raise SettingsError(f"text.{name} must be between 0 and 1")
+    if not settings.text.article_max_length_ratio >= 1:
+        raise SettingsError("text.article_max_length_ratio must be at least 1")
+    if settings.text.term_min_occurrences < 1:
+        raise SettingsError("text.term_min_occurrences must be at least 1")
     if not settings.text.base_url.strip():
         raise SettingsError("text.base_url must not be empty")
     if not settings.text.model.strip():

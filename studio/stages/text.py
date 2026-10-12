@@ -153,6 +153,13 @@ def _text_settings(settings: dict[str, Any]) -> dict[str, object]:
         "term_check_network": False,
         "term_fixes": {},
         "term_max_candidates": 10,
+        "term_min_occurrences": 2,
+        "term_pause_s": 1.0,
+        "article_chunk_seconds": 600.0,
+        "article_max_novel_word_ratio": 0.15,
+        "article_max_length_ratio": 1.15,
+        "article_min_length_ratio": 0.25,
+        "article_min_source_coverage": 0.45,
     }
     configured = settings.get("text", {})
     if isinstance(configured, dict):
@@ -229,10 +236,12 @@ def check_transcript_terms(
     if settings["term_check_network"]:
         try:
             cache = load_cache(cache_path)
-            terms = find_suspect_terms("\n".join(segment.text for segment in transcript.segments))[
-                : int(settings["term_max_candidates"])
-            ]
-            fixes += verify_terms(terms, WikiTermVerifier(), cache=cache)
+            terms = find_suspect_terms(
+                "\n".join(segment.text for segment in transcript.segments),
+                min_occurrences=int(settings["term_min_occurrences"]),
+            )[: int(settings["term_max_candidates"])]
+            fixes += verify_terms(terms, WikiTermVerifier(pause=float(settings["term_pause_s"])),
+                                  cache=cache)
             save_cache(cache_path, cache)
         except (OSError, ValueError, TypeError) as exc:
             errors.append(str(exc))
@@ -314,7 +323,8 @@ def build_article(
 ) -> tuple[list[ArticleSection], dict[str, object]]:
     language = _prompt_language(transcript.language, str(settings["prompt_language"]))
     template = _prompt("article_default", language)
-    chunks = _article_chunks(transcript.segments, int(settings["article_max_chars_chunk"]))
+    chunks = _article_chunks(transcript.segments, int(settings["article_max_chars_chunk"]),
+                             float(settings["article_chunk_seconds"]))
     sections: list[ArticleSection] = []
     reports: list[dict[str, object]] = []
     for chunk in chunks:
@@ -329,7 +339,7 @@ def build_article(
                 break
             parsed = parse_markdown_sections(raw)
             body = " ".join(paragraph for item in parsed for paragraph in item["paragraphs"])
-            report = faithfulness_report(source, body)
+            report = faithfulness_report(source, body, settings)
             if report["ok"] or attempt:
                 reports.append(report)
                 accepted = bool(report["ok"])
@@ -353,18 +363,27 @@ def build_article(
     return _merge_sections(sections), report
 
 
-def faithfulness_report(source: str, edited: str) -> dict[str, object]:
+def faithfulness_report(
+    source: str, edited: str, limits: dict[str, object] | None = None
+) -> dict[str, object]:
+    """Whether an article chunk was edited rather than rewritten (Forge's thresholds)."""
+    limits = limits or {}
+
+    def limit(name: str, default: float) -> float:
+        return float(str(limits.get(f"article_{name}", default)))
+
     source_words = set(_normalized_words(source).split())
     edited_words = set(_normalized_words(edited).split())
     novel = len(edited_words - source_words) / len(edited_words) if edited_words else 0.0
     length = len(edited.strip()) / len(source.strip()) if source.strip() else 0.0
     coverage = len(source_words & edited_words) / len(source_words) if source_words else 1.0
     reasons: list[str] = []
-    if novel > 0.15:
-        reasons.append("new vocabulary exceeds 15%")
-    if length > 1.15:
+    if novel > limit("max_novel_word_ratio", 0.15):
+        reasons.append(f"new vocabulary exceeds {limit('max_novel_word_ratio', 0.15):.0%}")
+    if length > limit("max_length_ratio", 1.15):
         reasons.append("text is longer than source")
-    if length < 0.25 or coverage < 0.45:
+    if (length < limit("min_length_ratio", 0.25)
+            or coverage < limit("min_source_coverage", 0.45)):
         reasons.append("text is too abbreviated")
     return {
         "novel_word_ratio": round(novel, 4),
@@ -416,12 +435,16 @@ def render_article_markdown(title: str, sections: list[ArticleSection]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _article_chunks(segments: list[Segment], maximum: int) -> list[list[Segment]]:
+def _article_chunks(
+    segments: list[Segment], maximum: int, seconds: float = 0.0
+) -> list[list[Segment]]:
+    """Article requests by characters and, with ``seconds``, by transcript time."""
     batches: list[list[Segment]] = []
     current: list[Segment] = []
     size = 0
     for segment in segments:
-        if current and size + len(segment.text) > max(500, maximum):
+        if current and (size + len(segment.text) > max(500, maximum)
+                        or 0 < seconds < segment.end - current[0].start):
             batches.append(current)
             current, size = [], 0
         current.append(segment)

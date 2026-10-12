@@ -169,3 +169,20 @@ def test_camera_transcripts_use_the_mode_prepare_asked_for(tmp_path: Path) -> No
     transcripts = output.project_changes["transcripts"]
     assert transcripts["match:rec"].name == "rec.match.json"
     assert transcripts["rec"].name == "rec.json"
+
+
+def test_later_decoding_knobs_keep_existing_fingerprints() -> None:
+    from studio.stages.transcribe import TranscribeSettings, _cache_identity, fingerprint_settings
+
+    settings = TranscribeSettings(mode="quality", glossary=("term",))
+    # Cache keys embedded the settings' repr before best_of and friends existed.
+    assert _cache_identity(settings) == repr(settings).replace(
+        ", best_of=5, patience=1.0, condition_on_previous_text=None", "")
+    assert "best_of=1" in _cache_identity(TranscribeSettings(best_of=1))
+    assert fingerprint_settings({"model": "x", "best_of": 5, "patience": 1.0,
+                                 "condition_on_previous_text": None}) == {"model": "x"}
+    assert fingerprint_settings({"condition_on_previous_text": False}) == {
+        "condition_on_previous_text": False}
+    assert TranscribeSettings(mode="quality").conditioned()
+    assert not TranscribeSettings(mode="fast").conditioned()
+    assert not TranscribeSettings(mode="quality", condition_on_previous_text=False).conditioned()

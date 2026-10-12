@@ -9,7 +9,7 @@ import os
 import subprocess
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,6 +31,27 @@ CACHE_SCHEMA = "studio/transcript-cache/3"
 # Quality (sequential) decoding is fed at most this much audio per call.
 QUALITY_BLOCK_S = 600.0
 TEMPERATURES = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+# Decoding knobs added after transcripts were cached: they enter a fingerprint
+# only when set away from these defaults, so existing transcripts stay valid.
+LATER_DEFAULTS: dict[str, object] = {
+    "best_of": 5, "patience": 1.0, "condition_on_previous_text": None,
+}
+
+
+def fingerprint_settings(values: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in values.items()
+            if key not in LATER_DEFAULTS or value != LATER_DEFAULTS[key]}
+
+
+def _cache_identity(settings: TranscribeSettings) -> str:
+    """The settings' repr without later knobs at their defaults.
+
+    Cache keys used to embed ``str(settings)``; this keeps them unchanged.
+    """
+    shown = [f"{item.name}={getattr(settings, item.name)!r}" for item in fields(settings)
+             if item.name not in LATER_DEFAULTS
+             or getattr(settings, item.name) != LATER_DEFAULTS[item.name]]
+    return f"{type(settings).__name__}({', '.join(shown)})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +73,11 @@ class TranscribeSettings:
     use_cache: bool = True
     vad_merge_gap_s: float = 1.5
     max_word_gap_s: float = 2.0
+    # Candidates sampled at a fallback temperature, beam patience, and whether
+    # each window sees the previous text (None: on in quality mode only).
+    best_of: int = 5
+    patience: float = 1.0
+    condition_on_previous_text: bool | None = None
 
     @classmethod
     def from_mapping(cls, data: object) -> TranscribeSettings:
@@ -77,7 +103,17 @@ class TranscribeSettings:
             use_cache=bool(values.get("use_cache", True)),
             vad_merge_gap_s=float(values.get("vad_merge_gap_s", 1.5)),
             max_word_gap_s=float(values.get("max_word_gap_s", 2.0)),
+            best_of=int(values.get("best_of", 5)),
+            patience=float(values.get("patience", 1.0)),
+            condition_on_previous_text=(
+                None if values.get("condition_on_previous_text") is None
+                else bool(values["condition_on_previous_text"])),
         )
+
+    def conditioned(self) -> bool:
+        if self.condition_on_previous_text is None:
+            return self.mode == "quality"
+        return self.condition_on_previous_text
 
     def prompt(self) -> str:
         parts = [self.initial_prompt.strip()]
@@ -153,17 +189,20 @@ class FasterWhisperBackend:
             "hotwords": settings.hotwords or ", ".join(settings.glossary) or None,
             "repetition_penalty": settings.repetition_penalty,
             "no_repeat_ngram_size": settings.no_repeat_ngram_size,
+            "best_of": settings.best_of,
+            "patience": settings.patience,
         }
         if settings.mode == "quality":
             kwargs.update(
                 beam_size=settings.quality_beam_size,
-                condition_on_previous_text=True,
+                condition_on_previous_text=settings.conditioned(),
             )
             stream, info = self._quality_blocks(model, samples, clips, kwargs)
         else:
             from faster_whisper import BatchedInferencePipeline  # type: ignore[import-not-found]
 
-            kwargs.update(beam_size=settings.beam_size, condition_on_previous_text=False)
+            kwargs.update(beam_size=settings.beam_size,
+                          condition_on_previous_text=settings.conditioned())
             generated, info = BatchedInferencePipeline(model=model).transcribe(
                 samples, batch_size=max(1, settings.batch_size),
                 clip_timestamps=[{"start": start, "end": end} for start, end in clips],
@@ -321,7 +360,6 @@ class MlxWhisperBackend:
     def transcribe(self, audio: Path, settings: TranscribeSettings) -> Transcript:
         import mlx_whisper  # type: ignore[import-not-found]
 
-        quality = settings.mode == "quality"
         result = mlx_whisper.transcribe(
             str(audio),
             path_or_hf_repo=self.model,
@@ -332,7 +370,9 @@ class MlxWhisperBackend:
             logprob_threshold=-1.0,
             no_speech_threshold=0.6,
             initial_prompt=settings.prompt() or None,
-            condition_on_previous_text=quality,
+            condition_on_previous_text=settings.conditioned(),
+            best_of=settings.best_of,
+            patience=settings.patience,
             verbose=None,
         )
         segments = [
@@ -498,7 +538,7 @@ class WhisperEngine:
             SEGMENTATION_VERSION,
             identity,
             stream_index if audio_filter is None else (stream_index, audio_filter),
-            self.settings,
+            _cache_identity(self.settings),
             self.backend.device,
             self.backend.compute_type,
         )
@@ -569,7 +609,7 @@ class TranscribeStage:
             )
         return stable_fingerprint(
             "transcribe-v4", SEGMENTATION_VERSION, content, identities,
-            settings.get("transcribe", {}),
+            fingerprint_settings(dict(settings.get("transcribe", {}))),
         )
 
     def explain_stale(
