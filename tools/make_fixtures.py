@@ -286,7 +286,8 @@ def generate_defects(output_dir: Path, *, force: bool = False) -> Path:
 
         def paced(factor: float) -> np.ndarray:
             positions = np.arange(0, len(speech) - 1, factor)
-            return np.interp(positions, np.arange(len(speech)), speech).astype(np.float32)
+            stretched: np.ndarray = np.interp(positions, np.arange(len(speech)), speech)
+            return stretched.astype(np.float32)
 
         take = np.concatenate([room, *(np.concatenate([paced(factor), room])
                                        for factor in (1.0, 1.07, 0.93, 1.13))])
