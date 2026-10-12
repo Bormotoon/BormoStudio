@@ -72,11 +72,13 @@ def test_reels_stage_publishes_ranked_moments(tmp_path: Path, monkeypatch) -> No
     provider = FakeProvider()
     monkeypatch.setattr(reels, "LlamaProvider", lambda *args: provider)
 
-    output = ReelsStage().run(StageContext(project, {"reels": {"enabled": True}}, project.work_dir))
+    output = ReelsStage().run(
+        StageContext(project, {"reels": {"enabled": True, "min_duration_s": 0}}, project.work_dir)
+    )
 
     moments = json.loads((project.work_dir / "stages" / "reels" / "moments.json").read_text())
     assert moments[0]["title"] == "Why it matters"
-    assert len(output.artifacts) == 3
+    assert len(output.artifacts) == 4
     report = json.loads(output.artifacts[2].read_text())
     assert report["context_status"] == "ok"
     assert report["speaker_context"] == {"status": "ok", "change_starts": [2.0]}
@@ -86,7 +88,14 @@ def test_reels_stage_publishes_ranked_moments(tmp_path: Path, monkeypatch) -> No
     assert "This is a valid quote" in report["context_digest"]
     assert "Evidence episode" in provider.prompts[0]
     assert "chapter [0.0s source]: Opening" in report["metadata_context"]
-    assert all("A discussion of valid evidence" in prompt for prompt in provider.prompts[1:])
+    # Like Forge, the overview reaches the prompts that ask for it: scout and judge.
+    assert "A discussion of valid evidence" in provider.prompts[1]
+    assert "A discussion of valid evidence" in provider.prompts[3]
+    assert "A discussion of valid evidence" not in provider.prompts[2]
+    for prompt in provider.prompts[1:]:
+        assert not {"{requirements}", "{target_candidates}", "{chunk_json}",
+                    "{transcript}", "{candidates_json}", "{episode_context}"} & set(
+            part for part in prompt.split() if part.startswith("{"))
 
 
 def test_reels_rejects_invented_quote(tmp_path: Path, monkeypatch) -> None:
@@ -183,18 +192,20 @@ def test_judge_budget_limits_actual_request(tmp_path: Path, monkeypatch) -> None
     output = ReelsStage().run(
         StageContext(
             project,
-            {"reels": {"episode_context": False, "cleanup": False, "judge_max_candidates": 1}},
+            {"reels": {"episode_context": False, "cleanup": False, "judge_max_candidates": 1,
+                       "min_duration_s": 0}},
             project.work_dir,
         )
     )
     report = json.loads(output.artifacts[2].read_text())
-    assert report["review_limits"][0]["input_count"] == 3
-    assert report["review_limits"][0]["review_count"] == 1
-    assert len(report["review_limits"][0]["budget_excluded_ids"]) == 2
+    judge_limit = report["review_limits"][1]
+    assert judge_limit["input_count"] == 3
+    assert judge_limit["review_count"] == 1
+    assert len(judge_limit["budget_excluded_ids"]) == 2
     assert len(prompts) == 2
     assert quotes[0] in prompts[1]
     assert report["reviews"][0]["candidate_ids"][0] in prompts[1]
-    for candidate_id in report["review_limits"][0]["budget_excluded_ids"]:
+    for candidate_id in judge_limit["budget_excluded_ids"]:
         assert candidate_id not in prompts[1]
 
 

@@ -6,6 +6,10 @@ All notable changes to Studio will be documented in this file.
 
 ### Fixed
 
+- Reels prompts were sent with `{requirements}`, `{target_candidates}` and
+  `{chunk_json}` left unfilled, and cleanup/judge were asked only to "keep
+  grounded, complete moments": every placeholder is now filled as in Forge.
+
 - Final Cut import of sony_run: the timeline format carries Final Cut's own
   name (`FFVideoFormat1080p2997`), which removes the "unexpected value
   format=r1" warning; media links start at the document's published folder
@@ -56,6 +60,20 @@ All notable changes to Studio will be documented in this file.
   grid as the sync check.
 
 ### Added
+
+- Reels selection follows Forge's staged analysis: duration-scaled clip quotas
+  per type (`reels.clips_per_hour`, `story_count` ... `highlight_count`), the
+  clip ask in every prompt, two quote gates (`scout_quote_ratio`,
+  `min_quote_ratio`), pre-cleanup cap and pool top-up, audio measured before
+  the judge, judge batches with each clip's first and last words
+  (`judge_context`), quality filters (`min_score`, `min_duration_s`,
+  `max_duration_s`), MMR diversity and overlap policy (`diversity`,
+  `max_topic_similarity`, `mmr_lambda`, `max_overlap_ratio`), ranking weights
+  (`scoring_weights`), prompt variants, `rejected_candidates.json`, Forge's
+  metrics, derived titles/captions/hashtags and its `reels_summary.md`. A test
+  runs the frozen Forge and Studio on the same transcript and scripted LLM and
+  requires the same moments and rejections. `tools/migrate_settings.py`
+  migrates the matching Forge keys.
 
 - Desktop basic mode (the default): choose the material folder, check the
   speech language, pause removal, cut markers and the review video, press

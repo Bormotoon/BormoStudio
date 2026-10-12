@@ -220,16 +220,48 @@ class ReelsSettings:
     base_url: str = "http://127.0.0.1:8080"
     model: str = "local"
     prompt_language: str = "auto"
+    # Prompt variant: chunk_<variant>.txt and friends, else the default ones.
+    prompt_variant: str = "default"
     chunk_seconds: int = 600
     max_chars_chunk: int = 6000
+    # Overlap of neighbouring scout chunks; -1: chunk_seconds/8 within 20-45 s.
+    chunk_overlap_s: float = -1.0
+    # How far a scout candidate may leave its chunk before it counts as invented.
+    chunk_tolerance_s: float = 3.0
+    # Clips per hour of runtime; the counts below then only set the type mix
+    # (0: the counts are absolute).
+    clips_per_hour: float = 10.0
+    story_count: int = 2
+    story_max_s: float = 15.0
+    reel_count: int = 3
+    reel_max_s: float = 60.0
+    long_reel_count: int = 1
+    long_reel_max_s: float = 180.0
+    highlight_count: int = 5
+    # Reel count when reel_count is 0, and the lengths asked for without types.
     max_candidates: int = 10
     target_min_s: float = 30.0
     target_max_s: float = 60.0
+    # Quality filters applied at selection (0 turns one off): the judge's
+    # 1-10 score and the clip length.
+    min_score: float = 7.0
+    min_duration_s: float = 15.0
+    max_duration_s: float = 180.0
     cleanup: bool = True
     judge: bool = True
-    review_batch_size: int = 10
-    cleanup_max_candidates: int = 100
-    judge_max_candidates: int = 50
+    # Candidates per cleanup request; also the floor of the cleanup input cap.
+    review_batch_size: int = 16
+    judge_batch_size: int = 14
+    # Optional caps on the cleanup and judge input (0: Forge's own sizing).
+    cleanup_max_candidates: int = 0
+    judge_max_candidates: int = 0
+    # Drop cleanup/judge outputs that no input candidate explains.
+    require_candidate_overlap: bool = True
+    # The judge sees the real first and last words of each clip.
+    judge_context: bool = True
+    judge_head_s: float = 15.0
+    judge_tail_s: float = 5.0
+    judge_excerpt_chars: int = 260
     json_retries: int = 1
     retry_budget: int = 5
     request_timeout_s: float = 600.0
@@ -240,7 +272,25 @@ class ReelsSettings:
     audio_silence_min_s: float = 0.35
     audio_timeout_s: float = 30.0
     episode_context: bool = True
+    context_digest_chars: int = 4000
+    # Quote match below scout_quote_ratio is rejected before review, below
+    # min_quote_ratio before selection; quote_refine widens a clip to its quote.
+    scout_quote_ratio: float = 0.55
     min_quote_ratio: float = 0.75
+    quote_refine: bool = True
+    # Pull clip edges to phrase boundaries, at most this far.
+    snap_boundaries: bool = True
+    snap_max_shift_s: float = 3.0
+    # Ranking factor weights (base, hook, readability, completeness, speaker,
+    # duration, mid_thought, quote, audio, speech_rate, replay); {} keeps defaults.
+    scoring_weights: dict[str, float] = field(default_factory=dict)
+    # MMR selection: quality minus mmr_lambda x similarity to chosen clips; a
+    # clip at max_topic_similarity or above only fills an otherwise empty slot.
+    diversity: bool = True
+    max_topic_similarity: float = 0.5
+    mmr_lambda: float = 0.7
+    # Two final clips may share at most this share of the shorter one.
+    max_overlap_ratio: float = 0.2
     render: bool = False
     render_fps: str = "25"
     burn_subtitles: bool = False
@@ -580,12 +630,43 @@ def validate_settings(settings: Settings) -> None:
         "max_chars_chunk",
         "max_candidates",
         "review_batch_size",
-        "cleanup_max_candidates",
-        "judge_max_candidates",
+        "judge_batch_size",
+        "judge_excerpt_chars",
+        "context_digest_chars",
     ):
         value = getattr(settings.reels, name)
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise SettingsError(f"reels.{name} must be a positive integer")
+    for name in ("cleanup_max_candidates", "judge_max_candidates", "story_count",
+                 "reel_count", "long_reel_count", "highlight_count"):
+        value = getattr(settings.reels, name)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise SettingsError(f"reels.{name} must be 0 or a positive integer")
+    for name in ("clips_per_hour", "story_max_s", "reel_max_s", "long_reel_max_s",
+                 "min_score", "min_duration_s", "max_duration_s", "chunk_tolerance_s",
+                 "judge_head_s", "judge_tail_s", "snap_max_shift_s"):
+        _non_negative(f"reels.{name}", getattr(settings.reels, name))
+    if settings.reels.chunk_overlap_s != -1 and not 0 <= settings.reels.chunk_overlap_s:
+        raise SettingsError("reels.chunk_overlap_s must be -1 (auto) or non-negative")
+    for name in ("scout_quote_ratio", "min_quote_ratio", "max_topic_similarity",
+                 "mmr_lambda", "max_overlap_ratio"):
+        value = getattr(settings.reels, name)
+        if not math.isfinite(value) or not 0 <= value <= 1:
+            raise SettingsError(f"reels.{name} must be between 0 and 1")
+    if settings.reels.scout_quote_ratio > settings.reels.min_quote_ratio:
+        raise SettingsError("reels.scout_quote_ratio must not exceed reels.min_quote_ratio")
+    if 0 < settings.reels.max_duration_s < settings.reels.min_duration_s:
+        raise SettingsError("reels.max_duration_s must not be below min_duration_s")
+    from studio.reels.analysis.scoring import DEFAULT_SCORING_WEIGHTS
+
+    unknown_factors = set(settings.reels.scoring_weights) - set(DEFAULT_SCORING_WEIGHTS)
+    if unknown_factors or any(
+        not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value)
+        for value in settings.reels.scoring_weights.values()
+    ):
+        raise SettingsError(
+            "reels.scoring_weights must map factor names "
+            f"({', '.join(DEFAULT_SCORING_WEIGHTS)}) to numbers")
     if (
         not isinstance(settings.reels.audio_max_candidates, int)
         or isinstance(settings.reels.audio_max_candidates, bool)

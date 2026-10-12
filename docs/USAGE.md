@@ -261,8 +261,47 @@ client errors (4xx) are not retried.
 
 ## Reels analysis: context, review and retries
 
-Reels selection now generates a sampled episode overview before scouting and
-passes it to scout, cleanup and judge. Set `reels.episode_context: false` to skip
+Reels selection follows Forge's staged analysis step for step, and with the same
+transcript and the same LLM answers it selects the same moments
+(`tests/reels/test_forge_parity.py` checks this against the frozen Forge):
+
+1. **How many.** `reels.clips_per_hour` (default 10) clips per hour of material;
+   the counts `reels.story_count` (2), `reel_count` (3), `long_reel_count` (1)
+   and `highlight_count` (5) set only the mix of types, apportioned so the total
+   is exact. With `clips_per_hour: 0` the counts are absolute. The longest clip of
+   each type is `story_max_s` (15), `reel_max_s` (60), `long_reel_max_s` (180).
+2. **Scout** each transcript chunk (`chunk_seconds`, `max_chars_chunk`, overlap
+   `chunk_overlap_s`, -1 = an eighth of the chunk within 20-45 s). It is told the
+   clip lengths, not the counts. Candidates without a quote, or further than
+   `chunk_tolerance_s` (3 s) outside their chunk, are dropped. With a known
+   `llm.ctx_size`, chunks shrink so a prompt plus its answer fits one server slot.
+3. **Quote gate.** Quotes are located in the transcript; below
+   `reels.scout_quote_ratio` (0.55) the candidate is rejected before any review,
+   and `quote_refine` widens a clip to its quote.
+4. **Cleanup** in time-ordered batches of `review_batch_size` (16), over at most
+   max(16, 2 x the target) deduplicated candidates; keep/drop/merge by id. If the
+   pool falls below the target plus a third, the best dropped candidates that
+   overlap nothing kept are restored.
+5. **Judge** in stratified batches of `judge_batch_size` (14) that span the
+   quality range; with `judge_context` it sees each clip's first `judge_head_s`
+   (15) and last `judge_tail_s` (5) seconds of words. Answers no candidate explains
+   are dropped (`require_candidate_overlap`).
+6. **Final gate:** quote match of at least `min_quote_ratio` (0.75), edges snapped
+   to phrases (`snap_boundaries`, at most `snap_max_shift_s`), the quote inside
+   the clip, then the quality filters `min_score` (7, the judge's 1-10),
+   `min_duration_s` (15) and `max_duration_s` (180); 0 turns one off.
+7. **Selection:** MMR under the type quotas (`diversity`, `max_topic_similarity`
+   0.5, `mmr_lambda` 0.7), two clips sharing at most `max_overlap_ratio` (0.2) of
+   the shorter one, ranking weights `scoring_weights`; with `clips_per_hour` the
+   total is filled even when a type runs out.
+
+`stages/reels/rejected_candidates.json` lists every candidate a gate rejected with
+its reason; `report.json` has the counts after each step, survival rates, quote
+match rates, boundary shifts, topic diversity and the quota fill rate.
+`reels.prompt_variant` picks `chunk_a.txt`/`chunk_b.txt` style prompt variants.
+
+The episode overview is one extra request before scouting; it reaches the scout
+and judge prompts (as in Forge). Set `reels.episode_context: false` to skip
 this extra LLM request. Its bounded digest, overview and failures are recorded in
 the reels report; failed overview generation falls back to transcript-only analysis.
 Quotes and timing still require transcript evidence. Judge batches mix candidate
@@ -275,11 +314,9 @@ Cleanup/refine now receives evidence-only payloads, deduplicates before review a
 groups candidates by time so nearby alternatives can be compared. It applies
 keep/drop/merge decisions to source records; quotes and bounds cannot be rewritten.
 The reels report records per-batch decision diagnostics and failed-batch fallback.
-Review work is bounded by `reels.cleanup_max_candidates` (default 100) and
-`reels.judge_max_candidates` (default 50). Each enabled pass deduplicates and takes
-the highest-ranked candidates with deterministic tie-breaking before batching.
-Budget-excluded IDs are reported separately from model rejections; excluded
-candidates do not advance to final selection. Disabled passes do not apply their cap.
+`reels.cleanup_max_candidates` and `reels.judge_max_candidates` (default 0) add
+optional caps on top of Forge's own sizing; candidates over a cap are reported in
+`review_limits` and do not advance to final selection.
 Reels JSON requests allow `reels.json_retries` extra attempts per request (default 1),
 bounded by shared `reels.retry_budget` per stage run (default 5). Retries bypass
 the response cache so invalid cached JSON cannot trap a request. Overview schema,
