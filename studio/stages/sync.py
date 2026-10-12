@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from studio.core.project import Asset, AssetRole, Project, stable_fingerprint
+from studio.core.settings import fingerprint_view
 from studio.core.timeline import AudioWarpMap, AudioWarpPiece, SourcePlacement, TimeDomain
 from studio.core.transcript import Transcript
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
@@ -64,7 +65,8 @@ class SyncStage:
             "sync-v6", transcripts, project.assets,
             {asset.id: _sha256(project.source_dir / asset.path, project.work_dir)
              for asset in project.assets if asset.role in {AssetRole.CAMERA, AssetRole.RECORDER}},
-            settings.get("sync", {}), settings.get("transcribe", {}).get("audio_streams", {}),
+            fingerprint_view("sync", settings.get("sync", {})),
+            settings.get("transcribe", {}).get("audio_streams", {}),
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -382,7 +384,7 @@ def _render_complex(context: StageContext,
         strategy = int(sync.get("strategy", 3)) if selected == "complex" else 1
         refine = refine_settings(sync, camera)
         plan = render_aligned_clip(
-            alignment, PieceConfig(), source, voice,
+            alignment, piece_config(sync), source, voice,
             clip_duration_s=candidate.duration, recorder_duration_s=transcript.duration,
             recorder_words=[(word.start, word.end) for word in transcript.words],
             strategy=strategy,
@@ -391,6 +393,7 @@ def _render_complex(context: StageContext,
             camera_audio=project.source_dir / camera.path if sync.get("boundary_flex") else None,
             refine_audio=project.source_dir / camera.path if refine else None,
             refine=refine, label=Path(camera.path).name,
+            stretch_method=str(sync.get("stretch_method", "auto")),
         )
         if plan.refine is not None:
             refine_reports[camera.id] = plan.refine
@@ -412,7 +415,7 @@ def _render_complex(context: StageContext,
             if mode == "auto" and (camera.id, extra.id) in stepped:
                 extra_mode = "complex"
             extra_plan = render_aligned_clip(
-                fitted, PieceConfig(), project.source_dir / extra.path, extra_voice,
+                fitted, piece_config(sync), project.source_dir / extra.path, extra_voice,
                 clip_duration_s=candidate.duration, recorder_duration_s=extra_transcript.duration,
                 recorder_words=[(word.start, word.end) for word in extra_transcript.words],
                 strategy=int(sync.get("strategy", 3)) if extra_mode == "complex" else 1,
@@ -422,6 +425,7 @@ def _render_complex(context: StageContext,
                               if sync.get("boundary_flex") else None),
                 refine_audio=project.source_dir / camera.path if refine else None,
                 refine=refine, label=f"{Path(camera.path).name}/{Path(extra.path).name}",
+                stretch_method=str(sync.get("stretch_method", "auto")),
             )
             if extra_plan.refine is not None:
                 refine_reports[f"{camera.id}:{extra.id}"] = extra_plan.refine
@@ -506,7 +510,7 @@ def _render_complex(context: StageContext,
         checks = check_voices(
             dict(zip([camera.id for camera in cameras], camera_transcripts, strict=True)),
             {camera.id: outputs[f"sync:{camera.id}"][0] for camera in cameras},
-            report.parent / "self-check", context.settings.get("transcribe", {}),
+            report.parent / "self-check", self_check_transcribe(context.settings),
             cameras={camera.id: project.source_dir / camera.path for camera in cameras},
             sync_settings=sync,
         )
@@ -519,7 +523,7 @@ def _render_complex(context: StageContext,
                 dict(zip([camera.id for camera in cameras], camera_transcripts, strict=True)),
                 {camera.id: project.source_dir / camera.path for camera in cameras},
                 repair_sources, report.parent / "repair", checks[-1],
-                context.settings.get("transcribe", {}), sync,
+                self_check_transcribe(context.settings), sync,
             )
             artifacts.extend(repair_artifacts)
             outputs["repair"] = list(repair_artifacts)
@@ -675,7 +679,20 @@ def refine_settings(sync: dict[str, Any], camera: Asset) -> RefineSettings | Non
     info = camera.manual.get("media_info", {})
     if info and info.get("audio_stream_index") is None and not info.get("audio_channels"):
         return None
-    return RefineSettings.from_sync(sync, PieceConfig().seam_snap_max_s)
+    return RefineSettings.from_sync(sync, piece_config(sync).seam_snap_max_s)
+
+
+def self_check_transcribe(settings: dict[str, Any]) -> dict[str, Any]:
+    """Transcription settings of the self-check: sync.self_check_transcribe_mode
+    replaces transcribe.mode when set (WhisperSync checked in "fast")."""
+    transcribe = dict(settings.get("transcribe", {}))
+    mode = str(settings.get("sync", {}).get("self_check_transcribe_mode") or "")
+    return {**transcribe, "mode": mode} if mode else transcribe
+
+
+def piece_config(sync: dict[str, Any]) -> PieceConfig:
+    """Pieces cut in pauses, seams snapped within ``sync.seam_snap_max_s``."""
+    return PieceConfig(seam_snap_max_s=float(sync.get("seam_snap_max_s", 0.4)))
 
 
 def fit_alignment(anchors: list[TextAnchor]) -> tuple[float, float, float]:

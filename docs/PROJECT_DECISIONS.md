@@ -376,3 +376,27 @@ entry points and recorded project paths in the same change.
   list it shows as YAML) is never rewritten by accident.
 - `export.marker_min_s` (default 0) is the marker threshold for cut markers in
   the NLE; untranscribed-sound hints keep `roughcut.unknown_sound_min_s`.
+
+### Legacy settings: every key has a home or a reason (2026-10-12)
+
+- The settings migration of Forge's own `config.yaml` and of WhisperSync's
+  default configuration names a Studio key or a stated reason for every key;
+  "no Studio setting yet" no longer occurs.
+- WhisperSync's matching, acoustic and self-check thresholds (`min_anchors`,
+  `anchor_min_confidence`, `seed_*`, `alignment_*`, `flex_*`, `gcc_eps`,
+  `acoustic_max_lag_s`, `self_check_min_*`, ...) stay fixed at the values
+  WhisperSync calibrated on real footage. Studio's sync has since been tuned
+  around them on sony_run; exposing them would invite breaking it.
+- Not ported, pending the owner: WhisperSync's per-camera lip-sync calibration
+  (`camera_av_offset_ms`, `_by_camera`) and pause ducking (`pause_duck_*`).
+  The calibration has to move a camera's picture against its own sound in every
+  consumer of placements (exports, program, reels, preview) and tell the sync
+  check to expect the shift; ducking only touches per-camera voices, which the
+  default multicam export no longer uses. Neither has been asked for.
+- Forge's `proofread.scope: clips` is replaced: Studio proofreads the whole
+  transcript before reels selection, so reels quote the proofread text.
+- Settings added after projects were processed are listed in
+  `settings.LATER_DEFAULTS` (and, for transcription, in `transcribe.LATER_DEFAULTS`):
+  at their defaults they stay out of stage fingerprints and cache keys, so a
+  release that adds a setting recomputes nothing. A test pins the transcript
+  cache key.

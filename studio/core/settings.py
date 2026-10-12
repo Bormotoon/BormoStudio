@@ -29,6 +29,8 @@ class ScanSettings:
     # Files shorter than this are false starts (a camera switched on and off by
     # mistake) and are ignored; 0 keeps everything.
     min_duration_s: float = 3.0
+    # Media suffixes beyond .mp4 .mov .mkv .avi .wav .flac .mp3 .m4a (".mts").
+    extra_extensions: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -73,6 +75,13 @@ class SyncSettings:
     voice_enhance: str = "off"
     ambience: bool = False
     ambience_model: str = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+    # Tempo conform of rendered pieces: auto (resample small factors, atempo
+    # large ones), resample or atempo; seams snap to recorder silence within
+    # seam_snap_max_s; the sync self-check transcribes in this Whisper mode
+    # ("": transcribe.mode).
+    stretch_method: str = "auto"
+    seam_snap_max_s: float = 0.4
+    self_check_transcribe_mode: str = ""
 
 
 @dataclass(slots=True)
@@ -524,6 +533,25 @@ def load_settings(paths: list[Path], overrides: list[str] | None = None) -> Sett
     return settings
 
 
+# Settings added after projects were processed. At these values they stay out
+# of stage fingerprints (see fingerprint_view), so adding one recomputes nothing.
+LATER_DEFAULTS: dict[str, Any] = {
+    "scan.extra_extensions": [],
+    "sync.stretch_method": "auto",
+    "sync.seam_snap_max_s": 0.4,
+    "sync.self_check_transcribe_mode": "",
+}
+_UNSET = object()
+
+
+def fingerprint_view(section: str, values: Any) -> Any:
+    """``values`` of a settings section without later settings at their defaults."""
+    if not isinstance(values, dict):
+        return values
+    return {key: value for key, value in values.items()
+            if LATER_DEFAULTS.get(f"{section}.{key}", _UNSET) != value}
+
+
 # Allowed values of the enumerated text settings; the desktop form offers them.
 CHOICES: dict[str, tuple[str, ...]] = {
     "scan.grouping": ("auto", "folders", "names"),
@@ -536,6 +564,8 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "sync.rescue": ("quality", "off"),
     "sync.recorder_repair": ("auto", "off"),
     "sync.recorder_fill": ("camera", "silence"),
+    "sync.stretch_method": ("auto", "resample", "atempo"),
+    "sync.self_check_transcribe_mode": ("", "fast", "quality"),
     "sync.self_check": ("off", "warn", "repair"),
     "sync.voice_enhance": ("off", "denoise", "denoise_dereverb", "resemble"),
     "transcribe.device": ("auto", "cuda", "cpu", "mlx"),
@@ -592,6 +622,9 @@ def validate_settings(settings: Settings) -> None:
         raise SettingsError("compute.cpu_workers must be 0 (auto) or a positive count")
     _positive("scan.probe_timeout_s", settings.scan.probe_timeout_s)
     _non_negative("scan.min_duration_s", settings.scan.min_duration_s)
+    if any(not re.fullmatch(r"\.[a-z0-9]{1,8}", item) for item in settings.scan.extra_extensions):
+        raise SettingsError("scan.extra_extensions must be lowercase suffixes such as .mts")
+    _non_negative("sync.seam_snap_max_s", settings.sync.seam_snap_max_s)
     if settings.sync.strategy not in {1, 2, 3}:
         raise SettingsError("sync.strategy must be 1, 2, or 3")
     _non_negative("sync.max_drift_ms", settings.sync.max_drift_ms)

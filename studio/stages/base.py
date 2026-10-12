@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from studio.core.enums import StrEnum
 from studio.core.project import Project
+from studio.core.settings import _UNSET, LATER_DEFAULTS, fingerprint_view
 
 
 class GpuUse(StrEnum):
@@ -96,7 +97,11 @@ def select_settings(settings: dict[str, Any], keys: tuple[str, ...]) -> dict[str
                 break
             value = value[part]
         else:
-            selected[key] = value
+            # Settings added later stay out at their defaults (LATER_DEFAULTS).
+            if "." not in key:
+                selected[key] = fingerprint_view(key, value)
+            elif LATER_DEFAULTS.get(key, _UNSET) != value:
+                selected[key] = value
     return selected
 
 

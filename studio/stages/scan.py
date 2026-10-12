@@ -30,7 +30,7 @@ class ScanStage:
     after: tuple[str, ...] = ()
     # Settings that can change this stage's result; they alone enter its fingerprint.
     settings_keys: tuple[str, ...] = ("scan.grouping", "scan.channel_analysis",
-                                      "scan.min_duration_s")
+                                      "scan.min_duration_s", "scan.extra_extensions")
     gpu = GpuUse.NONE
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
@@ -42,7 +42,7 @@ class ScanStage:
         )
 
     def fingerprint(self, project: Project, settings: dict[str, Any]) -> str:
-        files = _media_paths(project.source_dir)
+        files = _media_paths(project.source_dir, _extensions(settings))
         identities = [
             (
                 str(path.relative_to(project.source_dir)),
@@ -60,7 +60,7 @@ class ScanStage:
                                   select_settings(settings, self.settings_keys))
 
     def run(self, context: StageContext) -> StageOutput:
-        assets, warnings = scan(context.project.source_dir)
+        assets, warnings = scan(context.project.source_dir, _extensions(context.settings))
         conf = context.settings.get("scan", {})
         conf = conf if isinstance(conf, dict) else {}
         warnings += ignore_short(assets, float(conf.get("min_duration_s", 3.0)))
@@ -83,8 +83,10 @@ class ScanStage:
                            tuple(warnings))
 
 
-def scan(source_dir: Path) -> tuple[list[Asset], list[str]]:
-    paths = _media_paths(source_dir)
+def scan(
+    source_dir: Path, extra: frozenset[str] = frozenset()
+) -> tuple[list[Asset], list[str]]:
+    paths = _media_paths(source_dir, extra)
     with ThreadPoolExecutor(max_workers=min(8, max(1, len(paths)))) as pool:
         infos = list(pool.map(probe, paths))
     records = list(zip(paths, infos, strict=True))
@@ -201,7 +203,13 @@ def apply_manual_overrides(previous: list[Asset], scanned: list[Asset]) -> list[
     return scanned
 
 
-def _media_paths(source_dir: Path) -> list[Path]:
+def _extensions(settings: dict[str, Any]) -> frozenset[str]:
+    conf = settings.get("scan", {})
+    extra = conf.get("extra_extensions", []) if isinstance(conf, dict) else []
+    return frozenset(str(item).lower() for item in extra)
+
+
+def _media_paths(source_dir: Path, extra: frozenset[str] = frozenset()) -> list[Path]:
     return sorted(
         (
             path for path in source_dir.rglob("*")
@@ -210,7 +218,7 @@ def _media_paths(source_dir: Path) -> list[Path]:
                 part.startswith(".") or part == "_studio"
                 for part in path.relative_to(source_dir).parts
             )
-            and path.suffix.lower() in MEDIA_SUFFIXES
+            and (path.suffix.lower() in MEDIA_SUFFIXES or path.suffix.lower() in extra)
             and path.suffix.lower() not in IGNORED_SUFFIXES
         ),
         key=lambda path: _natural_key(str(path.relative_to(source_dir))),

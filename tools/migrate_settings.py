@@ -109,6 +109,11 @@ WHISPERSYNC_RULES = (
     Rule("repetition_penalty", "transcribe.repetition_penalty", float),
     Rule("no_repeat_ngram_size", "transcribe.no_repeat_ngram_size", int),
     Rule("best_of", "transcribe.best_of", int),
+    Rule("stretch_method", "sync.stretch_method", _text),
+    Rule("seam_snap_max_s", "sync.seam_snap_max_s", float),
+    Rule("self_check_transcribe_mode", "sync.self_check_transcribe_mode", _text),
+    Rule("audio_source_camera", "sync.reference_camera", lambda value: str(value or "auto")),
+    Rule("render_workers", "compute.cpu_workers", int),
     Rule("patience", "transcribe.patience", float),
     Rule("condition_on_previous_text", "transcribe.condition_on_previous_text", bool),
 )
@@ -116,22 +121,52 @@ WHISPERSYNC_RULES = (
 # Planned section from table 6.3 for WhisperSync keys without a Studio field yet.
 _WHISPERSYNC_PLANNED = {
     "transcribe": ("vad_filter", "cache_dir", "cache_max_age_days"),
-    "sync": ("audio_source_camera", "timebase_source", "camera_av_offset_ms",
+    "sync": ("timebase_source", "camera_av_offset_ms",
              "camera_av_offset_ms_by_camera", "crossfade_enabled", "output_audio_format",
-             "stretch_method", "seam_snap_max_s", "render_workers", "min_anchors",
+             "min_anchors",
              "anchor_min_confidence", "match_window_margin", "seed_max_occurrences",
              "seed_bin_width", "acoustic_max_lag_s", "gcc_eps", "acoustic_fallback",
              "alignment_max_k_deviation", "alignment_max_residual_ms",
              "alignment_min_coverage", "alignment_min_acoustic_points", "flex_window_s",
              "flex_min_sharpness", "flex_deadband_s", "flex_max_shift_s",
              "pause_duck_enabled", "pause_duck_db", "pause_duck_fade_ms",
-             "pause_duck_min_pause_s", "self_check_transcribe_mode",
+             "pause_duck_min_pause_s",
              "self_check_min_run_words", "self_check_shift_threshold_s",
              "self_check_min_content_words", "reuse_source_dir"),
     "roughcut.retakes": ("retake_similarity",),
     "export": ("save_transcripts", "output_dir"),
     "scan": ("video_exts", "audio_exts"),
 }
+
+# WhisperSync keys whose job Studio does differently; the report names why.
+_FIXED = "fixed at WhisperSync's calibrated default (PROJECT_DECISIONS.md, 2026-10-12)"
+_WHISPERSYNC_REPLACED = {
+    "vad_filter": "Studio always finds speech with Silero VAD before Whisper",
+    "cache_dir": "Studio caches transcripts in its user cache folder",
+    "cache_max_age_days": "Studio keeps cached transcripts until their source changes",
+    "timebase_source": "Studio places every camera and recorder on one timeline itself",
+    "output_audio_format": "WhisperSync allowed only auto; Studio keeps the recorder's format",
+    "crossfade_enabled": "folded into sync.master_crossfade_ms (0 when it was false)",
+    "reuse_source_dir": "Studio reuses its own results per material folder (_studio)",
+    "retake_similarity": "WhisperSync never read it",
+    "save_transcripts": "Studio always keeps transcripts in _studio/stages/transcribe",
+    "output_dir": "each material folder keeps its results in its own _studio",
+    "camera_av_offset_ms": "not in Studio yet: a per-camera lip-sync calibration (owner decision)",
+    "camera_av_offset_ms_by_camera":
+        "not in Studio yet: a per-camera lip-sync calibration (owner decision)",
+    "pause_duck_enabled": "not in Studio yet: pause ducking of voices (owner decision)",
+    "pause_duck_db": "not in Studio yet: pause ducking of voices (owner decision)",
+    "pause_duck_fade_ms": "not in Studio yet: pause ducking of voices (owner decision)",
+    "pause_duck_min_pause_s": "not in Studio yet: pause ducking of voices (owner decision)",
+    **{key: _FIXED for key in (
+        "min_anchors", "anchor_min_confidence", "match_window_margin", "seed_max_occurrences",
+        "seed_bin_width", "acoustic_max_lag_s", "gcc_eps", "acoustic_fallback",
+        "alignment_max_k_deviation", "alignment_max_residual_ms", "alignment_min_coverage",
+        "alignment_min_acoustic_points", "flex_window_s", "flex_min_sharpness",
+        "flex_deadband_s", "flex_max_shift_s", "self_check_min_run_words",
+        "self_check_shift_threshold_s", "self_check_min_content_words")},
+}
+_STUDIO_SUFFIXES = {".mp4", ".mov", ".mkv", ".avi", ".wav", ".flac", ".mp3", ".m4a"}
 
 FORGE_RULES = (
     Rule("transcription.model", "transcribe.model"),
@@ -417,11 +452,19 @@ def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
 def migrate_whispersync(data: dict[str, Any], migration: Migration) -> None:
     rules = {rule.source: rule for rule in WHISPERSYNC_RULES}
     planned = {key: section for section, keys in _WHISPERSYNC_PLANNED.items() for key in keys}
+    suffixes = {str(item).lower() if str(item).startswith(".") else f".{str(item).lower()}"
+                for key in ("video_exts", "audio_exts") for item in data.get(key) or []}
     for key, value in data.items():
+        if key in {"video_exts", "audio_exts"}:
+            migration.put("whispersync", key, "scan.extra_extensions",
+                          sorted(suffixes - _STUDIO_SUFFIXES))
+            continue
         rule = rules.get(key)
         if rule is None:
             migration.skip("whispersync", key, planned.get(key, "unknown"),
-                           "no Studio setting yet" if key in planned else "unknown legacy key")
+                           _WHISPERSYNC_REPLACED.get(key) or (
+                               "no Studio setting yet" if key in planned
+                               else "unknown legacy key"))
             continue
         if key == "crossfade_ms" and data.get("crossfade_enabled") is False:
             value = 0

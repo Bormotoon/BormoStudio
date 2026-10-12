@@ -61,6 +61,14 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- WhisperSync's tempo-conform method, seam snapping and self-check Whisper
+  mode are settings (`sync.stretch_method`, `seam_snap_max_s`,
+  `self_check_transcribe_mode`), scan takes extra media suffixes
+  (`scan.extra_extensions`), and the migration maps `audio_source_camera`,
+  `render_workers`, `video_exts`/`audio_exts` and gives every other WhisperSync
+  key a stated reason. Settings added later stay out of fingerprints at their
+  defaults (`settings.LATER_DEFAULTS`), so existing results are reused.
+
 - The remaining Forge and WhisperSync settings get Studio homes: article
   faithfulness thresholds and window (`text.article_*`), term check
   occurrences and pause (`text.term_min_occurrences`, `term_pause_s`), Whisper

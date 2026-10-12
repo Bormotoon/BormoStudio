@@ -47,6 +47,7 @@ SECTIONS: tuple[Section, ...] = (
                  "Not used yet: files in a subfolder form one camera, loose files are "
                  "grouped by device."),
             Item("probe_timeout_s", "Media probe timeout, s", "Not used yet."),
+            Item("extra_extensions", "More media suffixes", "[.mts, .mxf]"),
         )),
     )),
     Section("sync", "Synchronization", (
@@ -128,6 +129,11 @@ SECTIONS: tuple[Section, ...] = (
             Item("ambience", "Camera room tone",
                  "Separate the camera's room tone and export it as its own lane."),
             Item("ambience_model", "Room tone separation model"),
+            Item("stretch_method", "Tempo conform",
+                 "auto: resample small factors, atempo large ones."),
+            Item("seam_snap_max_s", "Snap seams to silence within, s"),
+            Item("self_check_transcribe_mode", "Self-check Whisper mode",
+                 "Empty: transcribe.mode."),
         )),
     )),
     Section("transcribe", "Transcription", (
