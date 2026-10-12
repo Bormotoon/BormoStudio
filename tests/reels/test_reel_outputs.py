@@ -70,3 +70,32 @@ def test_qa_names_a_truncated_reel(tmp_path: Path) -> None:
     assert "qa: no audio stream" in problems
     assert any("duration 2.0s, expected 10.0s" in problem for problem in problems)
     assert any("is black" in problem for problem in problems)
+
+
+@pytest.mark.parametrize("render_rejected", [False, True])
+def test_too_few_faces_reject_a_tracked_reel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                             render_rejected: bool) -> None:
+    import studio.stages.reel_render as reel_render
+
+    project = _project(tmp_path)
+    requests: list[dict] = []
+
+    def worker(request: dict) -> dict:
+        requests.append(request)
+        return {"filter": None, "face_rate": 0.1, "plan": None}
+
+    monkeypatch.setattr(reel_render, "run_vision_worker", worker)
+    settings = {"reels": {"render": True, "covers": False, "loudness_lufs": 0, "min_score": 0,
+                          "min_duration_s": 0, "framing": "crop", "tracking": True,
+                          "width": 90, "height": 160, "two_speaker_layout": "split",
+                          "speaker_switch": "pan", "face_min_size": 60,
+                          "render_rejected": render_rejected, "preview_reel": False}}
+    ReelRenderStage().run(StageContext(project, settings, project.work_dir))
+    assert requests[0]["layout"] == "split" and requests[0]["switch"] == "pan"
+    assert requests[0]["min_face_size"] == 60 and requests[0]["follow"] is True
+    folder = project.work_dir / "stages" / "reel_render"
+    rejected = json.loads((folder / "rejected.json").read_text())
+    assert rejected[0]["reasons"] == ["face ratio 0.10 < 0.30"]
+    assert rejected[0]["encoded"] is render_rejected
+    assert (folder / "rejected" / "reel-001.mp4").is_file() is render_rejected
+    assert not (folder / "reel-001.mp4").exists()

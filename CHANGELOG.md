@@ -61,6 +61,11 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- Reel face tracking takes Forge's options (`reels.face_min_size`,
+  `face_follow`, `two_speaker_layout`, `speaker_switch`) and rejects reels with
+  too few faces (`face_min_ratio`); the framing report carries the face rate and
+  the tracking plan.
+
 - Styled reel captions split at speaker changes and colour each speaker
   (`reels.caption_split_on_speaker`, `caption_speaker_colors`), move with
   `caption_vertical_align`/`caption_vertical_offset`, and can be checked with

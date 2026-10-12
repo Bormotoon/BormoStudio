@@ -20,6 +20,10 @@ def main() -> None:
     settings = TrackingSettings(
         device=request["device"],
         active_speaker=request["active_speaker"] and manager.installed("light-asd"),
+        min_face_size=int(request.get("min_face_size", 40)),
+        follow=bool(request.get("follow", True)),
+        layout=str(request.get("layout", "speaker")),
+        switch=str(request.get("switch", "cut")),
     )
     if request.get("mode") == "camera_evidence":
         from studio.vision.camera_evidence import window_evidence
@@ -44,6 +48,9 @@ def main() -> None:
         if plan is None
         else build_framing_filter(plan, out_w=request["width"], out_h=request["height"]),
         "active_speaker_available": settings.active_speaker,
+        # Share of samples with a followed face, for the face-ratio filter.
+        "face_rate": None if plan is None else plan.rate,
+        "plan": None if plan is None else plan.as_dict(),
     }
     args.result.write_text(json.dumps(value), encoding="utf-8")
 

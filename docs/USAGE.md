@@ -136,7 +136,12 @@ framing controls are disabled for the review program.
 
 Automatic tracking is opt-in (`reels.tracking=true`, with `reels.framing=crop`)
 and available as **Follow face / active speaker** in the desktop editor.
-The preserved YuNet/Light-ASD backend uses `reels.tracking_device=cuda` by default.
+The preserved YuNet/Light-ASD backend uses `reels.tracking_device=cuda` by default. Tracking follows Forge's options: faces below `reels.face_min_size` (40 px)
+are ignored, `face_follow` glides the camera within a turn, `two_speaker_layout`
+`split` stacks two steadily visible people (`speaker` shows the one talking),
+`speaker_switch` `pan` glides between people sitting close instead of cutting, and
+a reel that shows a face in less than `face_min_ratio` (0.3) of its samples is
+rejected like a filtered moment (`rejected.json`, `render_rejected`).
 Install its optional torch/OpenCV dependencies and model files in
 `~/.cache/ultimate-video-forge/models/` (override with `UVF_MODELS_DIR`). Rendering
 does not automatically download models. When tracking is unavailable, it uses

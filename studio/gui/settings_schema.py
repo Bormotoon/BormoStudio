@@ -393,6 +393,13 @@ SECTIONS: tuple[Section, ...] = (
             Item("tracking", "Follow face / active speaker", "Needs crop framing."),
             Item("tracking_device", "Tracking device"),
             Item("active_speaker", "Prefer the active speaker"),
+            Item("face_min_size", "Smallest face, px", "Faces below this height are ignored."),
+            Item("face_follow", "Follow the face within a turn"),
+            Item("two_speaker_layout", "Two people in frame", "speaker: the one talking; "
+                 "split: both, stacked."),
+            Item("speaker_switch", "New speaker", "cut, or pan when they sit close."),
+            Item("face_min_ratio", "Reject reels with faces in less than",
+                 "Share of the reel; with tracking only. 0 keeps every reel."),
             Item("speaker_angles", "Switch cameras by speaker"),
             Item("loudness_lufs", "Loudness, LUFS", "0 keeps the source level."),
             Item("covers", "Cover images"),

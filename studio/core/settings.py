@@ -327,6 +327,16 @@ class ReelsSettings:
     tracking: bool = False
     tracking_device: str = "cuda"
     active_speaker: bool = True
+    # Face tracking: faces below this height (source px) are ignored; follow
+    # the face within a turn; two steadily visible people stacked ("split") or
+    # the speaker alone; a new speaker is a cut or, when close, a pan.
+    face_min_size: int = 40
+    face_follow: bool = True
+    two_speaker_layout: str = "speaker"
+    speaker_switch: str = "cut"
+    # With tracking, a reel showing a face in less than this share of its
+    # samples is rejected (0 keeps every reel).
+    face_min_ratio: float = 0.3
     # Integrated loudness target for rendered reels (0 keeps source loudness).
     loudness_lufs: float = -14.0
     covers: bool = True
@@ -512,6 +522,8 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "reels.framing": ("source", "crop", "fit"),
     "reels.encoder": ("auto", "nvenc", "videotoolbox", "libx264", "cpu"),
     "reels.caption_vertical_align": ("style", "top", "center", "bottom"),
+    "reels.two_speaker_layout": ("speaker", "split"),
+    "reels.speaker_switch": ("cut", "pan"),
     "reels.tracking_device": ("cpu", "cuda"),
     "reels.layout": ("video", "title", "audiogram"),
     "reels.title_field": ("hook", "title"),
@@ -710,6 +722,10 @@ def validate_settings(settings: Settings) -> None:
     if any(not re.fullmatch(r"#[0-9a-fA-F]{6}", colour)
            for colour in settings.reels.caption_speaker_colors):
         raise SettingsError("reels.caption_speaker_colors must be #RRGGBB colours")
+    if not 0 <= settings.reels.face_min_ratio <= 1:
+        raise SettingsError("reels.face_min_ratio must be between 0 and 1")
+    if settings.reels.face_min_size < 1:
+        raise SettingsError("reels.face_min_size must be a positive number of pixels")
     if not 0 <= settings.reels.caption_sync_min_match <= 1:
         raise SettingsError("reels.caption_sync_min_match must be between 0 and 1")
     _non_negative("reels.caption_sync_threshold_s", settings.reels.caption_sync_threshold_s)

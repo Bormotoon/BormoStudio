@@ -224,6 +224,28 @@ class ReelRenderStage:
                 elif framing != "source":
                     framing_report = reframe_video(video, framed, reel)
                     framed.replace(video)
+                face_rate = framing_report.get("face_rate")
+                minimum = float(settings.get("face_min_ratio", 0.3))
+                if (isinstance(face_rate, (int, float)) and minimum > 0
+                        and face_rate < minimum and not reasons):
+                    reasons.append(f"face ratio {face_rate:.2f} < {minimum:.2f}")
+                    if not settings.get("render_rejected", False):
+                        # Too few faces to follow: nobody publishes it.
+                        for path in (video, frame):
+                            path.unlink(missing_ok=True)
+                        artifacts.remove(frame)
+                        rejected_rows.append({
+                            "reel": stem, "candidate_id": moment.get("candidate_id"),
+                            "start": moment["start"], "end": moment["end"],
+                            "title": moment.get("title"), "score": moment.get("score"),
+                            "reasons": reasons, "encoded": False})
+                        continue
+                    moved = directory / "rejected"
+                    moved.mkdir(exist_ok=True)
+                    for path in (video, frame):
+                        path.replace(moved / path.name)
+                    artifacts[artifacts.index(frame)] = moved / frame.name
+                    folder, video, frame = moved, moved / video.name, moved / frame.name
             lufs = float(settings.get("loudness_lufs", -14.0))
             loudness = (normalize_loudness(video, lufs, str(settings.get("audio_bitrate", "192k")))
                         if lufs else {"status": "source"})
@@ -296,11 +318,11 @@ class ReelRenderStage:
                     warnings.append(f"{stem} failed QA: {'; '.join(problems)}")
                     moved = directory / "rejected"
                     moved.mkdir(exist_ok=True)
-                    for path in [video, captioned]:
-                        if path is not None:
-                            target = moved / path.name
-                            path.replace(target)
-                            artifacts[artifacts.index(path)] = target
+                    for broken in (video, captioned):
+                        if broken is not None:
+                            target = moved / broken.name
+                            broken.replace(target)
+                            artifacts[artifacts.index(broken)] = target
                     video = moved / video.name
                     captioned = moved / captioned.name if captioned is not None else None
             outcome = "rejected" if reasons else "failed" if problems else "ok"
@@ -589,8 +611,9 @@ def reframe_video(video: Path, output: Path, settings: dict[str, Any]) -> dict[s
             f"force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
         )
     tracking = "disabled"
+    found: dict[str, Any] = {}
     if settings.get("tracking", False):
-        tracked = tracking_filter(video, width, height, settings)
+        tracked = tracking_filter(video, width, height, settings, found)
         tracking = "applied" if tracked else "unavailable-static-fallback"
         filters = tracked or filters
     result = run_logged(
@@ -619,7 +642,7 @@ def reframe_video(video: Path, output: Path, settings: dict[str, Any]) -> dict[s
     )
     if result.returncode:
         raise RuntimeError(result.stderr)
-    return {"tracking": tracking, "width": width, "height": height}
+    return {"tracking": tracking, "width": width, "height": height, **found}
 
 
 def reel_camera_plan(project: Project, settings: dict[str, Any], edit: EditMap) -> EditMap:
@@ -673,8 +696,10 @@ def run_vision_worker(request: dict[str, Any], timeout: float = 3600) -> dict[st
 
 
 def tracking_filter(
-    video: Path, width: int, height: int, settings: dict[str, Any]
+    video: Path, width: int, height: int, settings: dict[str, Any],
+    info: dict[str, Any] | None = None,
 ) -> str | None:
+    """The face-following crop; ``info`` receives the face rate and the plan."""
     import logging
 
     try:
@@ -687,7 +712,13 @@ def tracking_filter(
             "height": height,
             "device": str(settings.get("tracking_device", "cuda")),
             "active_speaker": bool(settings.get("active_speaker", True)),
+            "min_face_size": int(settings.get("face_min_size", 40)),
+            "follow": bool(settings.get("face_follow", True)),
+            "layout": str(settings.get("two_speaker_layout", "speaker")),
+            "switch": str(settings.get("speaker_switch", "cut")),
         })
+        if info is not None:
+            info.update(face_rate=value.get("face_rate"), plan=value.get("plan"))
         if value["filter"]:
             filter_expression: str = value["filter"]
             return filter_expression + ",setsar=1"
