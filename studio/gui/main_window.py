@@ -7,17 +7,20 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
-from PyQt6.QtCore import QProcess, Qt, QTimer, QUrl
-from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtCore import QProcess, QSettings, Qt, QTimer, QUrl
+from PyQt6.QtGui import QCloseEvent, QDesktopServices, QTextCursor
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QMainWindow,
+    QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QStackedWidget,
     QTreeWidget,
@@ -32,18 +35,23 @@ from studio.gui.bridge import RunnerBridge
 from studio.gui.cut_timeline import CutTimeline, TimelineCut
 from studio.gui.material import MaterialPage
 from studio.gui.modules import ModulesPage
-from studio.gui.settings_page import SettingsPage
+from studio.gui.settings_page import BasicOptions, SettingsPage
 from studio.gui.setup_wizard import SetupWizard
 from studio.gui.source_timeline import SourceTimeline
 from studio.gui.subtitles import SubtitleEditor
 from studio.stages.timeline_preview import TimelinePreview
 
+# Navigation rows the basic mode hides: Material, Plan, Edit, Subtitles, Settings.
+BASIC_HIDDEN = (1, 2, 3, 6, 8)
+
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, preferences: QSettings | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Ultimate Video Forge")
         self.resize(1100, 720)
+        # Per-user GUI choices such as the mode; project settings live in the project.
+        self.preferences = preferences or QSettings("Ultimate Video Forge", "Studio")
         self.bridge = RunnerBridge(self)
         self.source: Path | None = None
         self.pending_view = "material"
@@ -94,24 +102,40 @@ class MainWindow(QMainWindow):
         self.cut_timeline.position_requested.connect(self._seek_timeline_preview)
         self.review.currentItemChanged.connect(self._select_cut_from_list)
         self.plan_label = QLabel("Scan a folder to build the plan.")
-        self.log = QLabel("")
-        self.log.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.log.setWordWrap(True)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setAccessibleName("Processing details")
+        self.progress_label = QLabel("Nothing is running.")
+        self.progress_label.setWordWrap(True)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.stage_titles: dict[str, str] | None = None
         self.result = QLabel("No results yet.")
+        self.result.setWordWrap(True)
+        self.result.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._build_pages()
+        self.advanced = QCheckBox("Advanced mode")
+        self.advanced.setToolTip("Every processing setting, the material and plan pages, "
+                                 "cut review and subtitles")
+        side = QVBoxLayout()
+        side.addWidget(self.navigation)
+        side.addWidget(self.advanced)
         layout = QHBoxLayout()
-        layout.addWidget(self.navigation, 1)
+        layout.addLayout(side, 1)
         layout.addWidget(self.pages, 4)
         central = QWidget()
         central.setLayout(layout)
         self.setCentralWidget(central)
         self.navigation.currentRowChanged.connect(self._navigate)
         self.navigation.setCurrentRow(0)
-        self.bridge.output.connect(self._append_log)
+        self.bridge.output.connect(self._append_output)
         self.bridge.finished.connect(self._finished)
         self.bridge.failed.connect(self._append_log)
         self.bridge.stage_event.connect(self._plan_event)
         self.subtitles.render_requested.connect(self._render_subtitles)
+        self.advanced.setChecked(bool(self.preferences.value("advanced", False, type=bool)))
+        self.advanced.toggled.connect(self._mode_toggled)
+        self._apply_mode()
 
     def _render_subtitles(self, stage: str) -> None:
         if self.source is None:
@@ -142,13 +166,18 @@ class MainWindow(QMainWindow):
         start_layout = QVBoxLayout(start)
         title = QLabel("Turn raw recordings into an editable project")
         title.setObjectName("hero")
+        start_layout.addWidget(title)
+        start_layout.addWidget(self._basic_start())
+        self.advanced_start = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_start)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
         choose = QPushButton("Choose material folder")
         choose.clicked.connect(self._choose)
-        start_layout.addWidget(title)
-        start_layout.addWidget(choose)
+        advanced_layout.addWidget(choose)
         setup = QPushButton("Set up processing")
         setup.clicked.connect(self._setup)
-        start_layout.addWidget(setup)
+        advanced_layout.addWidget(setup)
+        start_layout.addWidget(self.advanced_start)
         start_layout.addStretch()
         self.pages.addWidget(start)
         self.pages.addWidget(self.material)
@@ -165,11 +194,180 @@ class MainWindow(QMainWindow):
             plan_layout.addWidget(run)
             plan_layout.addWidget(self.install_button)
         self.pages.addWidget(self._review_page())
-        self.pages.addWidget(self._page(self.log, "Cancel", self.bridge.cancel))
-        self.pages.addWidget(self._page(self.result, "Open export folder", self._open_result))
+        work = QWidget()
+        work_layout = QVBoxLayout(work)
+        work_layout.addWidget(self.progress_label)
+        work_layout.addWidget(self.progress_bar)
+        work_layout.addWidget(self.log, 1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.bridge.cancel)
+        work_layout.addWidget(cancel)
+        self.pages.addWidget(work)
+        result = self._page(self.result, "Open export folder", self._open_result)
+        result_layout = result.layout()
+        if isinstance(result_layout, QVBoxLayout):
+            result_layout.addStretch()
+        self.pages.addWidget(result)
         self.pages.addWidget(self.subtitles)
         self.pages.addWidget(self.modules_page)
         self.pages.addWidget(self.settings_page)
+
+    def _basic_start(self) -> QWidget:
+        """Basic mode: choose a folder, glance at four choices, process."""
+        self.basic_start = QWidget()
+        layout = QVBoxLayout(self.basic_start)
+        layout.setContentsMargins(0, 0, 0, 0)
+        intro = QLabel(
+            "Choose the folder with the recordings. Studio finds the cameras and the "
+            "recorder, synchronizes them, transcribes the speech, removes pauses and "
+            "retakes and writes Final Cut Pro and Premiere projects into _studio/export."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        choose = QPushButton("Choose material folder")
+        choose.clicked.connect(self._choose_basic)
+        layout.addWidget(choose)
+        self.folder_label = QLabel("No folder chosen yet.")
+        self.folder_label.setWordWrap(True)
+        layout.addWidget(self.folder_label)
+        self.basic_options = BasicOptions()
+        self.basic_options.setEnabled(False)
+        layout.addWidget(self.basic_options)
+        self.process_button = QPushButton("Process")
+        self.process_button.setEnabled(False)
+        self.process_button.clicked.connect(self._process)
+        layout.addWidget(self.process_button)
+        self.basic_status = QLabel("")
+        self.basic_status.setWordWrap(True)
+        layout.addWidget(self.basic_status)
+        return self.basic_start
+
+    def _mode_toggled(self, advanced: bool) -> None:
+        # The basic mode hides the settings page: unsaved edits there would block runs.
+        if not advanced and not self.settings_page.confirm_discard():
+            self.advanced.blockSignals(True)
+            self.advanced.setChecked(True)
+            self.advanced.blockSignals(False)
+            return
+        if advanced and self.source is not None and self.basic_options.dirty:
+            try:
+                self.basic_options.save(self.source / "_studio")
+            except (ValueError, OSError, RuntimeError) as exc:
+                self.basic_status.setText(str(exc))
+        self.preferences.setValue("advanced", advanced)
+        self._apply_mode()
+
+    def _apply_mode(self) -> None:
+        advanced = self.advanced.isChecked()
+        for row in BASIC_HIDDEN:
+            item = self.navigation.item(row)
+            if item is not None:
+                item.setHidden(not advanced)
+        self.basic_start.setVisible(not advanced)
+        self.advanced_start.setVisible(advanced)
+        if not advanced:
+            self._load_basic()
+            if self.navigation.currentRow() in BASIC_HIDDEN:
+                self.navigation.setCurrentRow(0)
+
+    def _load_basic(self) -> None:
+        if self.source is None:
+            return
+        self.folder_label.setText(f"Material: {self.source}")
+        try:
+            self.basic_options.load(self.source / "_studio")
+        except (ValueError, OSError) as exc:
+            self.basic_options.setEnabled(False)
+            self.process_button.setEnabled(False)
+            self.basic_status.setText(f"{exc}\nFix the project settings in the advanced mode.")
+            return
+        self.basic_options.setEnabled(True)
+        self.process_button.setEnabled(True)
+        self.basic_status.setText("")
+
+    def _choose_basic(self) -> None:
+        if not self.settings_page.confirm_discard() or not self.subtitles.confirm_discard():
+            return
+        selected = QFileDialog.getExistingDirectory(self, "Choose material folder")
+        if not selected:
+            return
+        self.source = Path(selected)
+        self.subtitles.dirty = False
+        self._load_basic()
+
+    def _process(self) -> None:
+        """Save the basic choices and run the whole pipeline on the chosen folder."""
+        if self.source is None:
+            return
+        if self.bridge.process.state() != QProcess.ProcessState.NotRunning:
+            self.basic_status.setText("Processing is already running.")
+            return
+        try:
+            self.basic_options.save(self.source / "_studio")
+            self.bridge.start("run", self.source, ["--events"])
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.basic_status.setText(str(exc))
+            return
+        self._reset_progress()
+        self.pending_view = "result"
+        self.navigation.setCurrentRow(4)
+
+    def _reset_progress(self) -> None:
+        self.log.clear()
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Starting…")
+
+    def _show_progress(self, value: dict) -> None:
+        stage = str(value.get("stage", ""))
+        if self.stage_titles is None:
+            from studio.stages.worker import stage_registry
+
+            self.stage_titles = {key: item.title for key, item in stage_registry().items()}
+        title = self.stage_titles.get(stage) or stage
+        kind = value.get("t")
+        if kind == "start":
+            self.progress_bar.setValue(0)
+            self.progress_label.setText(f"{title}…")
+        elif kind == "progress":
+            fraction = value.get("value", 0)
+            if isinstance(fraction, (int, float)):
+                self.progress_bar.setValue(round(float(fraction) * 100))
+            message = str(value.get("message") or "")
+            self.progress_label.setText(f"{title}: {message}" if message else f"{title}…")
+        elif kind == "done" and value.get("status") == "failed":
+            self.progress_label.setText(f"{title} failed; the details are below.")
+
+    def _result_text(self, project: Project) -> str:
+        """What the run produced, in words, with the full output list when advanced."""
+        lines = [f"Material: {project.source_dir}"]
+        try:
+            report = json.loads((project.work_dir / "report.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            report = {}
+        status = report.get("status")
+        if status == "needs_review":
+            lines.append("Done, but check the sync of these clips:")
+            lines += [f"  {clip}: {reason}" for clip, reason in report.get("review", {}).items()]
+        elif status == "failed":
+            lines.append("Some steps failed: " + ", ".join(report.get("failures", {})))
+        elif status == "ok":
+            lines.append("Done.")
+        names = {".fcpxml": "Final Cut Pro", ".xml": "Premiere Pro / DaVinci Resolve",
+                 ".otio": "DaVinci Resolve (OTIO)"}
+        for path in project.outputs.get("export", []):
+            if path.suffix in names:
+                lines.append(f"{names[path.suffix]}: {path}")
+        for key in ("program", "program_subtitles"):
+            lines += [f"Review video: {path}" for path in project.outputs.get(key, [])
+                      if path.suffix == ".mp4"]
+        reels = [path for path in project.outputs.get("reel_render", []) if path.suffix == ".mp4"]
+        if reels:
+            lines.append(f"Reels: {len(reels)} in {reels[0].parent}")
+        if self.advanced.isChecked():
+            lines.append("\nAll outputs:")
+            lines += [f"  {key}: {', '.join(str(path) for path in paths)}"
+                      for key, paths in project.outputs.items()]
+        return "\n".join(lines)
 
     def _review_page(self) -> QWidget:
         page = QWidget()
@@ -367,6 +565,7 @@ class MainWindow(QMainWindow):
         except RuntimeError as exc:
             self.plan_label.setText(str(exc))
             return
+        self._reset_progress()
         self.pending_view = "result"
         self.navigation.setCurrentRow(4)
 
@@ -392,6 +591,12 @@ class MainWindow(QMainWindow):
         return lines
 
     def _plan_event(self, value: dict) -> None:
+        if value.get("t") in {"start", "progress", "done"} and "stage" in value:
+            self._show_progress(value)
+        if (value.get("t") == "warning" and "missing" not in value
+                and not self.advanced.isChecked()):
+            # The advanced log already shows the raw event.
+            self._append_log(f"{value.get('stage', '')}: {value.get('message', '')}\n")
         if value.get("t") == "warning" and "missing" in value:
             self._append_log("\n".join(self._note_missing(value["missing"])) + "\n")
             return
@@ -460,14 +665,19 @@ class MainWindow(QMainWindow):
             event.ignore()
 
     def _finished(self, code: int) -> None:
+        if code:
+            self.progress_label.setText(
+                "Cancelled." if code == 130 else "Stopped with an error; the details are below.")
         if not self.source or code:
             return
+        self.progress_bar.setValue(100)
+        self.progress_label.setText("Finished.")
         path = self.source / "_studio" / "project.json"
         if path.is_file():
             project = Project.load(path)
             self._show_material(project)
             self._show_review(project)
-            self.result.setText(str(project.outputs))
+            self.result.setText(self._result_text(project))
             self.navigation.setCurrentRow(
                 {"subtitles": 6, "review": 3, "plan": 2, "result": 5}.get(self.pending_view, 1)
             )
@@ -553,13 +763,20 @@ class MainWindow(QMainWindow):
             ["--cut", cut_id, "--accept" if accepted else "--reject"],
         )
 
+    def _append_output(self, text: str) -> None:
+        """Worker stdout: JSON events, shown raw only in the advanced mode."""
+        if self.advanced.isChecked():
+            self._append_log(text)
+
     def _append_log(self, text: str) -> None:
-        self.log.setText(self.log.text() + text)
+        self.log.moveCursor(QTextCursor.MoveOperation.End)
+        self.log.insertPlainText(text)
+        self.log.ensureCursorVisible()
 
     def _open_result(self) -> None:
         if self.source:
             folder = self.source / "_studio" / "export"
-            QFileDialog.getOpenFileName(self, "Ultimate Video Forge export", str(folder))
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
 
 def main() -> int:

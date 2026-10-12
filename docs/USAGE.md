@@ -164,14 +164,34 @@ The PyInstaller executable exposes `--gui`, `--cli COMMAND ...` and the internal
 
 ## Desktop settings and running
 
-The native **Settings** page saves project processing choices (sync, Whisper,
-speakers, review master, text and reels) while preserving advanced settings.
-Use **Build plan** to inspect stage decisions and reuse, then **Run processing
-plan** to execute the pipeline. Worker output and errors appear on the Work page.
-Start also offers **Set up processing**, a native project wizard with local tool
-discovery and output choices. Settings includes an **Advanced** YAML editor for
-all typed options; **Validate and save YAML** rejects unknown or invalid settings
-before replacing the project file. Omitted fields use application defaults.
+The desktop app opens in the **basic mode**: **Choose material folder**, check
+the four choices (speech language, **Remove pauses and retakes**, **Mark cuts in
+Final Cut / Premiere**, **Render a review video**) and press **Process**. The
+choices are saved into the folder's `_studio/settings.yaml` (other settings keep
+their values) and the whole pipeline runs: scan, locate, transcription, sync,
+rough cut, export. The Work page shows the current step and its progress, with
+warnings and errors below; the Result page names the Final Cut and Premiere
+files and the clips whose sync needs a look. A language or marker choice made in
+the advanced mode (for example `de`, or `export.markers: all`) is kept by the
+basic mode.
+
+**Advanced mode** (the check box under the navigation, remembered per user)
+adds the Material, Plan, Edit, Subtitles and Settings pages. Settings shows
+every project setting in sections (Material, Synchronization, Transcription,
+Rough cut, Final Cut / Premiere, Speakers, Review video, Text, Reels, Local LLM
+server, Compute, Download, Batch). Hover a name for its meaning, settings key
+and default; names in bold differ from the defaults; the filter finds a setting
+by name or key. Lists and mappings (`sync.session_offsets`, `llm.roles`, ...)
+are edited as one line of YAML such as `{cam-2: 120}`; LLM tuning numbers show
+**default** when the server's own value applies. **Save processing settings**
+writes only the fields that were edited, so values set in YAML stay exact.
+Changing the text LLM endpoint or model carries the rough-cut and reels ones
+along while they were the same. Use **Build plan** to inspect stage decisions
+and reuse, then **Run processing plan** to execute the pipeline. Start also
+offers **Set up processing**, a native project wizard with local tool discovery
+and output choices. The **YAML** tab edits the whole file; **Validate and save
+YAML** rejects unknown or invalid settings before replacing the project file.
+Omitted fields use application defaults.
 Settings also offers **Inspect compute backends** and **Apply compute
 recommendations**. Inspection runs outside the GUI process, queries CTranslate2
 compute types and tests actual NVENC encoding. The conservative recommendations
@@ -407,7 +427,8 @@ the project. With a rough cut, the angles stay uncut and the project holds one
 multicam clip per kept piece, so every cut can be reopened by trimming.
 
 The event, the project and the multicam clip are named after the material
-folder (`sony_run`, `sony_run Multicam`); set another name with `export.name`. The event lists the multicam or
+folder (`sony_run`, `sony_run Multicam`); set another name with `export.name`
+or **Final Cut event name** in the settings. The event lists the multicam or
 synchronized clip and every video file of the material, so they can be used
 outside the project. Files sync could not place and ignored false starts carry
 the keyword **Not synchronized**.

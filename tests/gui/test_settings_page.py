@@ -121,3 +121,119 @@ def test_wizard_downloads_models_into_project_settings(tmp_path: Path, monkeypat
     assert settings.transcribe.model == "large-v3-turbo"
     assert settings.llm.model_path == str(tmp_path / "g.gguf")
     app.processEvents()
+
+
+def test_every_setting_has_a_described_place_in_the_form(tmp_path: Path) -> None:
+    from dataclasses import fields
+
+    from PyQt6.QtWidgets import QComboBox
+
+    from studio.core.settings import CHOICES, Settings
+    from studio.gui.settings_schema import SECTIONS, items
+
+    app = QApplication.instance() or QApplication([])
+    keys = [f"{section.name}.{item.key}" for section in SECTIONS
+            for group in section.groups for item in group.items]
+    assert len(keys) == len(set(keys))
+    expected = {f"{section.name}.{item.name}" for section in fields(Settings)
+                for item in fields(getattr(Settings(), section.name))}
+    assert set(keys) == expected
+    assert all(item.label.strip() for item in items().values())
+    page = SettingsPage()
+    assert {".".join(key) for key in page.controls} == expected
+    for dotted, choices in CHOICES.items():
+        combo = page.controls[tuple(dotted.split("."))]
+        assert isinstance(combo, QComboBox)
+        assert [combo.itemText(index) for index in range(combo.count())] == list(choices)
+    page.close()
+    app.processEvents()
+
+
+def test_form_saves_only_edited_fields_with_their_types(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    path = tmp_path / "settings.yaml"
+    # More decimals than the form shows, and a list it edits as YAML.
+    path.write_text("roughcut:\n  silence_threshold_db: -40.123456\n"
+                    "transcribe:\n  glossary: [Иван, 'yes']\n", encoding="utf-8")
+    page = SettingsPage()
+    page.load_project(tmp_path)
+    assert page.controls[("transcribe", "glossary")].text() == "[Иван, 'yes']"
+    page.controls[("export", "markers")].setCurrentText("none")
+    page.controls[("export", "marker_min_s")].setValue(1.5)
+    page.controls[("export", "targets")].boxes["xmeml"].setChecked(False)
+    page.controls[("export", "name")].setText("Interview")
+    page.controls[("transcribe", "language")].setText("")
+    page.controls[("llm", "n_gpu_layers")].setValue(99)
+    page.controls[("llm", "cache_ram_mb")].setText("auto")
+    page.controls[("sync", "session_offsets")].setText("{cam-2: 120.5}")
+    assert page.dirty
+    assert page.save(), page.status.text()
+    settings = load_settings([path])
+    assert settings.export.markers == "none"
+    assert settings.export.marker_min_s == 1.5
+    assert settings.export.targets == ["multicam"]
+    assert settings.export.name == "Interview"
+    assert settings.transcribe.language is None
+    assert settings.llm.n_gpu_layers == 99 and settings.llm.ctx_size is None
+    assert settings.llm.cache_ram_mb == "auto"
+    assert settings.sync.session_offsets == {"cam-2": 120.5}
+    assert settings.roughcut.silence_threshold_db == -40.123456
+    assert settings.transcribe.glossary == ["Иван", "yes"]
+    # Untouched sections stay out of the file.
+    assert "reels" not in path.read_text(encoding="utf-8")
+    assert not page.dirty
+    page.controls[("sync", "session_offsets")].setText("{unclosed")
+    before = path.read_bytes()
+    assert not page.save()
+    assert path.read_bytes() == before
+    page.close()
+    app.processEvents()
+
+
+def test_form_filter_and_changed_names(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    page = SettingsPage()
+    page.load_project(tmp_path)
+    label = page.labels[("export", "marker_min_s")]
+    assert not label.font().bold()
+    page.controls[("export", "marker_min_s")].setValue(2.0)
+    assert label.font().bold()
+    page.filter.setText("marker_min")
+    export = next(index for index in range(page.sections.count())
+                  if page.sections.item(index).text() == "Final Cut / Premiere")
+    assert page.sections.currentRow() == export
+    assert [index for index in range(page.sections.count())
+            if not page.sections.item(index).isHidden()] == [export]
+    page.filter.setText("")
+    assert not any(page.sections.item(index).isHidden()
+                   for index in range(page.sections.count()))
+    page.close()
+    app.processEvents()
+
+
+def test_basic_options_keep_advanced_choices(tmp_path: Path) -> None:
+    from studio.gui.settings_page import BasicOptions
+
+    app = QApplication.instance() or QApplication([])
+    options = BasicOptions()
+    options.load(tmp_path)
+    assert options.language.currentData() == "ru"
+    assert options.roughcut.isChecked() and options.markers.isChecked()
+    assert not options.review.isChecked() and not options.dirty
+    options.markers.setChecked(False)
+    options.review.setChecked(True)
+    options.language.setCurrentIndex(options.language.findData("en"))
+    assert options.dirty
+    options.save(tmp_path)
+    settings = load_settings([tmp_path / "settings.yaml"])
+    assert settings.export.markers == "none" and settings.program.enabled
+    assert settings.transcribe.language == "en"
+    # Choices only the advanced mode offers survive the basic one.
+    (tmp_path / "settings.yaml").write_text(
+        "export:\n  markers: all\ntranscribe:\n  language: de\n", encoding="utf-8")
+    options.load(tmp_path)
+    assert options.language.currentData() == "de"
+    options.save(tmp_path)
+    settings = load_settings([tmp_path / "settings.yaml"])
+    assert settings.export.markers == "all" and settings.transcribe.language == "de"
+    app.processEvents()

@@ -359,3 +359,20 @@ entry points and recorded project paths in the same change.
 - Checked: sony_run export resolves all 35 links, no asset is longer than its
   file, and the document validates against Apple's FCPXML 1.9 DTD. Final Cut
   import itself is still to be confirmed.
+
+### Basic and advanced desktop modes (2026-10-12)
+
+- The desktop GUI showed about 25 of some 250 settings; the rest needed YAML, and
+  the folder → material → plan → run flow asked for decisions a first-time user
+  cannot make.
+- Decision: the basic mode is the default. It asks for the folder and four
+  choices (language, pause removal, cut markers, review video), saves them into
+  the project and runs everything. The advanced mode (per-user preference, not a
+  project setting) shows every page and a settings form built from the typed
+  settings and `studio/gui/settings_schema.py`, which names and explains every
+  field; a test fails when a setting has no place there. Allowed values of text
+  settings live once in `settings.CHOICES`, shared by validation and the form.
+- The form saves only edited fields, so a value it would display rounded (or a
+  list it shows as YAML) is never rewritten by accident.
+- `export.marker_min_s` (default 0) is the marker threshold for cut markers in
+  the NLE; untranscribed-sound hints keep `roughcut.unknown_sound_min_s`.

@@ -57,6 +57,14 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- Desktop basic mode (the default): choose the material folder, check the
+  speech language, pause removal, cut markers and the review video, press
+  **Process**; Studio runs the whole pipeline and names the Final Cut and
+  Premiere files when it is done. The Work page shows the current step and its
+  progress. **Advanced mode** (remembered per user) shows every page and a
+  settings form with every setting, in sections with names, explanations,
+  a filter and bold names for values that differ from the defaults; it saves
+  only the fields that were edited.
 - `export.marker_min_s`: cuts shorter than it get no marker in Final Cut or
   Premiere (default 0, every accepted cut is marked).
 

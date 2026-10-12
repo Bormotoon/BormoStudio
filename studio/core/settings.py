@@ -391,12 +391,54 @@ def load_settings(paths: list[Path], overrides: list[str] | None = None) -> Sett
     return settings
 
 
+# Allowed values of the enumerated text settings; the desktop form offers them.
+CHOICES: dict[str, tuple[str, ...]] = {
+    "scan.grouping": ("auto", "folders", "names"),
+    "scan.verify_digests": ("cached", "always"),
+    "scan.channel_analysis": ("auto", "off"),
+    "sync.mode": ("auto", "camera", "simple", "complex"),
+    "sync.recorder_mode": ("best", "all"),
+    "sync.acoustic_refine": ("auto", "off"),
+    "sync.placement": ("text", "acoustic"),
+    "sync.rescue": ("quality", "off"),
+    "sync.recorder_repair": ("auto", "off"),
+    "sync.recorder_fill": ("camera", "silence"),
+    "sync.self_check": ("off", "warn", "repair"),
+    "sync.voice_enhance": ("off", "denoise", "denoise_dereverb", "resemble"),
+    "transcribe.device": ("auto", "cuda", "cpu", "mlx"),
+    "transcribe.mode": ("fast", "quality"),
+    "transcribe.recorder_scope": ("auto", "cameras", "full"),
+    "transcribe.camera_transcripts": ("auto", "always"),
+    "transcribe.camera_mode": ("fast", "quality"),
+    "roughcut.mode": ("cut", "markers"),
+    "roughcut.head_tail_sound": ("cut", "suggest", "keep"),
+    "roughcut.llm_apply": ("suggest", "cut"),
+    "roughcut.llm_prompt_language": ("auto", "ru", "en"),
+    "export.markers": ("cuts", "all", "none"),
+    "program.encoder": ("auto", "nvenc", "videotoolbox", "libx264", "cpu"),
+    "speakers.method": ("auto", "mics", "pyannote", "off"),
+    "speakers.device": ("cpu", "cuda"),
+    "text.prompt_language": ("auto", "ru", "en"),
+    "reels.prompt_language": ("auto", "ru", "en"),
+    "reels.framing": ("source", "crop", "fit"),
+    "reels.tracking_device": ("cpu", "cuda"),
+    "reels.layout": ("video", "title", "audiogram"),
+    "reels.title_field": ("hook", "title"),
+    "llm.flash_attn": ("auto", "on", "off"),
+    "fetch.download": ("video", "audio"),
+    "batch.notify_when": ("always", "failure", "never"),
+}
+
+
 def validate_settings(settings: Settings) -> None:
     for section_name in Settings.__dataclass_fields__:
         section = getattr(settings, section_name)
         for name, expected in get_type_hints(type(section)).items():
             if not _matches_type(getattr(section, name), expected):
                 raise SettingsError(f"{section_name}.{name} has an invalid value type")
+    for dotted, choices in CHOICES.items():
+        section_name, name = dotted.split(".")
+        _one_of(dotted, getattr(getattr(settings, section_name), name), set(choices))
     _validate_llm_tuning(settings.llm)
     if not 1 <= settings.llm.port <= 65535:
         raise SettingsError("llm.port must be between 1 and 65535")
@@ -405,55 +447,32 @@ def validate_settings(settings: Settings) -> None:
         not settings.llm.model_path.strip() or not settings.llm.executable.strip()
     ):
         raise SettingsError("managed llama requires executable and model_path")
-    _one_of("scan.grouping", settings.scan.grouping, {"auto", "folders", "names"})
     if settings.compute.cpu_workers < 0:
         raise SettingsError("compute.cpu_workers must be 0 (auto) or a positive count")
     _positive("scan.probe_timeout_s", settings.scan.probe_timeout_s)
-    _one_of("scan.verify_digests", settings.scan.verify_digests, {"cached", "always"})
-    _one_of("scan.channel_analysis", settings.scan.channel_analysis, {"auto", "off"})
     _non_negative("scan.min_duration_s", settings.scan.min_duration_s)
-    _one_of("sync.mode", settings.sync.mode, {"auto", "camera", "simple", "complex"})
     if settings.sync.strategy not in {1, 2, 3}:
         raise SettingsError("sync.strategy must be 1, 2, or 3")
     _non_negative("sync.max_drift_ms", settings.sync.max_drift_ms)
     _non_negative("sync.voice_segment_minutes", settings.sync.voice_segment_minutes)
     _non_negative("sync.master_crossfade_ms", settings.sync.master_crossfade_ms)
-    _one_of("sync.recorder_mode", settings.sync.recorder_mode, {"best", "all"})
     if any(not key.strip() or not math.isfinite(value)
            for key, value in settings.sync.session_offsets.items()):
         raise SettingsError("sync.session_offsets requires names and finite seconds")
     if not settings.sync.reference_camera.strip():
         raise SettingsError("sync.reference_camera must not be empty")
-    _one_of("sync.self_check", settings.sync.self_check, {"off", "warn", "repair"})
     if settings.sync.self_check == "repair" and settings.sync.voice_enhance != "off":
         raise SettingsError("sync.self_check=repair currently requires voice_enhance=off")
-    _one_of(
-        "sync.voice_enhance",
-        settings.sync.voice_enhance,
-        {"off", "denoise", "denoise_dereverb", "resemble"},
-    )
-    _one_of("sync.acoustic_refine", settings.sync.acoustic_refine, {"auto", "off"})
     for name in ("refine_grid_s", "refine_window_s", "step_min_ms"):
         _positive(f"sync.{name}", getattr(settings.sync, name))
     for name in ("acoustic_grid_s", "acoustic_window_s", "acoustic_min_sharpness"):
         _positive(f"sync.{name}", getattr(settings.sync, name))
-    _one_of("transcribe.device", settings.transcribe.device, {"auto", "cuda", "cpu", "mlx"})
-    _one_of("transcribe.mode", settings.transcribe.mode, {"fast", "quality"})
     _positive("transcribe.repetition_penalty", settings.transcribe.repetition_penalty)
     _positive("transcribe.vad_merge_gap_s", settings.transcribe.vad_merge_gap_s)
     _positive("transcribe.max_word_gap_s", settings.transcribe.max_word_gap_s)
-    _one_of("transcribe.recorder_scope", settings.transcribe.recorder_scope,
-            {"auto", "full", "cameras"})
-    _one_of("transcribe.camera_transcripts", settings.transcribe.camera_transcripts,
-            {"auto", "always"})
     _non_negative("transcribe.window_margin_s", settings.transcribe.window_margin_s)
     _positive("sync.locate_search_s", settings.sync.locate_search_s)
-    _one_of("sync.placement", settings.sync.placement, {"text", "acoustic"})
-    _one_of("sync.rescue", settings.sync.rescue, {"quality", "off"})
     _positive("sync.refine_max_lag_s", settings.sync.refine_max_lag_s)
-    _one_of("sync.recorder_repair", settings.sync.recorder_repair, {"auto", "off"})
-    _one_of("sync.recorder_fill", settings.sync.recorder_fill, {"camera", "silence"})
-    _one_of("transcribe.camera_mode", settings.transcribe.camera_mode, {"fast", "quality"})
     for asset_id, spans in settings.transcribe.ranges.items():
         if not asset_id.strip() or any(
                 len(span) != 2 or not 0 <= span[0] < span[1] for span in spans):
@@ -473,12 +492,7 @@ def validate_settings(settings: Settings) -> None:
         isinstance(item, str) for item in settings.transcribe.glossary
     ):
         raise SettingsError("transcribe.glossary must be a list of strings")
-    _one_of("roughcut.mode", settings.roughcut.mode, {"cut", "markers"})
-    _one_of("roughcut.head_tail_sound", settings.roughcut.head_tail_sound,
-            {"cut", "suggest", "keep"})
     _validate_roughcut_llm(settings.roughcut)
-    _one_of("speakers.method", settings.speakers.method, {"auto", "mics", "pyannote", "off"})
-    _one_of("speakers.device", settings.speakers.device, {"cpu", "cuda"})
     _non_negative("speakers.margin_db", settings.speakers.margin_db)
     _positive("speakers.step_s", settings.speakers.step_s)
     _non_negative("speakers.min_turn_s", settings.speakers.min_turn_s)
@@ -493,8 +507,6 @@ def validate_settings(settings: Settings) -> None:
         -100 <= settings.speakers.silence_floor_db <= 0
     ):
         raise SettingsError("speakers.silence_floor_db must be between -100 and 0")
-    _one_of("program.encoder", settings.program.encoder,
-            {"auto", "nvenc", "videotoolbox", "libx264", "cpu"})
     _non_negative("program.min_shot_s", settings.program.min_shot_s)
     _non_negative("program.crossfade_ms", settings.program.crossfade_ms)
     lufs = settings.reels.loudness_lufs
@@ -502,14 +514,10 @@ def validate_settings(settings: Settings) -> None:
         lufs == 0 or -70 <= lufs <= -5
     ):
         raise SettingsError("reels.loudness_lufs must be 0 (off) or between -70 and -5")
-    if settings.fetch.download not in {"video", "audio"}:
-        raise SettingsError("fetch.download must be video or audio")
     for name in ("max_height", "retries", "min_duration_s", "max_duration_s"):
         _non_negative(f"fetch.{name}", getattr(settings.fetch, name))
     if 0 < settings.fetch.max_duration_s < settings.fetch.min_duration_s:
         raise SettingsError("fetch.max_duration_s must not be below min_duration_s")
-    if settings.batch.notify_when not in {"always", "failure", "never"}:
-        raise SettingsError("batch.notify_when must be always, failure or never")
     if settings.batch.notify_webhook and not settings.batch.notify_webhook.startswith(
         ("http://", "https://")
     ):
@@ -544,7 +552,6 @@ def validate_settings(settings: Settings) -> None:
     _non_negative("roughcut.head_tail_pad_s", settings.roughcut.head_tail_pad_s)
     _non_negative("roughcut.retake_max_gap_s", settings.roughcut.retake_max_gap_s)
     _positive("roughcut.phrase_gap_threshold", settings.roughcut.phrase_gap_threshold)
-    _one_of("text.prompt_language", settings.text.prompt_language, {"auto", "ru", "en"})
     if not settings.text.base_url.strip():
         raise SettingsError("text.base_url must not be empty")
     if not settings.text.model.strip():
@@ -557,9 +564,6 @@ def validate_settings(settings: Settings) -> None:
         0 <= settings.text.min_similarity <= 1
     ):
         raise SettingsError("text.min_similarity must be between 0 and 1")
-    _one_of("reels.prompt_language", settings.reels.prompt_language, {"auto", "ru", "en"})
-    _one_of("reels.framing", settings.reels.framing, {"source", "crop", "fit"})
-    _one_of("reels.tracking_device", settings.reels.tracking_device, {"cpu", "cuda"})
     if settings.reels.tracking and settings.reels.framing != "crop":
         raise SettingsError("reels.tracking requires reels.framing=crop")
     for name in ("width", "height"):
@@ -660,7 +664,6 @@ def validate_settings(settings: Settings) -> None:
     unknown = set(settings.export.targets) - {"fcpxml", "xmeml", "multicam", "otio"}
     if unknown:
         raise SettingsError(f"export.targets contains unsupported values: {sorted(unknown)}")
-    _one_of("export.markers", settings.export.markers, {"cuts", "all", "none"})
     _non_negative("export.marker_min_s", settings.export.marker_min_s)
     if not isinstance(settings.export.name, str):
         raise SettingsError("export.name must be text")
@@ -679,7 +682,6 @@ def _validate_llm_tuning(llm: LlmSettings) -> None:
         value = getattr(llm, name)
         if value is not None and value < 0:
             raise SettingsError(f"llm.{name} must be non-negative or null")
-    _one_of("llm.flash_attn", llm.flash_attn, {"auto", "on", "off"})
     for name in ("cache_type_k", "cache_type_v"):
         if not re.fullmatch(r"[a-z0-9_]*", getattr(llm, name)):
             raise SettingsError(f"llm.{name} must be a llama.cpp cache type such as q8_0")
@@ -712,8 +714,6 @@ def _validate_llm_tuning(llm: LlmSettings) -> None:
 
 
 def _validate_reel_layout(reels: ReelsSettings) -> None:
-    _one_of("reels.layout", reels.layout, {"video", "title", "audiogram"})
-    _one_of("reels.title_field", reels.title_field, {"hook", "title"})
     if not math.isfinite(reels.title_band) or not 0.1 <= reels.title_band <= 0.5:
         raise SettingsError("reels.title_band must be between 0.1 and 0.5")
     _non_negative("reels.title_seconds", reels.title_seconds)
@@ -761,8 +761,6 @@ def _validate_roughcut_llm(roughcut: RoughcutSettings) -> None:
         raise SettingsError(
             "roughcut.llm_detectors must be unique values of start, slips, fillers, delivery"
         )
-    _one_of("roughcut.llm_apply", roughcut.llm_apply, {"suggest", "cut"})
-    _one_of("roughcut.llm_prompt_language", roughcut.llm_prompt_language, {"auto", "ru", "en"})
     if not math.isfinite(roughcut.llm_min_confidence) or not (
         0 <= roughcut.llm_min_confidence <= 1
     ):
