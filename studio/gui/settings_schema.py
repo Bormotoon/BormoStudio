@@ -448,6 +448,19 @@ SECTIONS: tuple[Section, ...] = (
             Item("caption_fade_min_gap_s", "Fade only across gaps of, s"),
             Item("caption_censor", "Censored words", "Patterns such as бля*."),
             Item("caption_censor_style", "Censor style"),
+            Item("caption_split_on_speaker", "New caption at each speaker"),
+            Item("caption_speaker_colors", "Speaker colours",
+                 "[#FFD400, #00C2FF]; by order of appearance."),
+            Item("caption_vertical_align", "Caption row", "style keeps the look's row."),
+            Item("caption_vertical_offset", "Caption offset",
+                 "Share of the frame height, -0.5 to 0.5."),
+            Item("caption_whisper_sync", "Check caption timing with Whisper",
+                 "Listens to each reel again; drifted words take the new timings."),
+            Item("caption_sync_model", "Whisper model for the check",
+                 "Empty: the transcription model."),
+            Item("caption_sync_min_match", "Words that must match",
+                 "Share of the transcript words; below it the check is not trusted."),
+            Item("caption_sync_threshold_s", "Retime from a drift of, s"),
         )),
     )),
     Section("llm", "Local LLM server", (
@@ -539,6 +552,7 @@ RANGES: dict[str, tuple[float, float]] = {
     "reels.chunk_overlap_s": (-1, 600),
     "reels.min_score": (0, 10),
     "reels.nvenc_cq": (0, 51),
+    "reels.caption_vertical_offset": (-0.5, 0.5),
     "llm.port": (1, 65535),
 }
 

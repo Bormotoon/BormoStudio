@@ -134,3 +134,51 @@ def speaker_change_starts(project: Project, transcript: Transcript) -> tuple[lis
             previous_piece = (b, d)
         return sorted(set(mapped)), "mapped_edited"
     return sorted(set(changes)), "ok"
+
+
+def speaker_turns(project: Project, transcript: Transcript) -> list[tuple[float, float, str]]:
+    """Named speaker turns in the transcript's time domain; [] when unavailable.
+
+    Edited (program) time goes through the program's timeline mapping, so a
+    turn cut by the rough cut is cut the same way.
+    """
+    path, report = speaker_context_paths(project)
+    if path is None or report is None:
+        return []
+    metadata = json.loads(report.read_text(encoding="utf-8"))
+    if not isinstance(metadata, dict) or metadata.get("time_domain") != "timeline":
+        return []
+    turns = []
+    for item in json.loads(path.read_text(encoding="utf-8")):
+        speaker = str(item.get("speaker") or "").strip()
+        start, end = float(item["start"]), float(item["end"])
+        if speaker and speaker.lower() not in {"unknown", "overlap"} and end > start:
+            turns.append((start, end, speaker))
+    if transcript.time_domain is TimeDomain.TIMELINE:
+        return sorted(turns)
+    if transcript.time_domain is not TimeDomain.EDITED:
+        return []
+    mapping_path = program_report_path(project)
+    if mapping_path is None:
+        return []
+    mapping_report = json.loads(mapping_path.read_text(encoding="utf-8"))
+    if not isinstance(mapping_report, dict) or mapping_report.get(
+        "edited_timing_fingerprint"
+    ) != stable_fingerprint(
+        transcript.duration, [(word.start, word.end) for word in transcript.words]
+    ):
+        return []
+    mapped = []
+    for piece in mapping_report.get("timeline_to_rendered") or []:
+        a, b, c = (float(piece[key]) for key in ("timeline_start", "timeline_end", "edited_start"))
+        for start, end, speaker in turns:
+            low, high = max(start, a), min(end, b)
+            if high > low:
+                mapped.append((c + low - a, c + high - a, speaker))
+    return sorted(mapped)
+
+
+def speaker_at(turns: list[tuple[float, float, str]], at: float) -> str:
+    """The one speaker talking at ``at``; "" for silence or overlaps."""
+    active = {speaker for start, end, speaker in turns if start <= at < end}
+    return next(iter(active)) if len(active) == 1 else ""

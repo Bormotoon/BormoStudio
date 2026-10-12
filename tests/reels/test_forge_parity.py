@@ -13,8 +13,6 @@ import asyncio
 import json
 import random
 import re
-import sys
-import types
 import zlib
 from pathlib import Path
 from typing import Any
@@ -28,7 +26,6 @@ from studio.core.transcript import Segment, Transcript, Word
 from studio.stages.base import StageContext
 from studio.stages.reels import ReelsStage
 
-FORGE = Path(__file__).resolve().parents[2] / "legacy" / "forge"
 TOPICS = (
     "garden soil compost seeds watering harvest tomatoes roots",
     "rocket engine fuel orbit launch payload booster thrust",
@@ -102,25 +99,6 @@ def _answers(transcript: Transcript) -> Any:
     return answer
 
 
-def _forge(monkeypatch: pytest.MonkeyPatch) -> Any:
-    if not (FORGE / "podcast_reels_forge").is_dir():
-        pytest.skip("the Forge snapshot is not in this checkout")
-    for name in ("aiohttp", "requests"):
-        # Network clients only; the selection itself never talks to a server.
-        if name not in sys.modules:
-            try:
-                __import__(name)
-            except ImportError:
-                monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
-    monkeypatch.syspath_prepend(str(FORGE))
-    try:
-        from podcast_reels_forge.config import LlamaCppRoleMapping
-        from podcast_reels_forge.stages import analyze_stage
-    except ImportError as exc:
-        pytest.skip(f"the Forge snapshot does not import here: {exc}")
-    return analyze_stage, LlamaCppRoleMapping
-
-
 # (Forge processing overrides, the same as Studio reels settings)
 CASES = {
     "defaults": ({}, {}),
@@ -158,9 +136,11 @@ def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.parametrize("case", sorted(CASES))
 @pytest.mark.parametrize(("seed", "minutes"), [(1, 35), (7, 75)])
 def test_selection_matches_forge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                 seed: int, minutes: int, case: str) -> None:
+                                 forge_snapshot: None, seed: int, minutes: int,
+                                 case: str) -> None:
     forge_overrides, studio_overrides = CASES[case]
-    analyze_stage, roles_type = _forge(monkeypatch)
+    from podcast_reels_forge.config import LlamaCppRoleMapping as roles_type
+    from podcast_reels_forge.stages import analyze_stage
     transcript = _transcript(seed, minutes)
     answer = _answers(transcript)
     path = tmp_path / "timeline.json"
@@ -221,8 +201,7 @@ def test_selection_matches_forge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize("seed", [3, 11])
-def test_clip_edges_match_forge(monkeypatch: pytest.MonkeyPatch, seed: int) -> None:
-    _forge(monkeypatch)
+def test_clip_edges_match_forge(forge_snapshot: None, seed: int) -> None:
     from podcast_reels_forge.analysis.transcript_index import TranscriptIndex as ForgeIndex
     from podcast_reels_forge.utils.clip_intervals import ClipEdges as ForgeEdges
     from podcast_reels_forge.utils.clip_intervals import padded_intervals

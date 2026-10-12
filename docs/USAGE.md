@@ -98,6 +98,21 @@ own choices can be overridden: `caption_highlight` (`none`, `word`, `fill`,
 from font and `caption_width_ratio`), `caption_font_size` (looks are tuned at 96),
 `caption_highlight_color`, `caption_min_gap_s`, `caption_fade_min_gap_s`, and
 `caption_censor` (`["бля*"]`; `caption_censor_style` `middle`/`first`/`whole`).
+With speaker turns (from `speakers`), a change of speaker starts a new cue
+(`caption_split_on_speaker`, default on) and `caption_speaker_colors`
+(`["#FFD400", "#00C2FF"]`) colours each speaker's words in order of appearance.
+`caption_vertical_align` (`style`, `top`, `center`, `bottom`) moves the captions
+off the look's row and `caption_vertical_offset` (a share of the frame height,
+-0.5 to 0.5) pushes them from the anchored edge.
+
+`reels.caption_whisper_sync` (off by default) listens to each reel again with
+Whisper (`caption_sync_model`, empty: `transcribe.model`), matches the heard words
+to the transcript and, when at least `caption_sync_min_match` (0.5) of them match
+and the 95th percentile of their drift reaches `caption_sync_threshold_s` (0.2 s),
+captions the reel with the second pass's timings, as Forge's `whisper_sync` did.
+`stages/reel_render/subtitle_sync.json` records each reel's verdict; captions edited
+in the subtitle editor are left alone, and `reel-NNN.json` keeps the transcript
+timings the editor opens.
 Captions saved in the Subtitles page still win over the preset.
 
 ## Subtitle editor and captions

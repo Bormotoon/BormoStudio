@@ -74,6 +74,13 @@ class CaptionOptions:
     blur: float = 0.0
     censor: tuple[str, ...] = ()
     censor_style: str = "middle"
+    # A change of speaker starts a new cue; colours go to speakers in order.
+    split_on_speaker: bool = True
+    speaker_colors: tuple[str, ...] = ()
+    # "style" keeps the look's row; top/center/bottom move it. The offset is a
+    # share of the frame height pushed away from the anchored edge.
+    vertical_align: str = "style"
+    vertical_offset: float = 0.0
     look: dict[str, Any] = field(default_factory=dict)
     # Looks are designed for 9:16; a landscape reel scales them by its height.
     play_res: tuple[int, int] = PLAY_RES
@@ -117,6 +124,10 @@ class CaptionOptions:
             blur=float(render.get("blur", 0.0)),
             censor=tuple(str(item) for item in reels.get("caption_censor", [])),
             censor_style=str(reels.get("caption_censor_style", "middle")),
+            split_on_speaker=bool(reels.get("caption_split_on_speaker", True)),
+            speaker_colors=tuple(str(item) for item in reels.get("caption_speaker_colors", [])),
+            vertical_align=str(reels.get("caption_vertical_align", "style")),
+            vertical_offset=float(reels.get("caption_vertical_offset", 0.0)),
             look={**data["lookDefaults"], **preset.get("look", {})},
         )
 
@@ -126,6 +137,7 @@ class TimedWord:
     text: str
     start: float
     end: float
+    speaker: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +197,7 @@ def chars_per_line(options: CaptionOptions) -> int:
 def build_cues(words: list[TimedWord], options: CaptionOptions) -> list[CaptionCue]:
     """Group words into readable cues and keep the timing rules between them."""
     limit = chars_per_line(options) * max(1, options.max_lines)
-    shown = [TimedWord(display_word(w.text, options), w.start, w.end) for w in words]
+    shown = [TimedWord(display_word(w.text, options), w.start, w.end, w.speaker) for w in words]
     shown = [word for word in shown if word.text]
     groups: list[list[TimedWord]] = []
     for word in shown:
@@ -193,6 +205,7 @@ def build_cues(words: list[TimedWord], options: CaptionOptions) -> list[CaptionC
         if (
             current is None
             or word.start - current[-1].end >= options.pause_split_s
+            or (options.split_on_speaker and word.speaker != current[-1].speaker)
             or word.end - current[0].start > options.max_duration_s
             or 0 < options.max_words <= len(current)
             or len(" ".join(w.text for w in [*current, word])) > limit
@@ -308,8 +321,52 @@ def _join(parts: list[str], breaks: set[int]) -> str:
                    for index, part in enumerate(parts))
 
 
+def _position(options: CaptionOptions) -> tuple[str, int]:
+    """``\\an``/``\\pos`` tags and the event MarginV for vertical_align/offset.
+
+    MarginV 0 inherits the style, which is what an unmoved cue keeps.
+    """
+    look = options.look
+    width, height = options.play_res
+    scale = height / PLAY_RES[1]
+    alignment = int(look.get("alignment", 2))
+    style_row = "bottom" if alignment in (1, 2, 3) else "center" if alignment in (4, 5, 6) \
+        else "top"
+    align, offset = options.vertical_align, options.vertical_offset
+    margin_v = round(look.get("marginV", 470) * scale)
+    tag = ""
+    if align != "style":
+        column = (alignment - 1) % 3
+        tag = f"\\an{ {'bottom': 1, 'center': 4, 'top': 7}[align] + column}"
+        if align == "center" and offset:
+            # libass ignores MarginV for middle rows, so an offset needs \\pos.
+            left = round(look.get("marginL", 140) * scale)
+            right = round(look.get("marginR", 140) * scale)
+            x = (left, left + (width - left - right) / 2, width - right)[column]
+            tag += f"\\pos({round(x)},{round(height / 2 - offset * height)})"
+    if align in ("style", "center", style_row):
+        return tag, max(1, margin_v + round(offset * height)) if offset else 0
+    # Moving a centred look to an edge: start from that edge's safe zone.
+    base = round((470 if align == "bottom" else 250) * scale)
+    return tag, max(1, base + round(offset * height))
+
+
+def speaker_colours(cues: list[CaptionCue], options: CaptionOptions) -> dict[str, str]:
+    """Speaker label to colour, in order of first appearance."""
+    colours: dict[str, str] = {}
+    if not options.speaker_colors:
+        return colours
+    for cue in cues:
+        label = cue.words[0].speaker if cue.words else ""
+        if label and label not in colours:
+            colours[label] = options.speaker_colors[len(colours) % len(options.speaker_colors)]
+    return colours
+
+
 def cue_events(cues: list[CaptionCue], options: CaptionOptions) -> list[str]:
     look = options.look
+    anchor, margin_v = _position(options)
+    colours = speaker_colours(cues, options)
     per_line = chars_per_line(options)
     blur = f"\\blur{options.blur:g}" if options.blur > 0 else ""
     has_highlight_style = bool(look.get("hlEnabled"))
@@ -325,23 +382,32 @@ def cue_events(cues: list[CaptionCue], options: CaptionOptions) -> list[str]:
     events: list[str] = []
 
     def event(start: float, end: float, text: str) -> None:
-        events.append(f"Dialogue: 0,{_clock(start)},{_clock(end)},Default,,0,0,0,,{text}")
+        events.append(
+            f"Dialogue: 0,{_clock(start)},{_clock(end)},Default,,0,0,{margin_v},,{text}")
 
+    base_inactive = inactive
     for index, cue in enumerate(cues):
+        # A speaker's colour replaces the unspoken words' colour.
+        colour = colours.get(cue.words[0].speaker, "") if cue.words else ""
+        inactive = base_inactive + (_override(colour) if colour else "")
         texts = [_escape(word.text) for word in cue.words]
         breaks = wrap(texts, per_line, options.max_lines)
         fade_in, fade_out = _fades(cues, index, options)
         fade = f"\\fad({fade_in},{fade_out})" if fade_in or fade_out else ""
         mode = options.highlight
         if mode == "none" or len(cue.words) == 0:
-            event(cue.start, cue.end, _tag(fade + blur) + _join(texts, breaks))
+            event(cue.start, cue.end, _tag(anchor + fade + blur
+                                           + (_override(colour) if colour else ""))
+                  + _join(texts, breaks))
             continue
         if mode == "karaoke":
             lead = round((cue.words[0].start - cue.start) * 100)
             parts = [(f"{{\\k{lead}}}" if position == 0 and lead > 0 else "")
                      + f"{{\\kf{round((word.end - word.start) * 100)}}}" + text
                      for position, (word, text) in enumerate(zip(cue.words, texts, strict=True))]
-            event(cue.start, cue.end, _tag(fade + blur) + _join(parts, breaks))
+            event(cue.start, cue.end, _tag(anchor + fade + blur
+                                           + (_override(colour) if colour else ""))
+                  + _join(parts, breaks))
             continue
         # One event per spoken word with the whole cue laid out the same way,
         # so the text does not jump between words.
@@ -372,7 +438,7 @@ def cue_events(cues: list[CaptionCue], options: CaptionOptions) -> list[str]:
                     f"{fade_out if position == count - 1 else 0})"
                     if (position == 0 and fade_in) or (position == count - 1 and fade_out)
                     else "")
-            event(start, end, _tag(edge + inactive) + _join(parts, breaks))
+            event(start, end, _tag(anchor + edge + inactive) + _join(parts, breaks))
     return events
 
 

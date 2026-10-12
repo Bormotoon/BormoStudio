@@ -23,8 +23,11 @@ from studio.core.timeline import EditMap, KeepRange, TimeDomain
 from studio.core.transcript import Segment, Transcript, Word, to_srt
 from studio.core.transcript_index import TranscriptIndex
 from studio.reels.analysis.selection import quality_filters, quality_reasons
+from studio.reels.analysis.speaker_context import speaker_at, speaker_turns
 from studio.reels.clip_edges import ClipEdges, clip_intervals
 from studio.reels.markdown import write_reel_instagram_txt, write_reel_markdown
+from studio.reels.subtitle_sync import TimedWord as SyncWord
+from studio.reels.subtitle_sync import heard_words, judge, load_model
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 from studio.stages.program import render_project_program
 from studio.stages.reel_codec import encoder_report, video_codec_args
@@ -164,6 +167,14 @@ class ReelRenderStage:
         intervals = clip_intervals(bounds, TranscriptIndex.from_transcript(transcript),
                                    ClipEdges.from_settings(settings), duration=transcript.duration)
         filters = quality_filters(settings)
+        sync_rows: list[dict[str, Any]] = []
+        sync_model: Any = None
+        sync_enabled = bool(settings.get("caption_whisper_sync", False))
+        try:
+            turns = speaker_turns(context.project, transcript)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            turns = []
+            warnings.append(f"speaker turns unavailable for captions: {exc}")
         for number, moment in enumerate(moments, 1):
             stem = f"reel-{number:03d}"
             reasons = quality_reasons(moment, filters)
@@ -223,7 +234,23 @@ class ReelRenderStage:
                 artifacts.append(cover)
             published_video = context.project.work_dir / video.relative_to(context.work_dir)
             local = clip_transcript(transcript, start, end, published_video)
-            cues, style = load_edits(context.project.work_dir, stem, local)
+            edited = edit_path(context.project.work_dir, stem).is_file()
+            captions_from = local
+            # A second Whisper pass over the reel's own sound fixes drifted
+            # caption timings; saved edits from the editor win over it.
+            if sync_enabled and not edited and local.words and not reasons:
+                if sync_model is None:
+                    try:
+                        sync_model = load_sync_model(context.settings)
+                    except Exception as exc:  # noqa: BLE001 - an extra check, not a gate
+                        sync_enabled = False
+                        warnings.append(f"caption sync skipped: no Whisper model ({exc})")
+                if sync_model is not None:
+                    captions_from, sync_report = sync_captions(
+                        sync_model, video, local, transcript.language, settings)
+                    sync_rows.append({"reel": stem, **sync_report})
+            cues, style = load_edits(context.project.work_dir, stem,
+                                     local if edited else captions_from)
             portrait = ((framing != "source" or layout != "video")
                         and int(settings.get("height", 1920)) > int(settings.get("width", 1080)))
             # Manual edits from the subtitle editor win over a caption preset.
@@ -233,7 +260,9 @@ class ReelRenderStage:
                 options = replace(CaptionOptions.from_settings(settings),
                                   play_res=(1080, 1920) if portrait else (1920, 1080))
                 caption_cues = build_cues(
-                    [TimedWord(w.text, w.start, w.end) for w in local.words], options)
+                    [TimedWord(w.text, w.start, w.end,
+                               speaker_at(turns, start + (w.start + w.end) / 2))
+                     for w in captions_from.words], options)
                 cues = [Cue(cue.start, cue.end, cue.text) for cue in caption_cues]
             subtitle_transcript = replace(
                 local,
@@ -327,6 +356,11 @@ class ReelRenderStage:
                     "exports": exports,
                 }
             )
+        if sync_rows:
+            sync_path = directory / "subtitle_sync.json"
+            sync_path.write_text(json.dumps({"clips": sync_rows}, ensure_ascii=False, indent=2)
+                                 + "\n", encoding="utf-8")
+            artifacts.append(sync_path)
         rejected_path = directory / "rejected.json"
         rejected_path.write_text(json.dumps(rejected_rows, ensure_ascii=False, indent=2) + "\n",
                                  encoding="utf-8")
@@ -352,6 +386,40 @@ class ReelRenderStage:
             },
             warnings=tuple(warnings),
         )
+
+
+def load_sync_model(all_settings: dict[str, Any]) -> Any:
+    """The caption check's Whisper: reels.caption_sync_model, else transcribe.model."""
+    reels = _settings(all_settings)
+    transcribe = all_settings.get("transcribe", {})
+    transcribe = transcribe if isinstance(transcribe, dict) else {}
+    name = str(reels.get("caption_sync_model") or transcribe.get("model") or "large-v3")
+    return load_model(name, str(transcribe.get("device", "auto")),
+                      str(transcribe.get("compute_type", "auto")))
+
+
+def sync_captions(
+    model: Any, video: Path, local: Transcript, language: str, reels: dict[str, Any]
+) -> tuple[Transcript, dict[str, Any]]:
+    """The reel transcript with second-pass word timings when they drifted."""
+    reference = [SyncWord(word.start, word.end, word.text) for word in local.words]
+    try:
+        heard = heard_words(model, video, language)
+    except Exception as exc:  # noqa: BLE001 - a failed check must not fail the reel
+        return local, {"verdict": "error", "error": str(exc)[:300]}
+    words, report = judge(
+        reference, heard, min_match_ratio=float(reels.get("caption_sync_min_match", 0.5)),
+        apply_threshold_s=float(reels.get("caption_sync_threshold_s", 0.2)))
+    if not report.applied:
+        return local, report.as_dict()
+    timings = iter(words)
+    segments = []
+    for segment in local.segments:
+        moved = tuple(replace(word, start=fixed.start, end=fixed.end)
+                      for word, fixed in zip(segment.words, timings, strict=False))
+        segments.append(replace(segment, start=moved[0].start if moved else segment.start,
+                                end=moved[-1].end if moved else segment.end, words=moved))
+    return replace(local, segments=segments), report.as_dict()
 
 
 def render_reel_source(

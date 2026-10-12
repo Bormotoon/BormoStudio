@@ -61,6 +61,12 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- Styled reel captions split at speaker changes and colour each speaker
+  (`reels.caption_split_on_speaker`, `caption_speaker_colors`), move with
+  `caption_vertical_align`/`caption_vertical_offset`, and can be checked with
+  a second Whisper pass over each reel (`caption_whisper_sync`, Forge's
+  `whisper_sync`, with a parity test of the matching and retiming).
+
 - Reel rendering does what Forge's cut stage did: edges fitted to the speech
   (`reels.edge_*`), the quality filters again at render time with
   `rejected.json` and optional `render_rejected`, QA of every reel

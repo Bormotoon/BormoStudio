@@ -362,6 +362,19 @@ class ReelsSettings:
     caption_fade_min_gap_s: float = 0.3
     caption_censor: list[str] = field(default_factory=list)
     caption_censor_style: str = "middle"
+    # Styled captions: a new cue at each change of speaker, colours by speaker
+    # in order of appearance (#RRGGBB), and the vertical placement.
+    caption_split_on_speaker: bool = True
+    caption_speaker_colors: list[str] = field(default_factory=list)
+    caption_vertical_align: str = "style"
+    caption_vertical_offset: float = 0.0
+    # Listen to each reel again with Whisper and take its word timings when the
+    # transcript's drifted (p95 of word ends at least caption_sync_threshold_s)
+    # and enough words matched; "" model: transcribe.model.
+    caption_whisper_sync: bool = False
+    caption_sync_model: str = ""
+    caption_sync_min_match: float = 0.5
+    caption_sync_threshold_s: float = 0.2
 
 
 @dataclass(slots=True)
@@ -498,6 +511,7 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "reels.prompt_language": ("auto", "ru", "en"),
     "reels.framing": ("source", "crop", "fit"),
     "reels.encoder": ("auto", "nvenc", "videotoolbox", "libx264", "cpu"),
+    "reels.caption_vertical_align": ("style", "top", "center", "bottom"),
     "reels.tracking_device": ("cpu", "cuda"),
     "reels.layout": ("video", "title", "audiogram"),
     "reels.title_field": ("hook", "title"),
@@ -693,6 +707,14 @@ def validate_settings(settings: Settings) -> None:
     if settings.reels.preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast",
                                      "medium", "slow", "slower", "veryslow"}:
         raise SettingsError("reels.preset must be an x264 preset such as fast")
+    if any(not re.fullmatch(r"#[0-9a-fA-F]{6}", colour)
+           for colour in settings.reels.caption_speaker_colors):
+        raise SettingsError("reels.caption_speaker_colors must be #RRGGBB colours")
+    if not 0 <= settings.reels.caption_sync_min_match <= 1:
+        raise SettingsError("reels.caption_sync_min_match must be between 0 and 1")
+    _non_negative("reels.caption_sync_threshold_s", settings.reels.caption_sync_threshold_s)
+    if not -0.5 <= settings.reels.caption_vertical_offset <= 0.5:
+        raise SettingsError("reels.caption_vertical_offset must be between -0.5 and 0.5")
     if settings.reels.scout_quote_ratio > settings.reels.min_quote_ratio:
         raise SettingsError("reels.scout_quote_ratio must not exceed reels.min_quote_ratio")
     if 0 < settings.reels.max_duration_s < settings.reels.min_duration_s:
