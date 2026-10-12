@@ -21,9 +21,20 @@ from studio.core.project import Project, stable_fingerprint
 from studio.core.subtitles import Cue, edit_path, load_edits, to_ass
 from studio.core.timeline import EditMap, KeepRange, TimeDomain
 from studio.core.transcript import Segment, Transcript, Word, to_srt
+from studio.core.transcript_index import TranscriptIndex
+from studio.reels.analysis.selection import quality_filters, quality_reasons
+from studio.reels.clip_edges import ClipEdges, clip_intervals
+from studio.reels.markdown import write_reel_instagram_txt, write_reel_markdown
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 from studio.stages.program import render_project_program
-from studio.stages.reel_finish import normalize_loudness, render_cover
+from studio.stages.reel_codec import encoder_report, video_codec_args
+from studio.stages.reel_finish import (
+    check_clip,
+    concat_preview,
+    export_format,
+    normalize_loudness,
+    render_cover,
+)
 from studio.stages.reel_layout import (
     compose_title,
     packaged_fonts,
@@ -98,7 +109,7 @@ class ReelRenderStage:
                 for name in ("face_detection_yunet_2023mar.onnx", "light_asd_talkset.model")
             )
         return stable_fingerprint(
-            "reel-render-v6",
+            "reel-render-v7",
             _settings(settings),
             settings.get("program", {}), project.speaker_cameras,
             project.to_dict()["assets"],
@@ -139,25 +150,44 @@ class ReelRenderStage:
         directory.mkdir(parents=True, exist_ok=True)
         artifacts: list[Path] = []
         entries = []
+        rejected_rows: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        finished: list[Path] = []
         overrides = load_reel_overrides(context.project.work_dir)
         fps = str(settings.get("render_fps", "25"))
-        for number, moment in enumerate(moments, 1):
-            start, end = float(moment["start"]), float(moment["end"])
+        bounds = [(float(moment["start"]), float(moment["end"])) for moment in moments]
+        for start, end in bounds:
             if not 0 <= start < end <= transcript.duration:
                 raise ValueError("moment is outside its transcript")
+        # Edges follow the speech: a lead-in before the first word, a tail
+        # after the last, never into a neighbouring word or reel.
+        intervals = clip_intervals(bounds, TranscriptIndex.from_transcript(transcript),
+                                   ClipEdges.from_settings(settings), duration=transcript.duration)
+        filters = quality_filters(settings)
+        for number, moment in enumerate(moments, 1):
             stem = f"reel-{number:03d}"
+            reasons = quality_reasons(moment, filters)
+            if reasons and not settings.get("render_rejected", False):
+                rejected_rows.append({"reel": stem, "candidate_id": moment.get("candidate_id"),
+                                      "start": moment["start"], "end": moment["end"],
+                                      "title": moment.get("title"), "score": moment.get("score"),
+                                      "reasons": reasons, "encoded": False})
+                continue
+            folder = directory / "rejected" if reasons else directory
+            folder.mkdir(parents=True, exist_ok=True)
+            start, end = intervals[number - 1]
             key = str(moment.get("candidate_id") or stem)
             override = overrides.get(key, overrides.get(stem))
             reel = reel_settings(settings, override)
             layout = str(reel.get("layout", "video"))
             title_override = (override or {}).get("title")
             title = reel_title(moment, reel, str(title_override) if title_override else None)
-            video = directory / f"{stem}.mp4"
+            video = folder / f"{stem}.mp4"
             frame, source_size = None, None
             framing_report: dict[str, object] = {"tracking": "disabled"}
             if layout == "audiogram":
-                with tempfile.TemporaryDirectory(prefix="uvf-reel-audio-") as folder:
-                    audio = Path(folder) / "audio.wav"
+                with tempfile.TemporaryDirectory(prefix="uvf-reel-audio-") as temporary:
+                    audio = Path(temporary) / "audio.wav"
                     reel_audio(context.project, transcript, start, end, audio)
                     render_audiogram(audio, video, title, end - start, reel)
                 framing = "audiogram"
@@ -165,13 +195,13 @@ class ReelRenderStage:
                 render_reel_source(context.project, context.settings, transcript,
                                    start, end, stem, video, fps)
                 # The unframed still lets the editor preview any crop instantly.
-                frame = directory / f"{stem}-frame.jpg"
+                frame = folder / f"{stem}-frame.jpg"
                 render_cover(video, frame, (end - start) / 3)
                 artifacts.append(frame)
                 info = probe(video)
                 source_size = [info.width, info.height]
                 framing = str(reel.get("framing", "source"))
-                framed = directory / f"{stem}-framed.mp4"
+                framed = folder / f"{stem}-framed.mp4"
                 if layout == "title":
                     area = {**reel, "height": int(reel.get("height", 1920))
                             - title_band_height(reel)}
@@ -184,10 +214,11 @@ class ReelRenderStage:
                     framing_report = reframe_video(video, framed, reel)
                     framed.replace(video)
             lufs = float(settings.get("loudness_lufs", -14.0))
-            loudness = normalize_loudness(video, lufs) if lufs else {"status": "source"}
+            loudness = (normalize_loudness(video, lufs, str(settings.get("audio_bitrate", "192k")))
+                        if lufs else {"status": "source"})
             cover = None
             if settings.get("covers", True):
-                cover = directory / f"{stem}-cover.jpg"
+                cover = folder / f"{stem}-cover.jpg"
                 render_cover(video, cover, (end - start) / 3)
                 artifacts.append(cover)
             published_video = context.project.work_dir / video.relative_to(context.work_dir)
@@ -208,32 +239,76 @@ class ReelRenderStage:
                 local,
                 segments=[Segment(cue.start, cue.end, text_override=cue.text) for cue in cues],
             )
-            json_path, srt_path = directory / f"{stem}.json", directory / f"{stem}.srt"
+            json_path, srt_path = folder / f"{stem}.json", folder / f"{stem}.srt"
             local.save(json_path)
             srt_path.write_text(to_srt(subtitle_transcript), encoding="utf-8")
             artifacts.extend((video, json_path, srt_path))
-            ass_path = directory / f"{stem}.ass"
+            ass_path = folder / f"{stem}.ass"
             ass_path.write_text(
                 to_styled_ass(caption_cues, options) if styled
                 else to_ass(cues, style, portrait=portrait),
                 encoding="utf-8",
             )
             artifacts.append(ass_path)
-            if settings.get("burn_subtitles", False):
-                captioned = directory / f"{stem}-captioned.mp4"
-                burn_subtitles(video, ass_path, captioned)
+            captioned = None
+            # Rejected reels are kept for review only, so they skip captions.
+            if settings.get("burn_subtitles", False) and not reasons:
+                captioned = folder / f"{stem}-captioned.mp4"
+                burn_subtitles(video, ass_path, captioned, settings)
                 artifacts.append(captioned)
+            problems: list[str] = []
+            if settings.get("qa", True) and not reasons:
+                for checked in (video, captioned):
+                    if checked is not None:
+                        problems += check_clip(checked, expected_s=end - start,
+                                               blackdetect=bool(settings.get("qa_blackdetect")))
+                if problems:
+                    # A broken reel is moved aside and named, never shipped.
+                    warnings.append(f"{stem} failed QA: {'; '.join(problems)}")
+                    moved = directory / "rejected"
+                    moved.mkdir(exist_ok=True)
+                    for path in [video, captioned]:
+                        if path is not None:
+                            target = moved / path.name
+                            path.replace(target)
+                            artifacts[artifacts.index(path)] = target
+                    video = moved / video.name
+                    captioned = moved / captioned.name if captioned is not None else None
+            outcome = "rejected" if reasons else "failed" if problems else "ok"
+            publish = captioned or video
+            exports: dict[str, str] = {}
+            if outcome == "ok":
+                finished.append(publish)
+                for kind, enabled in (("webm", "export_webm"), ("gif", "export_gif"),
+                                      ("audio", "export_audio")):
+                    if settings.get(enabled, False):
+                        try:
+                            exports[kind] = export_format(publish, kind).name
+                            artifacts.append(publish.with_suffix(
+                                {"webm": ".webm", "gif": ".gif", "audio": ".m4a"}[kind]))
+                        except RuntimeError as exc:
+                            warnings.append(f"{stem}: {kind} export failed: {exc}")
+            # Ready-to-post description and caption beside every encoded reel.
+            artifacts.append(write_reel_markdown(moment, video))
+            artifacts.append(write_reel_instagram_txt(
+                moment, video, rejection_reasons=[*reasons, *problems] or None))
+            if outcome != "ok":
+                rejected_rows.append({"reel": stem, "candidate_id": moment.get("candidate_id"),
+                                      "start": moment["start"], "end": moment["end"],
+                                      "title": moment.get("title"), "score": moment.get("score"),
+                                      "reasons": [*reasons, *problems], "encoded": True})
             entries.append(
                 {
                     "candidate_id": moment.get("candidate_id"),
-                    "video": video.name,
+                    "outcome": outcome,
+                    "video": str(video.relative_to(directory)),
                     "transcript": json_path.name,
                     "subtitles": srt_path.name,
                     "styled_subtitles": ass_path.name,
                     "caption_preset": options.preset if styled else None,
-                    "captioned": f"{stem}-captioned.mp4"
-                    if settings.get("burn_subtitles")
-                    else None,
+                    "captioned": captioned.name if captioned is not None else None,
+                    "moment_start": float(moment["start"]),
+                    "moment_end": float(moment["end"]),
                     "source_start": start,
                     "source_end": end,
                     "source_time_domain": transcript.time_domain.value,
@@ -248,16 +323,34 @@ class ReelRenderStage:
                     "override": bool(override),
                     "loudness": loudness,
                     "cover": cover.name if cover else None,
+                    "qa": problems,
+                    "exports": exports,
                 }
             )
+        rejected_path = directory / "rejected.json"
+        rejected_path.write_text(json.dumps(rejected_rows, ensure_ascii=False, indent=2) + "\n",
+                                 encoding="utf-8")
+        artifacts.append(rejected_path)
+        preview = directory / "reels-preview.mp4"
+        preview_ok = bool(settings.get("preview_reel", True)) and concat_preview(finished, preview)
+        if preview_ok:
+            artifacts.append(preview)
         report = directory / "render.json"
-        report.write_text(json.dumps({"schema_version": 1, "reels": entries}, indent=2) + "\n")
+        report.write_text(json.dumps({
+            "schema_version": 2,
+            "encoder": encoder_report(settings),
+            "reels": entries,
+            "rejected": len(rejected_rows),
+            "failed_qa": sum(1 for entry in entries if entry["outcome"] == "failed"),
+            "preview": preview.name if preview_ok else None,
+        }, ensure_ascii=False, indent=2) + "\n")
         artifacts.append(report)
         return StageOutput(
             tuple(artifacts),
             {
                 "outputs": {**context.project.outputs, "reel_render": artifacts},
             },
+            warnings=tuple(warnings),
         )
 
 
@@ -298,12 +391,7 @@ def render_reel_source(
                 "0:a:0?",
                 "-vf",
                 f"fps={fps}",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-pix_fmt",
-                "yuv420p",
+                *video_codec_args(_settings(all_settings)),
                 "-c:a",
                 "aac",
                 "-movflags",
@@ -385,7 +473,9 @@ def _digest(path: Path, cache_dir: Path | None = None) -> str:
     return file_digest(path, cache_dir)
 
 
-def burn_subtitles(video: Path, subtitles: Path, output: Path) -> None:
+def burn_subtitles(
+    video: Path, subtitles: Path, output: Path, settings: dict[str, Any] | None = None
+) -> None:
     # Keep arbitrary project filenames out of ffmpeg's filtergraph parser.
     with tempfile.TemporaryDirectory(prefix="uvf-subtitles-") as temporary:
         safe_path = Path(temporary) / f"captions{subtitles.suffix}"
@@ -403,12 +493,8 @@ def burn_subtitles(video: Path, subtitles: Path, output: Path) -> None:
                 str(video),
                 "-vf",
                 f"subtitles=filename='{escaped}':fontsdir='{fonts}'",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-pix_fmt",
-                "yuv420p",
+                *(video_codec_args(settings) if settings is not None
+                  else ["-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p"]),
                 "-c:a",
                 "copy",
                 "-movflags",
@@ -454,12 +540,7 @@ def reframe_video(video: Path, output: Path, settings: dict[str, Any]) -> dict[s
             "0:v:0",
             "-map",
             "0:a:0?",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-pix_fmt",
-            "yuv420p",
+            *video_codec_args(settings),
             "-c:a",
             "copy",
             "-movflags",

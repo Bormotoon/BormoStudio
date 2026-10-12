@@ -50,6 +50,8 @@ class TranscriptIndex:
         self.sentences = sorted(sentences, key=lambda sentence: (sentence.start, sentence.end))
         self._word_starts = [word.start for word in self.words]
         sentence_start_words = self._find_sentence_start_words()
+        # Indices of the words that open a sentence.
+        self.sentence_start_words = sentence_start_words
         self._sentence_starts = sorted(
             {sentence.start for sentence in self.sentences}
             | {self.words[index].start for index in sentence_start_words}

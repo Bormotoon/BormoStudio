@@ -294,6 +294,32 @@ class ReelsSettings:
     render: bool = False
     render_fps: str = "25"
     burn_subtitles: bool = False
+    # Reel edges follow the speech: silence kept before the first and after the
+    # last word, distance kept from a neighbouring word, how far an edge may
+    # grow to its sentence's edge and the longest fragment it drops instead.
+    edge_lead_in_s: float = 0.6
+    edge_tail_s: float = 0.3
+    edge_guard_s: float = 0.1
+    edge_max_extend_s: float = 4.0
+    edge_max_trim_s: float = 1.5
+    # Moments failing the quality filters at render time are listed in
+    # rejected.json; render_rejected also encodes them into rejected/.
+    render_rejected: bool = False
+    # Check every reel (streams, duration; blackdetect decodes it all).
+    qa: bool = True
+    qa_blackdetect: bool = False
+    export_webm: bool = False
+    export_gif: bool = False
+    export_audio: bool = False
+    # All finished reels back to back in reels-preview.mp4.
+    preview_reel: bool = True
+    # Reel encodes: auto (NVENC if it works, else libx264), nvenc, libx264, ...
+    encoder: str = "auto"
+    video_bitrate: str = "8M"
+    audio_bitrate: str = "192k"
+    preset: str = "fast"
+    nvenc_cq: int = 21
+    nvenc_preset: str = "p5"
     framing: str = "source"
     width: int = 1080
     height: int = 1920
@@ -471,6 +497,7 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "text.prompt_language": ("auto", "ru", "en"),
     "reels.prompt_language": ("auto", "ru", "en"),
     "reels.framing": ("source", "crop", "fit"),
+    "reels.encoder": ("auto", "nvenc", "videotoolbox", "libx264", "cpu"),
     "reels.tracking_device": ("cpu", "cuda"),
     "reels.layout": ("video", "title", "audiogram"),
     "reels.title_field": ("hook", "title"),
@@ -653,6 +680,19 @@ def validate_settings(settings: Settings) -> None:
         value = getattr(settings.reels, name)
         if not math.isfinite(value) or not 0 <= value <= 1:
             raise SettingsError(f"reels.{name} must be between 0 and 1")
+    for name in ("edge_lead_in_s", "edge_tail_s", "edge_guard_s", "edge_max_extend_s",
+                 "edge_max_trim_s"):
+        _non_negative(f"reels.{name}", getattr(settings.reels, name))
+    for name in ("video_bitrate", "audio_bitrate"):
+        if not re.fullmatch(r"\d+(\.\d+)?[kKmM]?", getattr(settings.reels, name)):
+            raise SettingsError(f"reels.{name} must be a bitrate such as 8M or 192k")
+    if not 0 <= settings.reels.nvenc_cq <= 51:
+        raise SettingsError("reels.nvenc_cq must be between 0 and 51")
+    if not re.fullmatch(r"p[1-7]", settings.reels.nvenc_preset):
+        raise SettingsError("reels.nvenc_preset must be p1 ... p7")
+    if settings.reels.preset not in {"ultrafast", "superfast", "veryfast", "faster", "fast",
+                                     "medium", "slow", "slower", "veryslow"}:
+        raise SettingsError("reels.preset must be an x264 preset such as fast")
     if settings.reels.scout_quote_ratio > settings.reels.min_quote_ratio:
         raise SettingsError("reels.scout_quote_ratio must not exceed reels.min_quote_ratio")
     if 0 < settings.reels.max_duration_s < settings.reels.min_duration_s:

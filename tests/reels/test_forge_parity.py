@@ -218,3 +218,27 @@ def test_selection_matches_forge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         (project.work_dir / "stages" / "reels" / "rejected_candidates.json").read_text())
     assert [(row["candidate_id"], row["rejection_reason"]) for row in ours] == [
         (row["candidate_id"], row["rejection_reason"]) for row in rejected]
+
+
+@pytest.mark.parametrize("seed", [3, 11])
+def test_clip_edges_match_forge(monkeypatch: pytest.MonkeyPatch, seed: int) -> None:
+    _forge(monkeypatch)
+    from podcast_reels_forge.analysis.transcript_index import TranscriptIndex as ForgeIndex
+    from podcast_reels_forge.utils.clip_intervals import ClipEdges as ForgeEdges
+    from podcast_reels_forge.utils.clip_intervals import padded_intervals
+
+    from studio.core.transcript_index import TranscriptIndex
+    from studio.reels.clip_edges import ClipEdges, clip_intervals
+
+    transcript = _transcript(seed, 20)
+    rng = random.Random(seed)
+    bounds = sorted((start, start + rng.uniform(8, 70))
+                    for start in (rng.uniform(5, 1100) for _ in range(12)))
+    settings = {"edge_lead_in_s": 0.8, "edge_tail_s": 0.4, "edge_guard_s": 0.15,
+                "edge_max_extend_s": 3.0, "edge_max_trim_s": 1.2}
+    ours = clip_intervals(bounds, TranscriptIndex.from_transcript(transcript),
+                          ClipEdges.from_settings(settings), duration=transcript.duration)
+    theirs = padded_intervals(
+        bounds, 0.0, index=ForgeIndex.from_transcript(transcript.to_dict()),
+        edges=ForgeEdges(0.8, 0.4, 0.15, 3.0, 1.2))
+    assert ours == pytest.approx(theirs)

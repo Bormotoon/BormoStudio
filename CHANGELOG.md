@@ -61,6 +61,14 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- Reel rendering does what Forge's cut stage did: edges fitted to the speech
+  (`reels.edge_*`), the quality filters again at render time with
+  `rejected.json` and optional `render_rejected`, QA of every reel
+  (`reels.qa`, `qa_blackdetect`), WebM/GIF/M4A exports, a `.md` description
+  and `.txt` caption per reel, `reels-preview.mp4`, and Forge's encoder
+  settings (`reels.encoder`, `video_bitrate`, `audio_bitrate`, `preset`,
+  `nvenc_cq`, `nvenc_preset`) for every reel encode.
+
 - Reels selection follows Forge's staged analysis: duration-scaled clip quotas
   per type (`reels.clips_per_hour`, `story_count` ... `highlight_count`), the
   clip ask in every prompt, two quote gates (`scout_quote_ratio`,

@@ -727,6 +727,8 @@ def _settings(settings: dict[str, Any]) -> dict[str, Any]:
         "episode_context": True,
         "min_quote_ratio": 0.75,
         "loudness_lufs": -14.0,
+        "qa": True,
+        "preview_reel": True,
         "covers": True,
         "replay": True,
         "speaker_angles": True,

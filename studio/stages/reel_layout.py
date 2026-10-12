@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from studio.core.proc import run_logged
+from studio.stages.reel_codec import video_codec_args
 
 
 def title_band_height(settings: dict[str, Any]) -> int:
@@ -73,10 +74,9 @@ def _escape(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", "\\:")
 
 
-def _encode(command: list[str], output: Path, timeout: float) -> None:
+def _encode(command: list[str], output: Path, timeout: float, settings: dict[str, Any]) -> None:
     result = run_logged(
-        [*command, "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-         "-movflags", "+faststart", str(output)],
+        [*command, *video_codec_args(settings), "-movflags", "+faststart", str(output)],
         timeout=timeout,
     )
     if result.returncode:
@@ -114,6 +114,7 @@ def compose_title(
              "-map", "0:v:0", "-map", "0:a:0?", "-c:a", "copy"],
             output,
             timeout=max(600, duration * 20),
+            settings=settings,
         )
 
 
@@ -140,7 +141,9 @@ def render_audiogram(
              "-f", "lavfi", "-i", f"color=c={background}:s={width}x{height}:r={fps}"
              f":d={duration:.3f}",
              "-i", str(audio), "-filter_complex", graph, "-map", "[v]", "-map", "1:a:0",
-             "-t", f"{duration:.3f}", "-c:a", "aac", "-b:a", "192k"],
+             "-t", f"{duration:.3f}", "-c:a", "aac",
+             "-b:a", str(settings.get("audio_bitrate", "192k"))],
             output,
             timeout=max(600, duration * 20),
+            settings=settings,
         )

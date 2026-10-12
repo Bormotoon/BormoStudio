@@ -65,6 +65,7 @@ def _project(tmp_path: Path) -> Project:
 def test_title_and_audiogram_layouts_render_portrait_reels(tmp_path: Path) -> None:
     project = _project(tmp_path)
     base = {"render": True, "width": 180, "height": 320, "framing": "crop", "covers": False,
+            "min_score": 0, "min_duration_s": 0, "preview_reel": False,
             "loudness_lufs": 0}
     stage = ReelRenderStage()
     output = stage.run(StageContext(project, {"reels": {**base, "layout": "title"}},
@@ -88,6 +89,7 @@ def test_title_and_audiogram_layouts_render_portrait_reels(tmp_path: Path) -> No
 def test_reel_override_changes_one_reel_and_the_fingerprint(tmp_path: Path) -> None:
     project = _project(tmp_path)
     settings = {"reels": {"render": True, "width": 180, "height": 320, "framing": "fit",
+                          "min_score": 0, "min_duration_s": 0,
                           "covers": False, "loudness_lufs": 0}}
     stage = ReelRenderStage()
     before = stage.fingerprint(project, settings)
@@ -149,6 +151,7 @@ def test_caption_preset_styles_reels_until_captions_are_edited(tmp_path: Path) -
         time_domain=TimeDomain.EDITED,
     ).save(project.transcripts["edited"])
     settings = {"reels": {"render": True, "width": 180, "height": 320, "framing": "crop",
+                          "min_score": 0, "min_duration_s": 0,
                           "covers": False, "loudness_lufs": 0, "burn_subtitles": True,
                           "caption_preset": "hormozi"}}
     output = ReelRenderStage().run(StageContext(project, settings, project.work_dir))

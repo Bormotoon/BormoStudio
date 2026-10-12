@@ -16,7 +16,23 @@ Enable video output with `--set reels.render=true`; optionally add
 `--set reels.burn_subtitles=true`. The `reel_render` stage publishes MP4, local-time
 JSON/SRT and `render.json` in `_studio/stages/reel_render/`. Timeline moments use
 placed cameras and synchronized audio; edited moments require `program.mp4`.
-`reels.render_fps` defaults to `25`. Rendering preserves source framing by default
+`reels.render_fps` defaults to `25`. Each reel is cut from its speech: `reels.edge_lead_in_s` (0.6 s) of
+silence before the first word of its opening sentence and `edge_tail_s` (0.3 s)
+after the last word of its closing one, never closer than `edge_guard_s` (0.1 s)
+to a neighbouring word or into a neighbouring reel; an edge inside a sentence
+grows to the sentence (up to `edge_max_extend_s`, 4 s) or drops the fragment (up
+to `edge_max_trim_s`, 1.5 s), as Forge cut its clips. The quality filters of the
+selection apply again at render time (for hand-edited `moments.json`): failing
+moments are listed in `rejected.json` and, with `reels.render_rejected`, rendered
+into `rejected/` without captions. `reels.qa` (default on) checks every reel's
+streams and duration (`qa_blackdetect` also looks for black picture) and moves a
+broken reel to `rejected/` with a warning. `reels.export_webm`, `export_gif` and
+`export_audio` add WebM, a 480 px GIF and M4A beside each reel; every reel gets a
+`.md` description and a ready-to-paste `.txt` caption with hashtags, and
+`reels-preview.mp4` holds all finished reels back to back (`reels.preview_reel`).
+Encodes use `reels.encoder` (auto: NVENC when it works, else libx264),
+`video_bitrate` (8M: the NVENC ceiling at quality `nvenc_cq` 21 and preset
+`nvenc_preset` p5, or the libx264 target at `preset` fast) and `audio_bitrate`. Rendering preserves source framing by default
 (face tracking is described below). Set `reels.framing=crop` for portrait
 cropping or `reels.framing=fit` to preserve the full image with padding. Output
 size defaults to 1080x1920 (`reels.width` / `reels.height`); `reels.crop_x` sets

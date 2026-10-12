@@ -195,6 +195,23 @@ def split_by_quality_filters(
     return kept, rejected
 
 
+def quality_reasons(moment: Mapping[str, Any], filters: Mapping[str, float]) -> list[str]:
+    """Why a moment fails the quality filters at render time (Forge's cut stage)."""
+    try:
+        score = float(moment.get("score") or 0.0)
+    except (TypeError, ValueError):
+        score = 0.0
+    duration = float(moment["end"]) - float(moment["start"])
+    reasons = []
+    if filters.get("min_score", 0.0) > 0 and score < filters["min_score"]:
+        reasons.append(f"score {score:.1f} < {filters['min_score']:.1f}")
+    if filters.get("min_duration", 0.0) > 0 and duration < filters["min_duration"]:
+        reasons.append(f"duration {duration:.0f}s < {filters['min_duration']:.0f}s")
+    if 0 < filters.get("max_duration", 0.0) < duration:
+        reasons.append(f"duration {duration:.0f}s > {filters['max_duration']:.0f}s")
+    return reasons
+
+
 def unreachable_buckets(quotas: Mapping[str, int], filters: Mapping[str, float]) -> list[str]:
     """Warnings for clip types whose lengths never pass the duration filters."""
     min_duration = filters.get("min_duration", 0.0)

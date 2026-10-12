@@ -78,6 +78,8 @@ def test_edited_reel_real_render_and_stable_fingerprint(tmp_path: Path) -> None:
             "framing": "crop",
             "width": 90,
             "height": 160,
+            "min_score": 0,
+            "min_duration_s": 0,
         }
     }
     before = stage.fingerprint(project, settings)
@@ -99,8 +101,10 @@ def test_edited_reel_real_render_and_stable_fingerprint(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
     )
-    assert abs(float(json.loads(probe.stdout)["format"]["duration"]) - 1) < 0.1
-    assert "00:00:00,000 --> 00:00:01,000" in video.with_suffix(".srt").read_text()
+    # The edges follow the speech: 0.6 s before the word, 0.3 s after it.
+    assert abs(float(json.loads(probe.stdout)["format"]["duration"]) - 1.9) < 0.1
+    assert "00:00:00,600 --> 00:00:01,600" in video.with_suffix(".srt").read_text()
+    assert video.with_suffix(".md").is_file() and video.with_suffix(".txt").is_file()
     assert any(path.name.endswith("-captioned.mp4") for path in output.artifacts)
     local = Transcript.load(video.with_suffix(".json"))
     save_edits(
