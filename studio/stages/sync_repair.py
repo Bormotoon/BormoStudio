@@ -14,7 +14,7 @@ from studio.stages.sync_engine import render_aligned_clip
 from studio.stages.sync_geometry import PieceConfig
 from studio.stages.sync_refine import RefineSettings
 from studio.stages.sync_self_check import check_rendered_clip
-from studio.stages.sync_verify import measure
+from studio.stages.sync_verify import measure, short_clip_grid
 from studio.stages.transcribe import TranscribeSettings, WhisperEngine
 
 
@@ -65,9 +65,11 @@ def repair_voices(
                 outcome = check_rendered_clip(
                     rendered.words, reference.words, SelfCheckSettings(), reference.duration,
                 )
+                grid_s, window_s = short_clip_grid(reference.duration,
+                                                   float(conf.get("refine_grid_s", 2.5)),
+                                                   float(conf.get("refine_window_s", 4.0)))
                 verification = measure(camera_paths[asset_id], candidate,
-                                       grid_s=float(conf.get("refine_grid_s", 2.5)),
-                                       window_s=float(conf.get("refine_window_s", 4.0)),
+                                       grid_s=grid_s, window_s=window_s,
                                        source_duration_s=reference.duration)
                 status, reason = verification.verdict(threshold)
                 combined = combine_checks(outcome, verification, threshold)

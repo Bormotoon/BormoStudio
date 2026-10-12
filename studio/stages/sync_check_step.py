@@ -44,12 +44,14 @@ def check_voices(
             if camera is None:
                 entry.update(asdict(outcome))
             else:
-                from studio.stages.sync_verify import measure
+                from studio.stages.sync_verify import measure, short_clip_grid
 
+                grid_s = float(conf.get("refine_grid_s", 2.5))
+                window_s = float(conf.get("refine_window_s", 4.0))
+                if reference.duration:
+                    grid_s, window_s = short_clip_grid(reference.duration, grid_s, window_s)
                 try:
-                    acoustic = measure(camera, voices[asset_id],
-                                       grid_s=float(conf.get("refine_grid_s", 2.5)),
-                                       window_s=float(conf.get("refine_window_s", 4.0)),
+                    acoustic = measure(camera, voices[asset_id], grid_s=grid_s, window_s=window_s,
                                        source_duration_s=reference.duration or None)
                 except (RuntimeError, OSError, ValueError) as exc:
                     entry.update(asdict(outcome))

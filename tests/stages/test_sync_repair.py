@@ -53,6 +53,9 @@ def test_repair_requires_both_checks_and_publishes_matching_map(
             tmp_path / "repair", report, {},
         )
         assert align.call_args.args[2] == camera
+        # A 3 s clip is measured on the short-clip grid.
+        assert measure.call_args.kwargs["grid_s"] == pytest.approx(0.25)
+        assert measure.call_args.kwargs["window_s"] == pytest.approx(1.0)
         engine.backend.unload.assert_called_once()
     assert source.read_bytes() == b"original recorder"
     assert not list((tmp_path / "repair").glob("*-candidate.wav"))

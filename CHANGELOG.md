@@ -33,6 +33,8 @@ All notable changes to Studio will be documented in this file.
   windows the clip lacks, one beyond it fails the clip. On sony_run
   mvi-0848, 0849 and 0856 pass (they were failed or inconclusive); a voice
   shifted by 30-800 ms fails or stays inconclusive.
+- The repair and content checks measure clips under 120 s on the same dense
+  grid as the sync check.
 
 ### Added
 
