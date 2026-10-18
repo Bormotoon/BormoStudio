@@ -61,6 +61,15 @@ def test_user_skip_propagates_to_required_dependency(tmp_path: Path) -> None:
     assert plan.stages[-1].decision.reason == "dependency sync did not run"
 
 
+def test_a_stage_that_failed_in_this_run_is_reported_as_failed(tmp_path: Path) -> None:
+    plan = build_plan(
+        [_Stage("prepare"), _Stage("sync", ("prepare",)), _Stage("export", ("sync",))],
+        _project(tmp_path), {}, failed={"sync"},
+    )
+    assert [item.decision.reason for item in plan.stages[1:]] == [
+        "failed in this run", "dependency sync did not run"]
+
+
 def test_only_consumes_verified_dependency_but_skip_still_blocks(tmp_path: Path) -> None:
     project = _project(tmp_path)
     artifact = project.work_dir / "sync.json"

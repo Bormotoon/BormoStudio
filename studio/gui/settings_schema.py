@@ -134,6 +134,22 @@ SECTIONS: tuple[Section, ...] = (
             Item("seam_snap_max_s", "Snap seams to silence within, s"),
             Item("self_check_transcribe_mode", "Self-check Whisper mode",
                  "Empty: transcribe.mode."),
+            Item("pause_duck_enabled", "Lower voices in pauses",
+                 "Off by default. Lowers rendered voices where neither the camera nor the "
+                 "recorder has words, hiding room-tone mismatch in the gaps."),
+            Item("pause_duck_db", "Pause level, dB", "0 = unchanged; −120 or lower = silence."),
+            Item("pause_duck_fade_ms", "Pause fade, ms"),
+            Item("pause_duck_min_pause_s", "Shortest pause lowered, s"),
+        )),
+        Group("Lip-sync calibration", (
+            Item("camera_av_offset_ms", "Every camera, ms",
+                 "A fixed delay in a camera's own sound that no audio measurement can see, "
+                 "found once by eye (a clap, frame by frame). Moves the camera's picture "
+                 "against all sound in exports, the program, previews and reels. Positive: "
+                 "the sound arrived early and is delayed; negative: it is advanced."),
+            Item("camera_av_offset_ms_by_camera", "Per camera, ms",
+                 "{camera: ms}: asset id, camera group, sub-folder or file name; overrides "
+                 "the value for every camera."),
         )),
     )),
     Section("transcribe", "Transcription", (

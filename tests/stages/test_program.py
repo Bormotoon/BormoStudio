@@ -11,6 +11,7 @@ from studio.core.transcript import Segment, Transcript, Word
 from studio.stages.program import (
     align_transcript_to_frames,
     map_transcript_to_edited,
+    program_pieces,
     render_project_program,
 )
 from studio.stages.program_encoder import EncoderChoice
@@ -162,3 +163,53 @@ def test_edited_transcript_tracks_frame_padding_and_dropped_subframe_pieces() ->
     assert [word.text for word in result.words] == ["first", "last"]
     assert result.words[-1].start == pytest.approx(0.04)
     assert result.duration == pytest.approx(0.12)
+
+
+def test_range_only_the_recorder_covers_is_black_with_recorder_sound(tmp_path: Path) -> None:
+    camera, recorder = tmp_path / "camera.mp4", tmp_path / "rec.wav"
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i",
+                    "color=c=white:s=160x120:r=25:d=3", "-c:v", "libx264", str(camera)],
+                   check=True)
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i",
+                    "sine=frequency=440:duration=6", str(recorder)], check=True)
+    project = Project(tmp_path, tmp_path / "_studio")
+    project.assets = [Asset("cam", Path("camera.mp4"), "video", AssetRole.CAMERA),
+                      Asset("rec", Path("rec.wav"), "audio", AssetRole.RECORDER)]
+    project.assets[0].manual["media_info"] = {"width": 160, "height": 120, "fps": 25}
+    # The recorder started 2 s before the camera.
+    project.placements = [SourcePlacement("cam", 2, 0, 3), SourcePlacement("rec", 0, 0, 6)]
+    edit = EditMap("cut", (KeepRange(1.0, 3.0),))
+    pieces = program_pieces(project, edit)
+    assert [(piece.video, piece.audio, piece.audio_in_s) for piece in pieces] == [
+        (None, recorder, 1.0), (camera, None, 0.0)]
+    output = tmp_path / "program.mp4"
+    render_project_program(project, edit, output, encoder="cpu")
+    frames = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-i", str(output), "-vf",
+         "select='eq(n\\,10)+eq(n\\,40)',scale=1:1", "-vsync", "0", "-f", "rawvideo",
+         "-pix_fmt", "gray", "-"], check=True, capture_output=True).stdout
+    assert frames[0] < 30 and frames[1] > 220  # black, then the white camera
+    level = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "info", "-i", str(output), "-t", "0.9", "-af",
+         "volumedetect", "-f", "null", "-"], capture_output=True, text=True).stderr
+    assert "mean_volume: -inf" not in level and "mean_volume" in level
+
+
+def test_seeking_into_long_sources_keeps_the_exact_frame(tmp_path: Path) -> None:
+    # Frame n has brightness n; keyframes every 2 s, so a seek lands between them.
+    camera = tmp_path / "camera.mp4"
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i",
+                    "nullsrc=s=64x64:r=20:d=12,geq=lum='N':cb=128:cr=128", "-g", "40",
+                    "-c:v", "libx264", "-qp", "0", str(camera)], check=True)
+    project = Project(tmp_path, tmp_path / "_studio")
+    project.assets = [Asset("cam", Path("camera.mp4"), "video", AssetRole.CAMERA)]
+    project.assets[0].manual["media_info"] = {"width": 64, "height": 64, "fps": 20}
+    project.placements = [SourcePlacement("cam", 0, 0, 12)]
+    output = tmp_path / "program.mp4"
+    render_project_program(project, EditMap("cut", (KeepRange(7.3, 8.0),)), output,
+                           encoder="libx264")
+    frames = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-i", str(output), "-vf", "scale=2:2",
+         "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"], check=True, capture_output=True).stdout
+    luma = frames[::6]  # 4 Y + 1 U + 1 V bytes per 2x2 frame
+    assert len(luma) == 14 and abs(luma[0] - 146) <= 1 and abs(luma[-1] - 159) <= 1

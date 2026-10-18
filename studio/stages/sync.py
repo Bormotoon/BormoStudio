@@ -16,6 +16,7 @@ from studio.stages.sync_alignment import align_sources
 from studio.stages.sync_engine import render_aligned_clip
 from studio.stages.sync_geometry import PieceConfig
 from studio.stages.sync_refine import RefineSettings
+from studio.stages.sync_render import PauseDuck
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,6 +395,9 @@ def _render_complex(context: StageContext,
             refine_audio=project.source_dir / camera.path if refine else None,
             refine=refine, label=Path(camera.path).name,
             stretch_method=str(sync.get("stretch_method", "auto")),
+            duck=PauseDuck.from_settings(
+                sync, [(word.start, word.end) for word in candidate.words],
+                [(word.start, word.end) for word in transcript.words]),
         )
         if plan.refine is not None:
             refine_reports[camera.id] = plan.refine
@@ -426,6 +430,9 @@ def _render_complex(context: StageContext,
                 refine_audio=project.source_dir / camera.path if refine else None,
                 refine=refine, label=f"{Path(camera.path).name}/{Path(extra.path).name}",
                 stretch_method=str(sync.get("stretch_method", "auto")),
+                duck=PauseDuck.from_settings(
+                    sync, [(word.start, word.end) for word in candidate.words],
+                    [(word.start, word.end) for word in extra_transcript.words]),
             )
             if extra_plan.refine is not None:
                 refine_reports[f"{camera.id}:{extra.id}"] = extra_plan.refine

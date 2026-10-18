@@ -82,6 +82,18 @@ class SyncSettings:
     stretch_method: str = "auto"
     seam_snap_max_s: float = 0.4
     self_check_transcribe_mode: str = ""
+    # Lip-sync calibration (WhisperSync's): milliseconds a camera's picture is
+    # moved against all sound, for every camera and per camera (asset id, group,
+    # sub-folder or file name). Positive delays the sound (it arrived early).
+    camera_av_offset_ms: float = 0.0
+    camera_av_offset_ms_by_camera: dict[str, float] = field(default_factory=dict)
+    # Pause ducking (WhisperSync's, off by default): rendered voices are lowered by
+    # pause_duck_db where neither the camera nor the recorder has words for at
+    # least pause_duck_min_pause_s, hiding room-tone mismatch in the gaps.
+    pause_duck_enabled: bool = False
+    pause_duck_db: float = -18.0
+    pause_duck_fade_ms: int = 80
+    pause_duck_min_pause_s: float = 0.6
 
 
 @dataclass(slots=True)
@@ -540,16 +552,31 @@ LATER_DEFAULTS: dict[str, Any] = {
     "sync.stretch_method": "auto",
     "sync.seam_snap_max_s": 0.4,
     "sync.self_check_transcribe_mode": "",
+    "sync.camera_av_offset_ms": 0.0,
+    "sync.camera_av_offset_ms_by_camera": {},
+    "sync.pause_duck_enabled": False,
+    "sync.pause_duck_db": -18.0,
+    "sync.pause_duck_fade_ms": 80,
+    "sync.pause_duck_min_pause_s": 0.6,
 }
+# Kept under a section whose stage does not read them. The lip-sync calibration
+# only moves pictures in exports, the program, previews and reels, which
+# fingerprint it themselves (av_calibration.calibration_view); changing it must
+# not synchronize again.
+NOT_FINGERPRINTED = frozenset({"sync.camera_av_offset_ms", "sync.camera_av_offset_ms_by_camera"})
 _UNSET = object()
 
 
 def fingerprint_view(section: str, values: Any) -> Any:
-    """``values`` of a settings section without later settings at their defaults."""
+    """``values`` of a settings section without later settings at their defaults,
+    the keys in NOT_FINGERPRINTED and the pause-ducking options while it is off."""
     if not isinstance(values, dict):
         return values
+    ducking_off = section == "sync" and not values.get("pause_duck_enabled", False)
     return {key: value for key, value in values.items()
-            if LATER_DEFAULTS.get(f"{section}.{key}", _UNSET) != value}
+            if LATER_DEFAULTS.get(f"{section}.{key}", _UNSET) != value
+            and f"{section}.{key}" not in NOT_FINGERPRINTED
+            and not (ducking_off and key.startswith("pause_duck_"))}
 
 
 # Allowed values of the enumerated text settings; the desktop form offers them.
@@ -650,6 +677,15 @@ def validate_settings(settings: Settings) -> None:
     _non_negative("transcribe.window_margin_s", settings.transcribe.window_margin_s)
     _positive("sync.locate_search_s", settings.sync.locate_search_s)
     _positive("sync.refine_max_lag_s", settings.sync.refine_max_lag_s)
+    offsets = {"": settings.sync.camera_av_offset_ms, **settings.sync.camera_av_offset_ms_by_camera}
+    if any(not math.isfinite(value) or abs(value) > 2000 for value in offsets.values()) or any(
+            not key.strip() for key in settings.sync.camera_av_offset_ms_by_camera):
+        raise SettingsError("sync.camera_av_offset_ms needs camera names and finite "
+                            "milliseconds within ±2000")
+    if not math.isfinite(settings.sync.pause_duck_db) or settings.sync.pause_duck_db > 0:
+        raise SettingsError("sync.pause_duck_db must be 0 dB or lower")
+    _non_negative("sync.pause_duck_fade_ms", settings.sync.pause_duck_fade_ms)
+    _positive("sync.pause_duck_min_pause_s", settings.sync.pause_duck_min_pause_s)
     for asset_id, spans in settings.transcribe.ranges.items():
         if not asset_id.strip() or any(
                 len(span) != 2 or not 0 <= span[0] < span[1] for span in spans):

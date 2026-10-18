@@ -136,3 +136,14 @@ def _int(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return result or None
+
+
+# Input seeking lands on a keyframe before the point; the trim filter then cuts
+# frame-exactly from there. Without it ffmpeg decodes the file from its start.
+SEEK_PREROLL_S = 2.0
+
+
+def seek_input(start_s: float) -> tuple[list[str], float]:
+    """``-ss`` arguments placed before ``-i`` and the trim start left after them."""
+    seek = max(0.0, start_s - SEEK_PREROLL_S)
+    return (["-ss", f"{seek:.6f}"] if seek > 0 else []), start_s - seek

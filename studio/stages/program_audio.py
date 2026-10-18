@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from studio.core.media import build_atempo_chain
+from studio.core.media import build_atempo_chain, seek_input
 
 SAMPLE_RATE = 48000
 CHANNELS = 2
@@ -76,6 +76,7 @@ def decode_part(part: PartAudio, pre: int, post: int, scratch: Path) -> np.ndarr
             handle.write(bytes(missing * frame))
             handle.flush()
             duration = (total - missing) / SAMPLE_RATE / part.rate
+            seek, source_start = seek_input(source_start)
             filters = [
                 f"atrim=start={source_start:.9f}:duration={duration + 0.05:.9f}",
                 "asetpts=PTS-STARTPTS",
@@ -84,7 +85,7 @@ def decode_part(part: PartAudio, pre: int, post: int, scratch: Path) -> np.ndarr
                 "aformat=sample_fmts=s16:channel_layouts=stereo",
             ]
             result = subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "error", "-i", str(part.audio), "-vn",
+                ["ffmpeg", "-nostdin", "-v", "error", *seek, "-i", str(part.audio), "-vn",
                  "-af", ",".join(filters), "-f", "s16le", "-ac", str(CHANNELS),
                  "-ar", str(SAMPLE_RATE), "-"],
                 stdout=handle, stderr=subprocess.PIPE,

@@ -44,6 +44,14 @@ def test_cues_split_at_pauses_word_limits_and_keep_gaps() -> None:
     assert [cue.text for cue in build_cues(_words("Hi, there."), one)] == ["HI", "THERE"]
 
 
+def test_punctuation_whisper_split_off_stays_with_its_word() -> None:
+    # One word per cue makes a split between "«Почему" and "?»" visible.
+    one = CaptionOptions(max_words=1)
+    words = [TimedWord("«Почему", 0.0, 0.7, "A"), TimedWord("?»", 0.9, 1.0, "B"),
+             TimedWord("меня", 1.1, 1.3, "B")]
+    assert [cue.text for cue in build_cues(words, one)] == ["«Почему?»", "меня"]
+
+
 def test_text_transforms_and_censoring() -> None:
     options = CaptionOptions(text_case="upper", punctuation="periods",
                              censor=("бля*",), censor_style="middle")

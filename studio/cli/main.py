@@ -145,7 +145,8 @@ def _run_pipeline(
                 project,
                 settings,
                 only=only,
-                skip=(skip or set()) | failures.keys(),
+                skip=skip,
+                failed=set(failures),
             )
             candidate = next(
                 (

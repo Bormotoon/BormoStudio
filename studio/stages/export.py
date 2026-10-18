@@ -7,12 +7,14 @@ import math
 import os
 import subprocess
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from studio.core.av_calibration import calibration_view, picture_placement, picture_shifts
 from studio.core.project import AssetKind, AssetRole, Project, describe_artifact, stable_fingerprint
 from studio.core.timeline import EditMap, KeepRange, timeline_to_edited
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
@@ -73,7 +75,9 @@ class ExportStage:
     title = "NLE export"
     after: tuple[str, ...] = ("timeline", "roughcut", "speakers")
     # Settings that can change this stage's result; they alone enter its fingerprint.
-    settings_keys: tuple[str, ...] = ("export", "roughcut", "program", "transcribe.audio_streams")
+    settings_keys: tuple[str, ...] = ("export", "roughcut", "program", "transcribe.audio_streams",
+                                     "sync.camera_av_offset_ms",
+                                     "sync.camera_av_offset_ms_by_camera")
     optional_after = ("roughcut", "speakers")
     gpu = GpuUse.NONE
 
@@ -96,6 +100,8 @@ class ExportStage:
         return stable_fingerprint(
             "export-v18", project.assets, project.placements, project.audio_warp_maps,
             inputs, settings.get("export", {}), settings.get("roughcut", {}),
+            # Lip-sync calibration enters only once a camera is calibrated.
+            *filter(None, [calibration_view(settings)]),
             settings.get("program", {}), project.speaker_cameras,
             settings.get("transcribe", {}).get("audio_streams", {}),
             [describe_artifact(project.source_dir, project.source_dir / asset.path,
@@ -114,6 +120,7 @@ class ExportStage:
         # Final Cut event, project and multicam carry this name; files stay Studio.*.
         name = str(conf.get("name") or "").strip() or context.project.source_dir.name
         camera_audio = export_camera_audio(context)
+        shifts = picture_shifts(context.project, context.settings)
 
         def located(sequence: Sequence) -> Sequence:
             return replace(sequence, clips=tuple(
@@ -124,7 +131,8 @@ class ExportStage:
 
         sequence = located(build_sequence(context.project, name, use_edit=bool(use_edit),
                                           retimed=True, camera_audio=camera_audio,
-                                          marker_kinds=markers, marker_min_s=marker_min_s))
+                                          marker_kinds=markers, marker_min_s=marker_min_s,
+                                          picture_shift=shifts))
         fcpxml = context.work_dir / "export" / "Studio.fcpxml"
         xmeml = context.work_dir / "export" / "Studio.xml"
         artifacts = list(camera_audio.values())
@@ -137,7 +145,8 @@ class ExportStage:
             # Angles hold the whole synchronized material; the edit lives in
             # the project as multicam clips, so every cut can be reopened.
             uncut = located(build_sequence(context.project, name, use_edit=False,
-                                           retimed=True, camera_audio=camera_audio))
+                                           retimed=True, camera_audio=camera_audio,
+                                           picture_shift=shifts))
             edit = roughcut_edit(context.project) if use_edit else None
             artifacts.append(write_multicam(
                 uncut, fcpxml if "fcpxml" not in targets
@@ -212,9 +221,11 @@ def roughcut_edit(project: Project) -> EditMap | None:
 def build_sequence(project: Project, name: str = "Studio", *, use_edit: bool = True,
                     retimed: bool = False,
                     camera_audio: dict[str, Path] | None = None,
-                    marker_kinds: str = "all", marker_min_s: float = 0.0) -> Sequence:
+                    marker_kinds: str = "all", marker_min_s: float = 0.0,
+                    picture_shift: Mapping[str, float] | None = None) -> Sequence:
     """``marker_kinds``: ``all``, ``cuts`` (accepted cuts only) or ``none``;
-    cuts shorter than ``marker_min_s`` get no marker."""
+    cuts shorter than ``marker_min_s`` get no marker. ``picture_shift`` moves a
+    camera's picture earlier by its lip-sync calibration (asset id → seconds)."""
     assets = {asset.id: asset for asset in project.assets}
     clips: list[SequenceClip] = []
     recorders = [placement for placement in project.placements
@@ -235,13 +246,14 @@ def build_sequence(project: Project, name: str = "Studio", *, use_edit: bool = T
         replaced_by_recorder = voice is not None and voice_sources.get(asset.id) in placed
         rate = placement.k if retimed else 1.0
         duration = placement.duration_s * rate
+        picture = picture_placement(placement, (picture_shift or {}).get(asset.id, 0.0))
         clips.append(
             SequenceClip(
                 asset.id,
                 project.source_dir / asset.path,
-                placement.in_s,
-                duration,
-                placement.offset_s,
+                picture.in_s,
+                picture.duration_s * rate,
+                picture.offset_s,
                 camera_index,
                 bool(media.get("audio_codec")),
                 audio_enabled=voice is None and asset.id not in (camera_audio or {}),

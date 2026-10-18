@@ -5,16 +5,19 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-from studio.core.media import build_atempo_chain
+from studio.core.av_calibration import calibration_view, picture_placement, picture_shifts
+from studio.core.media import build_atempo_chain, seek_input
 from studio.core.project import AssetRole, Project, describe_artifact, stable_fingerprint
 from studio.core.timeline import (
     EditMap,
     KeepRange,
+    SourcePlacement,
     TimeDomain,
     timeline_to_edited,
     timeline_to_file,
@@ -29,7 +32,9 @@ class ProgramStage:
     title = "Review master"
     after: tuple[str, ...] = ("timeline", "roughcut", "speakers")
     # Settings that can change this stage's result; they alone enter its fingerprint.
-    settings_keys: tuple[str, ...] = ("program", "roughcut")
+    settings_keys: tuple[str, ...] = ("program", "roughcut",
+                                     "sync.camera_av_offset_ms",
+                                     "sync.camera_av_offset_ms_by_camera")
     optional_after = ("roughcut", "speakers")
     gpu = GpuUse.NVENC
 
@@ -75,6 +80,7 @@ class ProgramStage:
             },
             settings.get("roughcut", {}),
             project.speaker_cameras,
+            *filter(None, [calibration_view(settings)]),
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -91,6 +97,7 @@ class ProgramStage:
             encoder=str(conf.get("encoder", "auto")),
             fps=str(conf.get("fps", "auto")),
             crossfade_ms=float(conf.get("crossfade_ms", 10.0)),
+            picture_shift=picture_shifts(context.project, context.settings),
         )
         transcript_ranges: list[KeepRange] = []
         for item in edit.keep:
@@ -172,7 +179,7 @@ def load_edit_map(path: Path) -> EditMap:
 
 @dataclass(frozen=True)
 class ProgramPiece:
-    video: Path
+    video: Path | None  # None: no camera covers it; black picture, recorder sound
     audio: Path | None
     video_in_s: float
     audio_in_s: float
@@ -181,9 +188,26 @@ class ProgramPiece:
     timeline_start_s: float = 0.0
 
 
-def program_pieces(project: Project, edit: EditMap) -> list[ProgramPiece]:
+def program_pieces(
+    project: Project, edit: EditMap, picture_shift: Mapping[str, float] | None = None,
+) -> list[ProgramPiece]:
+    """``picture_shift``: lip-sync calibration, asset id → seconds the picture moves earlier."""
     cameras = {asset.id: asset for asset in project.assets if asset.role is AssetRole.CAMERA}
     placements = [item for item in project.placements if item.asset_id in cameras]
+    recorders = [item for item in project.placements
+                 if any(asset.id == item.asset_id and asset.role is AssetRole.RECORDER
+                        for asset in project.assets)]
+    shifts = picture_shift or {}
+    pictures = {item.asset_id: picture_placement(item, shifts.get(item.asset_id, 0.0))
+                for item in placements}
+
+    def span(item: SourcePlacement) -> tuple[float, float]:
+        # A calibrated camera covers the time both its picture and its sound cover.
+        picture = pictures[item.asset_id]
+        return (max(item.offset_s, picture.offset_s),
+                min(item.offset_s + item.duration_s * item.k,
+                    picture.offset_s + picture.duration_s * picture.k))
+
     result = []
     for keep in edit.keep:
         boundaries = sorted(
@@ -191,6 +215,12 @@ def program_pieces(project: Project, edit: EditMap) -> list[ProgramPiece]:
             | {
                 value
                 for item in placements
+                for value in span(item)
+                if keep.start_s < value < keep.end_s
+            }
+            | {
+                value
+                for item in recorders
                 for value in (item.offset_s, item.offset_s + item.duration_s * item.k)
                 if keep.start_s < value < keep.end_s
             }
@@ -199,8 +229,7 @@ def program_pieces(project: Project, edit: EditMap) -> list[ProgramPiece]:
             available = [
                 item
                 for item in placements
-                if item.offset_s <= start + 1e-6
-                and item.offset_s + item.duration_s * item.k >= end - 1e-6
+                if span(item)[0] <= start + 1e-6 and span(item)[1] >= end - 1e-6
             ]
             if keep.camera_id:
                 group_ids = {
@@ -209,6 +238,12 @@ def program_pieces(project: Project, edit: EditMap) -> list[ProgramPiece]:
                     if asset.group_id == keep.camera_id or asset.id == keep.camera_id
                 }
                 available = [item for item in available if item.asset_id in group_ids]
+            if not available and not any(span(item)[0] <= start + 1e-6
+                                         and span(item)[1] >= end - 1e-6 for item in placements):
+                # Only the recorder heard this (it started before the cameras):
+                # what an NLE shows as a gap over the recorder track.
+                result.append(_recorder_piece(project, recorders, start, end))
+                continue
             if not available:
                 raise ValueError(f"no camera covers retained range {start:.3f}-{end:.3f}")
             placement = available[0]
@@ -217,13 +252,29 @@ def program_pieces(project: Project, edit: EditMap) -> list[ProgramPiece]:
             voice = next(iter(project.outputs.get(f"sync:{asset.id}", [])), None)
             has_audio = bool(asset.manual.get("media_info", {}).get("audio_codec"))
             audio = voice or (source if has_audio else None)
-            source_in = timeline_to_file(start, placement)
-            result.append(
-                ProgramPiece(source, audio, source_in, source_in, end - start, placement.k, start)
-            )
+            result.append(ProgramPiece(
+                source, audio, timeline_to_file(start, pictures[asset.id]),
+                timeline_to_file(start, placement), end - start, placement.k, start,
+            ))
     if not result:
         raise ValueError("cannot render empty retained ranges")
     return result
+
+
+def _recorder_piece(
+    project: Project, recorders: list[SourcePlacement], start: float, end: float,
+) -> ProgramPiece:
+    covering = [item for item in recorders if item.offset_s <= start + 1e-6
+                and item.offset_s + item.duration_s * item.k >= end - 1e-6]
+    if not covering:
+        raise ValueError(f"no camera covers retained range {start:.3f}-{end:.3f}")
+    placement = covering[0]
+    asset = next(item for item in project.assets if item.id == placement.asset_id)
+    # The repaired recorder is the clock its placement was measured on.
+    audio = next((path for path in project.outputs.get(f"recorder:{asset.id}", [])
+                  if path.is_file()), project.source_dir / asset.path)
+    source_in = timeline_to_file(start, placement)
+    return ProgramPiece(None, audio, source_in, source_in, end - start, placement.k, start)
 
 
 def render_project_program(
@@ -235,11 +286,16 @@ def render_project_program(
     fps: str = "auto",
     crossfade_ms: float = 0.0,
     max_height: int | None = None,
+    picture_shift: Mapping[str, float] | None = None,
 ) -> dict[str, object]:
-    """Render ``edit``; ``max_height`` makes a fast low-resolution proxy."""
-    pieces = program_pieces(project, edit)
+    """Render ``edit``; ``max_height`` makes a fast low-resolution proxy;
+    ``picture_shift`` is the cameras' lip-sync calibration (``picture_shifts``)."""
+    pieces = program_pieces(project, edit, picture_shift)
+    # The first camera shown sets the frame; a recorder-only edit takes any camera's.
+    shown = next((piece.video for piece in pieces if piece.video is not None), None)
     first = next(
-        asset for asset in project.assets if project.source_dir / asset.path == pieces[0].video
+        (asset for asset in project.assets if project.source_dir / asset.path == shown),
+        next(asset for asset in project.assets if asset.role is AssetRole.CAMERA),
     )
     info = first.manual.get("media_info", {})
     width, height = int(info.get("width") or 1920), int(info.get("height") or 1080)
@@ -274,11 +330,15 @@ def render_project_program(
                 continue
             rendered_duration = float(Fraction(frames) / rate)
             duration = piece.duration_s / piece.rate
-            command = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(piece.video)]
+            video_seek, video_in = seek_input(piece.video_in_s if piece.video else 0.0)
+            command = ["ffmpeg", "-nostdin", "-v", "error", "-y", *(
+                [*video_seek, "-i", str(piece.video)] if piece.video is not None else
+                ["-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:r={fps}"])]
             if piece.audio is not None:
-                command.extend(["-i", str(piece.audio)])
+                audio_seek, audio_in = seek_input(piece.audio_in_s)
+                command.extend([*audio_seek, "-i", str(piece.audio)])
                 audio = (
-                    f"[1:a]atrim=start={piece.audio_in_s}:duration={duration},"
+                    f"[1:a]atrim=start={audio_in}:duration={duration},"
                     "asetpts=PTS-STARTPTS," + ",".join(build_atempo_chain(1 / piece.rate)) + ","
                     "aresample=48000,aformat=channel_layouts=stereo,"
                     f"apad,atrim=duration={rendered_duration}[a]"
@@ -286,7 +346,7 @@ def render_project_program(
             else:
                 audio = f"anullsrc=r=48000:cl=stereo,atrim=duration={rendered_duration}[a]"
             video = (
-                f"[0:v]trim=start={piece.video_in_s}:duration={duration},"
+                f"[0:v]trim=start={video_in}:duration={duration},"
                 f"setpts={piece.rate}*(PTS-STARTPTS),"
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
@@ -325,6 +385,7 @@ def render_project_program(
                 retry = render_project_program(
                     project, edit, output, encoder="cpu", fps=requested_fps,
                     crossfade_ms=crossfade_ms, max_height=max_height,
+                    picture_shift=picture_shift,
                 )
                 retry.update(
                     {

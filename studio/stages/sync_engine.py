@@ -16,7 +16,7 @@ from studio.stages.sync_models import Word as MatchWord
 from studio.stages.sync_pieces import clip_pieces, recorder_word_gaps
 from studio.stages.sync_plan import RenderedAudioPlan
 from studio.stages.sync_refine import RefineResult, RefineSettings, refine_plan
-from studio.stages.sync_render import render_audio_plan
+from studio.stages.sync_render import PauseDuck, render_audio_plan
 
 
 def matching_transcript(transcript: Transcript) -> MatchTranscript:
@@ -63,6 +63,7 @@ def render_aligned_clip(
     refine_audio: Path | None = None,
     refine: RefineSettings | None = None,
     label: str = "",
+    duck: PauseDuck | None = None,
 ) -> RenderedAudioPlan:
     """Plan pieces, refine them acoustically against ``refine_audio`` (the camera's
     own sound) when ``refine`` is given, apply Boundary Flex with ``camera_audio``,
@@ -98,7 +99,7 @@ def render_aligned_clip(
         map_id=f"warp-{source_asset_id}-{target_asset_id}",
         source_asset_id=source_asset_id, target_asset_id=target_asset_id, strategy=strategy,
         sample_rate=sample_rate, channels=channels, codec=codec, fade_ms=fade_ms,
-        stretch_method=stretch_method,
+        stretch_method=stretch_method, duck=duck,
     )
     if refined is None:
         return plan

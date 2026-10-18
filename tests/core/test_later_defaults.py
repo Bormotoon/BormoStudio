@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from studio.core.project import Project
-from studio.core.settings import Settings, fingerprint_view
+from studio.core.settings import LATER_DEFAULTS, Settings, fingerprint_view
 from studio.stages.base import select_settings
 from studio.stages.scan import ScanStage, _media_paths
 from studio.stages.sync import self_check_transcribe
@@ -11,8 +11,7 @@ def test_settings_added_later_leave_fingerprints_alone(tmp_path: Path) -> None:
     full = Settings().to_dict()
     before = {"scan": {k: v for k, v in full["scan"].items() if k != "extra_extensions"},
               "sync": {k: v for k, v in full["sync"].items()
-                       if k not in {"stretch_method", "seam_snap_max_s",
-                                    "self_check_transcribe_mode"}}}
+                       if f"sync.{k}" not in LATER_DEFAULTS}}
     keys = ScanStage.settings_keys
     assert select_settings(full, keys) == select_settings(before, keys)
     assert fingerprint_view("sync", full["sync"]) == before["sync"]

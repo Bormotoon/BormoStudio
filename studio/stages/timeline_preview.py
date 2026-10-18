@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from studio.core.av_calibration import calibration_view, picture_shifts
 from studio.core.project import Project, stable_fingerprint
 from studio.core.transcript import Transcript
 
@@ -57,6 +58,7 @@ def preview_key(project: Project, settings: dict[str, Any], edit: Any, height: i
         [str(item) for item in project.placements],
         [_identity(path) for path in inputs if path.is_file()],
         settings.get("program", {}).get("fps", "auto"),
+        *filter(None, [calibration_view(settings)]),
     )
 
 
@@ -84,6 +86,7 @@ def render_timeline_preview(
     report = render_project_program(
         project, edit, video, encoder="cpu", fps=str(conf.get("fps", "auto")),
         crossfade_ms=float(conf.get("crossfade_ms", 10.0)), max_height=height,
+        picture_shift=picture_shifts(project, settings),
     )
     spans = rendered_timeline_map(edit, report)
     index.write_text(json.dumps({"schema_version": 1, "key": key, "spans": spans}, indent=2)

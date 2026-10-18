@@ -25,7 +25,13 @@ class ModuleRecipe:
 
 RECIPES = {
     "youtube": ModuleRecipe("youtube", ("yt-dlp>=2025.1.0",)),
-    "diarization": ModuleRecipe("diarization", ("pyannote.audio>=3.1,<4",)),
+    # pyannote.audio 3.x reads torchaudio.AudioMetaData, which torchaudio 2.9 removed,
+    # and passes use_auth_token, which huggingface_hub 1.0 removed; torch 2.7/2.8
+    # are also the first CUDA 12.8 builds that run on Blackwell GPUs.
+    "diarization": ModuleRecipe("diarization", (
+        "pyannote.audio>=3.1,<4", "torch>=2.7,<2.9", "torchaudio>=2.7,<2.9",
+        "huggingface_hub>=0.24,<1",
+    )),
     "vision": ModuleRecipe(
         "vision", ("torch>=2.7,<3", "opencv-python-headless>=4.8,<5", "PyYAML>=6,<7")
     ),
@@ -41,8 +47,18 @@ class ModuleManager:
         return folder / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
 
     def installed(self, name: str) -> bool:
+        """Installed from the current recipe; one built from an older recipe is not."""
         marker = self.root / name / "module.json"
-        return self.interpreter(name).is_file() and marker.is_file()
+        if not (self.interpreter(name).is_file() and marker.is_file()):
+            return False
+        recipe = RECIPES.get(name)
+        if recipe is None:
+            return True
+        try:
+            recorded = json.loads(marker.read_text(encoding="utf-8")).get("requirements")
+        except (OSError, ValueError, AttributeError):
+            return False
+        return isinstance(recorded, list) and tuple(recorded) == recipe.requirements
 
     def install(
         self,

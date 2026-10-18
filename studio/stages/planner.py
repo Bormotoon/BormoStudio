@@ -45,7 +45,9 @@ class Plan:
 def build_plan(
     stages: Iterable[Stage], project: Project, settings: dict[str, Any],
     *, only: set[str] | None = None, skip: set[str] | None = None,
+    failed: set[str] | None = None,
 ) -> Plan:
+    """``failed``: stages that already failed in this run; they are not retried."""
     ordered = _topological_order(stages)
     registry = {stage.id: stage for stage in ordered}
     fingerprints: dict[str, str] = {}
@@ -69,6 +71,7 @@ def build_plan(
     decisions: dict[str, Decision] = {}
     only = only or set()
     skip = skip or set()
+    failed = failed or set()
     stale_discovery = [
         stage for stage in ordered if stage.id in DISCOVERY_STAGES and not reusable(stage)
     ]
@@ -77,7 +80,9 @@ def build_plan(
         decision = stage.decide(project, settings)
         discovery = stage.id in DISCOVERY_STAGES
         stale_reason = ""
-        if stage.id in skip:
+        if stage.id in failed:
+            decision = Decision.skip("failed in this run")
+        elif stage.id in skip:
             decision = Decision.skip("disabled by user")
         elif only and stage.id not in only and not (discovery and stage in stale_discovery):
             decision = Decision.skip("disabled by --only")

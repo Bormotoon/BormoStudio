@@ -78,6 +78,10 @@ class LlamaProvider:
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": self.options.temperature,
+            # Thinking templates (gemma4, qwen3) otherwise reason first, into
+            # reasoning_content, and can spend the whole n_predict before a word
+            # of the answer (Forge prefilled an empty thought for the same reason).
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         if self.options.n_predict is not None:
             body["max_tokens"] = self.options.n_predict

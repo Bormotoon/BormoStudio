@@ -116,21 +116,25 @@ WHISPERSYNC_RULES = (
     Rule("render_workers", "compute.cpu_workers", int),
     Rule("patience", "transcribe.patience", float),
     Rule("condition_on_previous_text", "transcribe.condition_on_previous_text", bool),
+    Rule("camera_av_offset_ms", "sync.camera_av_offset_ms", float),
+    Rule("camera_av_offset_ms_by_camera", "sync.camera_av_offset_ms_by_camera",
+         lambda value: {str(key): float(item) for key, item in dict(value or {}).items()}),
+    Rule("pause_duck_enabled", "sync.pause_duck_enabled", bool),
+    Rule("pause_duck_db", "sync.pause_duck_db", float),
+    Rule("pause_duck_fade_ms", "sync.pause_duck_fade_ms", int),
+    Rule("pause_duck_min_pause_s", "sync.pause_duck_min_pause_s", float),
 )
 
 # Planned section from table 6.3 for WhisperSync keys without a Studio field yet.
 _WHISPERSYNC_PLANNED = {
     "transcribe": ("vad_filter", "cache_dir", "cache_max_age_days"),
-    "sync": ("timebase_source", "camera_av_offset_ms",
-             "camera_av_offset_ms_by_camera", "crossfade_enabled", "output_audio_format",
+    "sync": ("timebase_source", "crossfade_enabled", "output_audio_format",
              "min_anchors",
              "anchor_min_confidence", "match_window_margin", "seed_max_occurrences",
              "seed_bin_width", "acoustic_max_lag_s", "gcc_eps", "acoustic_fallback",
              "alignment_max_k_deviation", "alignment_max_residual_ms",
              "alignment_min_coverage", "alignment_min_acoustic_points", "flex_window_s",
              "flex_min_sharpness", "flex_deadband_s", "flex_max_shift_s",
-             "pause_duck_enabled", "pause_duck_db", "pause_duck_fade_ms",
-             "pause_duck_min_pause_s",
              "self_check_min_run_words", "self_check_shift_threshold_s",
              "self_check_min_content_words", "reuse_source_dir"),
     "roughcut.retakes": ("retake_similarity",),
@@ -151,13 +155,6 @@ _WHISPERSYNC_REPLACED = {
     "retake_similarity": "WhisperSync never read it",
     "save_transcripts": "Studio always keeps transcripts in _studio/stages/transcribe",
     "output_dir": "each material folder keeps its results in its own _studio",
-    "camera_av_offset_ms": "not in Studio yet: a per-camera lip-sync calibration (owner decision)",
-    "camera_av_offset_ms_by_camera":
-        "not in Studio yet: a per-camera lip-sync calibration (owner decision)",
-    "pause_duck_enabled": "not in Studio yet: pause ducking of voices (owner decision)",
-    "pause_duck_db": "not in Studio yet: pause ducking of voices (owner decision)",
-    "pause_duck_fade_ms": "not in Studio yet: pause ducking of voices (owner decision)",
-    "pause_duck_min_pause_s": "not in Studio yet: pause ducking of voices (owner decision)",
     **{key: _FIXED for key in (
         "min_anchors", "anchor_min_confidence", "match_window_margin", "seed_max_occurrences",
         "seed_bin_width", "acoustic_max_lag_s", "gcc_eps", "acoustic_fallback",

@@ -38,20 +38,19 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 ### Prioritized local backlog
 
 1. Done 2026-10-18: CI run of `9fb3dec` is green on every job (Studio 3.10-3.13, frozen WhisperSync 403 and Forge 620, wheel/PyInstaller, installed artifact on Windows and macOS).
-2. Real acceptance of the new local pieces: the basic desktop mode on real material
-   through the GUI, LLM edit suggestions on a real model,
-   listening to with-cut previews and program join crossfades, Material screen
-   interaction (lanes, drag and drop, cameras), an overnight channel run with
-   notifications and a cancelled-then-resumed download.
-3. Owner decisions: WhisperSync's per-camera A/V calibration and pause ducking
-   (not ported, see PROJECT_DECISIONS.md); a Hugging Face token for pyannote and
-   room for the vision/diarization modules (the root disk is 94% full).
-4. Real-GPU `bstudio tune` run with the GPU free; visual review of reel layouts,
-   caption looks and the whole-edit preview; real pyannote identity check.
-5. sony_run (the real reference set): listen to the camera inserts in the repaired
-   recorder (excerpts in `/srv/storage/files/sony_run-listen/`). The nine pos17v2
-   defects are implemented; the owner closed pos17v2 on 2026-10-12 (edited and
-   published), so it needs no re-acceptance.
+2. Real acceptance still open: LLM rough-cut suggestions on a real model, an
+   overnight channel run with notifications and a cancelled-then-resumed download.
+   GUI acceptance (basic mode on real material, Material screen, listening in the
+   app) is deferred by the owner (2026-10-18).
+3. Done 2026-10-18: owner decisions — sync technical acceptance passed (sony_run
+   published); calibration and pause ducking ported; downloads in `var/`.
+4. Done 2026-10-18/19 with the GPU free: `bstudio tune` (defaults confirmed),
+   real pyannote in the pipeline and an identity check (halves of one episode:
+   every merge right; across episodes one voice matched, to be confirmed by ear
+   from `/srv/storage/files/identity-listen/`), real-model reels on POS-17 (19 reels
+   selected by gemma4 and rendered), frames of the video/title/audiogram layouts
+   and caption looks, the whole-edit preview of sony_run_check.
+5. sony_run is accepted and published; pos17v2 is closed.
 6. Installed/frozen real-processing checks, production packaging, private sample
    acceptance. The frozen Forge suite passes in its locked environment (619 passed,
    1 skipped: `test_torch_yunet_matches_opencv` needs YuNet weights inside the

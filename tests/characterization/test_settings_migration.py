@@ -33,6 +33,20 @@ def test_crossfade_disabled_in_whispersync_becomes_zero() -> None:
     assert migration.settings["sync"]["master_crossfade_ms"] == 0
 
 
+def test_lip_sync_calibration_and_pause_ducking_move_over() -> None:
+    migration = migrate(whispersync={
+        "camera_av_offset_ms": -40, "camera_av_offset_ms_by_camera": {"CamB": 25},
+        "pause_duck_enabled": True, "pause_duck_db": -200, "pause_duck_fade_ms": 60,
+        "pause_duck_min_pause_s": 0.8,
+    })
+    assert migration.report()["unmapped"] == []
+    assert migration.settings["sync"] == {
+        "camera_av_offset_ms": -40.0, "camera_av_offset_ms_by_camera": {"CamB": 25.0},
+        "pause_duck_enabled": True, "pause_duck_db": -200.0, "pause_duck_fade_ms": 60,
+        "pause_duck_min_pause_s": 0.8,
+    }
+
+
 def test_frozen_forge_config_migrates_to_valid_studio_settings(tmp_path: Path) -> None:
     source = yaml.safe_load((ROOT / "legacy" / "forge" / "config.yaml").read_text("utf-8"))
     migration = migrate(forge=source)

@@ -4,7 +4,34 @@ All notable changes to Studio will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- WhisperSync's lip-sync calibration: `sync.camera_av_offset_ms` and
+  `sync.camera_av_offset_ms_by_camera` move a camera's picture against all
+  sound in the exports, program, whole-edit preview and reels; changing them
+  never synchronizes again.
+- WhisperSync's pause ducking (`sync.pause_duck_*`, off by default; **Lower
+  voices in pauses** in the advanced form) lowers rendered voices where neither
+  the camera nor the recorder has words. Settings migration now carries both.
+- Program, preview and reels show recorder-only stretches (the recorder
+  started before the cameras) as black picture with the recorder's sound
+  instead of failing with "no camera covers retained range".
+
 ### Fixed
+
+- Reels selection with gemma4 failed on every chunk ("returned no text
+  content"): its chat template thinks first and spent the whole token budget
+  on reasoning. Requests now ask templates not to think, as Forge's prefill did.
+- Program, preview and reels decoded every source from its start to cut a
+  piece (13+ minutes for 18 s of a two-hour recording); inputs are now sought
+  before decoding and trimmed frame-exactly after.
+- The diarization module could not import: unpinned torch 2.14, torchaudio
+  2.11 and huggingface_hub 1.x break pyannote.audio 3.4. The recipe pins
+  them, the worker allows pyannote's Lightning checkpoints under torch >= 2.6,
+  and a module installed from an older recipe is installed again.
+- A caption could start with punctuation Whisper split off ("?» меня…"); it
+  now stays with the word before it.
+- A stage that failed in a run was reported as "disabled by user".
 
 - BormoStudio picks the most capable ffmpeg on PATH at startup (it runs,
   then libass, then NVENC; `BSTUDIO_FFMPEG_DIR` overrides): on the owner's

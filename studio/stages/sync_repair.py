@@ -13,6 +13,7 @@ from studio.stages.sync_check_step import combine_checks
 from studio.stages.sync_engine import render_aligned_clip
 from studio.stages.sync_geometry import PieceConfig
 from studio.stages.sync_refine import RefineSettings
+from studio.stages.sync_render import PauseDuck
 from studio.stages.sync_self_check import check_rendered_clip
 from studio.stages.sync_verify import measure, short_clip_grid
 from studio.stages.transcribe import TranscribeSettings, WhisperEngine
@@ -60,6 +61,9 @@ def repair_voices(
                     strategy=1, source_asset_id=source_id, target_asset_id=asset_id,
                     channels=channels, refine_audio=camera_paths[asset_id], refine=refine,
                     label=asset_id,
+                    duck=PauseDuck.from_settings(
+                        conf, [(word.start, word.end) for word in reference.words],
+                        [(word.start, word.end) for word in source_transcript.words]),
                 )
                 rendered = engine.transcribe(candidate)
                 outcome = check_rendered_clip(

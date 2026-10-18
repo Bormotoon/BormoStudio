@@ -13,6 +13,10 @@ from studio.modules.manager import ModuleManager
 
 WORKER = """
 import json, os, sys
+# pyannote.audio 3.x checkpoints are Lightning pickles; torch >= 2.6 (needed for
+# Blackwell GPUs) loads weights only by default and rejects them. The weights
+# come from the pinned pyannote repositories on Hugging Face.
+os.environ.setdefault('TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD', '1')
 import torch
 from pyannote.audio import Pipeline
 model, device, audio, output = sys.argv[1:5]

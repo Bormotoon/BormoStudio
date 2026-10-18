@@ -15,3 +15,15 @@ def test_cache_key_includes_model_prompt_and_grammar(tmp_path: Path) -> None:
 def test_json_response_accepts_plain_and_fenced_json() -> None:
     assert parse_json_response('{"ok": true}') == {"ok": True}
     assert parse_json_response('```json\n{"ok": true}\n```') == {"ok": True}
+
+
+def test_requests_ask_thinking_templates_to_answer_directly(monkeypatch) -> None:
+    bodies: list[dict] = []
+
+    def request(self: LlamaProvider, body: dict) -> str:
+        bodies.append(body)
+        return "answer"
+
+    monkeypatch.setattr(LlamaProvider, "_request", request)
+    assert LlamaProvider("http://localhost", "a").complete("prompt") == "answer"
+    assert bodies[0]["chat_template_kwargs"] == {"enable_thinking": False}

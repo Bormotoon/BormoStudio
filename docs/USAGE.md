@@ -158,6 +158,9 @@ Use the desktop **Modules and models** page to install the `vision` environment
 and download `yunet` / `light-asd` with checksum verification. Installation runs
 asynchronously with a visible log. CLI equivalents are `bstudio modules install vision`,
 `bstudio models install yunet`, and `bstudio models install light-asd`.
+A module installed by an older Studio whose requirements have since changed counts
+as missing and is installed again (the diarization module now pins torch and
+torchaudio 2.7–2.8 for pyannote.audio 3.x).
 Tracking runs in the managed environment's subprocess, keeping torch/OpenCV out
 of the application process. `bstudio models list` verifies the installed model files.
 Install commands accept `--events` for JSON-lines progress. The GUI shows download
@@ -597,6 +600,33 @@ below `roughcut.llm_min_confidence`, longer than `llm_max_cut_s`, beyond
 LLM cuts appear unaccepted in the Edit list and delivery choices as markers;
 `cut` applies them. Fillers are always markers.
 
+## Lip-sync calibration and pause ducking
+
+Synchronization aligns all sound to the cameras' sound. A constant delay inside a
+camera's own audio path cannot be measured from sound; find it once by eye (a
+clap, frame by frame) and set it in milliseconds:
+
+```yaml
+sync:
+  camera_av_offset_ms: 0          # every camera
+  camera_av_offset_ms_by_camera:  # asset id, camera group, sub-folder or file name
+    CamB: -40
+```
+
+Positive values delay the sound against the picture (it arrived early), negative
+values advance it, as in WhisperSync. Studio moves the camera's picture in the
+Final Cut / Premiere / OTIO exports, the program, the whole-edit preview and
+reels; sound tracks and sync reports are unchanged, and changing the value
+re-renders only those outputs, never synchronization.
+
+Pause ducking (`sync.pause_duck_enabled`, off by default; **Lower voices in pauses**
+in the advanced form) lowers the rendered voices by `pause_duck_db` (−18 dB; −120
+or lower is silence) with `pause_duck_fade_ms` ramps where neither the camera nor
+the recorder has words for at least `pause_duck_min_pause_s`. It hides room-tone
+mismatch in gaps of the per-camera voices (program, reels, flat FCPXML/XMEML);
+the multicam recorder angle stays the whole recorder. Turning it on renders the
+voices again.
+
 ## Speaker identities across files
 
 Each recorder file and each diarized source labels its speakers on its own. With
@@ -713,6 +743,13 @@ memory measured before tuning minus a headroom, so stop other GPU users first.
 The report is written to `_studio/tuning.json`; `--apply` (or **Apply compute
 recommendations** afterwards) saves the winners. `--whisper` / `--llama` limit
 the run.
+
+Measured here (RTX 5060 Ti 16 GB, GPU free, 2026-10-18, 120 s of sony_run): Whisper
+large-v3 float16 batch 16 transcribes 32× real time with a 5.4 GB peak, the
+defaults already; int8 types are no faster and drop words. gemma4-26b IQ4_XS
+with every layer on the GPU reads ~2200 prompt and writes ~89 tokens/s in 14.6 GB;
+the server's own layer fit is within noise of that and leaves room when another
+GPU user is up, so `llm.n_gpu_layers: null` stays.
 
 ## Mac (Apple Silicon)
 

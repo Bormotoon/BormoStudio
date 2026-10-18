@@ -199,6 +199,19 @@ def build_cues(words: list[TimedWord], options: CaptionOptions) -> list[CaptionC
     limit = chars_per_line(options) * max(1, options.max_lines)
     shown = [TimedWord(display_word(w.text, options), w.start, w.end, w.speaker) for w in words]
     shown = [word for word in shown if word.text]
+    # Whisper sometimes emits closing punctuation as its own word ("«Почему" "?»");
+    # it belongs to the word before it, never at the start of the next cue.
+    joined: list[TimedWord] = []
+    for word in shown:
+        # Even across a speaker boundary: diarization cuts between words, not
+        # inside "«Почему?»".
+        if joined and not any(ch.isalnum() for ch in word.text):
+            last = joined[-1]
+            joined[-1] = TimedWord(last.text + word.text, last.start, max(last.end, word.end),
+                                   last.speaker)
+        else:
+            joined.append(word)
+    shown = joined
     groups: list[list[TimedWord]] = []
     for word in shown:
         current = groups[-1] if groups else None

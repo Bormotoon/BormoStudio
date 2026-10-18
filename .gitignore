@@ -26,3 +26,6 @@ fixtures/generated/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Downloaded modules, models and caches on this machine (symlinked from ~/.cache etc.)
+/var/

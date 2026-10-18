@@ -13,10 +13,95 @@ import logging
 import os
 import subprocess
 import tempfile
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from studio.core.media import WAV_MUX_ARGS, build_atempo_chain
+from studio.core.timeline import AudioWarpMap, audio_source_to_rendered
 from studio.stages.sync_plan import RenderedAudioPlan, adapt_piece_plan
+
+
+@dataclass(frozen=True, slots=True)
+class PauseDuck:
+    """WhisperSync's pause ducking of one rendered voice (``sync.pause_duck_*``)."""
+
+    camera_words: tuple[tuple[float, float], ...]
+    recorder_words: tuple[tuple[float, float], ...]
+    db: float = -18.0
+    fade_ms: int = 80
+    min_pause_s: float = 0.6
+    gap_s: float = 0.6
+
+    @classmethod
+    def from_settings(
+        cls, sync: Mapping[str, Any], camera_words: Sequence[tuple[float, float]],
+        recorder_words: Sequence[tuple[float, float]], gap_s: float = 0.6,
+    ) -> PauseDuck | None:
+        """``None`` while ducking is off."""
+        if not sync.get("pause_duck_enabled", False):
+            return None
+        return cls(tuple(camera_words), tuple(recorder_words),
+                   float(sync.get("pause_duck_db", -18.0)),
+                   int(sync.get("pause_duck_fade_ms", 80)),
+                   float(sync.get("pause_duck_min_pause_s", 0.6)), gap_s)
+
+    def pauses(self, warp: AudioWarpMap, duration_s: float) -> list[tuple[float, float]]:
+        """Pauses in the voice's (camera) time where neither track has words.
+
+        Recorder words are carried into camera time through the rendered pieces
+        themselves, so a pause follows every stretch and step of the plan.
+        """
+        first = warp.pieces[0].source_start_s
+        last = warp.pieces[-1].source_start_s + warp.pieces[-1].source_duration_s
+        heard: list[tuple[float, float]] = []
+        for start, end in self.recorder_words:
+            start, end = max(start, first), min(end, last)
+            if end <= start:
+                continue
+            a, b = audio_source_to_rendered(start, warp), audio_source_to_rendered(end, warp)
+            if a is not None and b is not None:
+                heard.append((min(a, b), max(a, b)))
+        spans = intersect_spans(silence_spans(list(self.camera_words), duration_s, self.gap_s),
+                                silence_spans(heard, duration_s, self.gap_s))
+        return [(max(0.0, a), min(duration_s, b)) for a, b in spans
+                if min(duration_s, b) - max(0.0, a) >= self.min_pause_s]
+
+
+def silence_spans(
+    words: list[tuple[float, float]], duration_s: float, gap_s: float,
+) -> list[tuple[float, float]]:
+    """No-word spans: before the first word, gaps longer than ``gap_s``, after the last."""
+    words = sorted(words)
+    if not words:
+        return [(0.0, duration_s)] if duration_s > 0 else []
+    spans = [(0.0, words[0][0])] if words[0][0] > 0 else []
+    previous_end = words[0][1]
+    for start, end in words[1:]:
+        if start - previous_end > gap_s:
+            spans.append((previous_end, start))
+        previous_end = max(previous_end, end)
+    if duration_s > previous_end:
+        spans.append((previous_end, duration_s))
+    return spans
+
+
+def intersect_spans(
+    left: list[tuple[float, float]], right: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Overlap of two sorted lists of disjoint spans."""
+    result = []
+    i = j = 0
+    while i < len(left) and j < len(right):
+        start, end = max(left[i][0], right[j][0]), min(left[i][1], right[j][1])
+        if end > start:
+            result.append((start, end))
+        if left[i][1] < right[j][1]:
+            i += 1
+        else:
+            j += 1
+    return result
 
 
 def render_audio_plan(
@@ -24,12 +109,13 @@ def render_audio_plan(
     lead_silence_s: float, duration_s: float, map_id: str, source_asset_id: str,
     target_asset_id: str | None, strategy: int, sample_rate: int = 48000,
     channels: int = 1, codec: str = "pcm_s24le", fade_ms: int = 10,
-    stretch_method: str = "auto",
+    stretch_method: str = "auto", duck: PauseDuck | None = None,
 ) -> RenderedAudioPlan:
     """Render original pieces, then trim assembly exactly as the frozen engine.
 
     Trimming the input before atempo would alter its edge samples. The typed map
     describes only the surviving interval; renderer inputs remain unchanged.
+    ``duck`` lowers the voice in pauses during the same assembly pass.
     Call from a worker's private output directory before publication.
     """
     plan = adapt_piece_plan(
@@ -37,6 +123,7 @@ def render_audio_plan(
         source_asset_id=source_asset_id, target_asset_id=target_asset_id, strategy=strategy,
         stretch_method=stretch_method,
     )
+    pauses = duck.pauses(plan.warp, duration_s) if duck is not None else []
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".pieces-", dir=output.parent) as temporary:
         segments = [render_piece(
@@ -46,6 +133,8 @@ def render_audio_plan(
         ) for index, (start, duration, factor) in enumerate(pieces)]
         assemble_continuous(
             segments, lead_silence_s, duration_s, sample_rate, output, channels, codec,
+            duck_pauses=pauses, duck_db=duck.db if duck is not None else 0.0,
+            duck_fade_ms=duck.fade_ms if duck is not None else 80,
         )
     return plan
 

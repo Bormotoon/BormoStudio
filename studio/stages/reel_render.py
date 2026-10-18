@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from studio.core.av_calibration import calibration_view, picture_shifts
 from studio.core.caption_styles import CaptionOptions, TimedWord, build_cues, to_styled_ass
 from studio.core.digest import file_digest
 from studio.core.framing import load_reel_overrides, overrides_path, reel_settings
@@ -54,7 +55,9 @@ class ReelRenderStage:
     title = "Render reels"
     after: tuple[str, ...] = ("reels", "program")
     # Settings that can change this stage's result; they alone enter its fingerprint.
-    settings_keys: tuple[str, ...] = ("reels", "program")
+    settings_keys: tuple[str, ...] = ("reels", "program",
+                                     "sync.camera_av_offset_ms",
+                                     "sync.camera_av_offset_ms_by_camera")
     optional_after = ("program",)
     gpu = GpuUse.NONE
 
@@ -120,6 +123,7 @@ class ReelRenderStage:
                 if key.startswith("sync:")
             },
             [(str(path), _digest(path, project.work_dir)) for path in inputs if path.is_file()],
+            *filter(None, [calibration_view(settings)]),
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -454,6 +458,7 @@ def render_reel_source(
             video,
             encoder="cpu",
             fps=fps,
+            picture_shift=picture_shifts(project, all_settings),
         )
     elif transcript.time_domain is TimeDomain.EDITED:
         sources = project.outputs.get("program", [])

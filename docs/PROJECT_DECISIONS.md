@@ -387,12 +387,9 @@ entry points and recorded project paths in the same change.
   `acoustic_max_lag_s`, `self_check_min_*`, ...) stay fixed at the values
   WhisperSync calibrated on real footage. Studio's sync has since been tuned
   around them on sony_run; exposing them would invite breaking it.
-- Not ported, pending the owner: WhisperSync's per-camera lip-sync calibration
-  (`camera_av_offset_ms`, `_by_camera`) and pause ducking (`pause_duck_*`).
-  The calibration has to move a camera's picture against its own sound in every
-  consumer of placements (exports, program, reels, preview) and tell the sync
-  check to expect the shift; ducking only touches per-camera voices, which the
-  default multicam export no longer uses. Neither has been asked for.
+- WhisperSync's per-camera lip-sync calibration (`camera_av_offset_ms`,
+  `_by_camera`) and pause ducking (`pause_duck_*`) were held back here; the owner
+  asked for both on 2026-10-18 (see below).
 - Forge's `proofread.scope: clips` is replaced: Studio proofreads the whole
   transcript before reels selection, so reels quote the proofread text.
 - Settings added after projects were processed are listed in
@@ -409,3 +406,44 @@ entry points and recorded project paths in the same change.
   matching state folder, GitHub repository `Bormotoon/BormoStudio`, local folder
   `/srv/storage/docs/BormoStudio`. The internal package stays `studio`.
 - `uvf`, `uvf-gui` and `UVF_*` keep working as aliases for a transition period.
+
+### Owner decisions of 2026-10-18
+
+- **Sync acceptance passed.** sony_run synchronized well and the owner
+  published it; the technical acceptance of synchronization is done. Later sync
+  defects are separate tasks.
+- **GUI acceptance is deferred** (basic mode on real material, Material screen,
+  listening in the desktop app).
+- **Lip-sync calibration is ported** (`sync.camera_av_offset_ms` and
+  `sync.camera_av_offset_ms_by_camera`, keyed by asset id, camera group,
+  sub-folder or file name). WhisperSync moved the synced sound; Studio moves the
+  camera's *picture* instead (`studio/core/av_calibration.py`), in the FCPXML/
+  multicam/XMEML/OTIO export, the program, the whole-edit preview and reels.
+  Sound placements, the sync check and transcripts stay as measured, so changing
+  the calibration never synchronizes again (`settings.NOT_FINGERPRINTED`). A
+  picture moved before the timeline origin loses its first frames rather than
+  moving the origin, so edits and markers keep their times. Vision windows are
+  seconds long and keep the measured placement.
+- **Pause ducking is ported, off by default** (`sync.pause_duck_enabled`, a check
+  box in the advanced form). Rendered voices are lowered by `pause_duck_db` where
+  neither the camera nor the recorder has words; recorder words are carried into
+  camera time through the rendered pieces themselves, not one straight line.
+  Turning it on renders the voices again (a sync rerun); its other options count
+  only while it is on. It changes the per-camera voices (program, reels, flat
+  FCPXML/XMEML); the multicam export's recorder angle is the whole recorder and is
+  not ducked.
+- **Downloads live in the repository folder** on the big disk:
+  `/srv/storage/docs/BormoStudio/var/` (ignored by git) holds the modules
+  (`var/modules`, linked from `~/.local/share/studio/modules`), the Hugging Face
+  cache with Whisper and pyannote (`var/huggingface`, linked from
+  `~/.cache/huggingface`) and Studio's caches (`var/cache`), to free the system SSD.
+- A module installed from an older recipe counts as not installed and is
+  installed again (`ModuleManager.installed` compares the recorded requirements).
+  The unpinned diarization install had pulled torch 2.14 / torchaudio 2.11 /
+  huggingface_hub 1.x and could not even import pyannote.audio 3.4. The recipe now
+  pins torch/torchaudio 2.7–2.8 (pyannote 3.x needs `torchaudio.AudioMetaData`,
+  removed in 2.9; 2.7+ are the CUDA 12.8 builds Blackwell needs) and
+  huggingface_hub < 1 (pyannote 3.x passes `use_auth_token`). The isolated worker
+  sets `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD`: torch ≥ 2.6 loads weights only and
+  rejects pyannote's Lightning checkpoints. Moving to pyannote.audio 4
+  (`speaker-diarization-community-1`) would remove these pins; not done yet.
