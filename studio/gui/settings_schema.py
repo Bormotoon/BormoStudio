@@ -545,7 +545,7 @@ SECTIONS: tuple[Section, ...] = (
         Group("Virtual machines", (
             Item("host_memory", "Free VM memory during runs",
                  "Shrinks running libvirt VMs and shuts down the listed ones; "
-                 "all given back at the end (uvf host-memory restore after a crash)."),
+                 "all given back at the end (bstudio host-memory restore after a crash)."),
             Item("vm_domains", "VMs to shrink", "Empty: every running VM."),
             Item("vm_stop_domains", "VMs to shut down",
                  "VMs with a passed-through GPU: a balloon frees nothing there."),

@@ -360,8 +360,8 @@ _FORGE_PLANNED = {
 
 # Forge keys whose job Studio does differently; the report names the replacement.
 _FORGE_REPLACED = {
-    "youtube.sources": "pass each channel URL to `uvf channel`",
-    "youtube.limit": "use `uvf channel --limit`",
+    "youtube.sources": "pass each channel URL to `bstudio channel`",
+    "youtube.limit": "use `bstudio channel --limit`",
     "youtube.download_dir": "each video gets its own project folder under the channel folder",
     "youtube.archive": "existing channel project folders are reused instead of an archive",
     "youtube.filename_template": "Studio names downloads source.<ext> per project",
@@ -375,7 +375,7 @@ _FORGE_REPLACED = {
     "autonomy.scheduling": "Studio runs stages in dependency order per project",
     "autonomy.log_dir": "logs and report.json live in each project work folder",
     "autonomy.log_keep_days": "logs live in each project work folder",
-    "autonomy.runs_dir": "use `uvf batch --report` for a queue report",
+    "autonomy.runs_dir": "use `bstudio batch --report` for a queue report",
     "autonomy.notify.command": "shell hooks are deferred (PROJECT_DECISIONS.md)",
     "llama_cpp.watchdog.log_interval": "Studio reports LLM progress as stage events",
     "llama_cpp.scout_parallelism": "Studio sends LLM requests one at a time (llm.parallel)",
@@ -388,9 +388,9 @@ _FORGE_REPLACED = {
     "proofread.scope": "Studio proofreads the whole transcript before reels selection, "
                        "so reels quote the proofread text",
     "host_memory.state_file":
-        "Studio keeps the original VM sizes in its user state folder (uvf host-memory)",
+        "Studio keeps the original VM sizes in its user state folder (bstudio host-memory)",
     "cache.validate_json": "Studio parses every cached answer and asks again when it is invalid",
-    "paths.input_dir": "Studio works on the material folder given to uvf run, batch or channel",
+    "paths.input_dir": "Studio works on the material folder given to bstudio run, batch or channel",
     "paths.output_dir": "each material folder keeps its results in its own _studio",
     "processing.clips.highlights.count":
         "Forge never read it; reels.highlight_count sets the moments",

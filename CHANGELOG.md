@@ -82,7 +82,7 @@ All notable changes to Studio will be documented in this file.
 - Forge's `host_memory`: `compute.host_memory` shrinks running libvirt VMs by
   balloon and shuts down `compute.vm_stop_domains` (GPU-passthrough VMs) for a
   run or a whole queue, gives everything back at the end, on signals and, after a
-  crash, on the next run or `uvf host-memory restore` (`status` lists the VMs).
+  crash, on the next run or `bstudio host-memory restore` (`status` lists the VMs).
   Forge's own tests of the module run against the port.
 
 - Reel face tracking takes Forge's options (`reels.face_min_size`,
@@ -163,6 +163,10 @@ All notable changes to Studio will be documented in this file.
 
 ### Changed
 
+- Renamed to BormoStudio: command `bstudio` (`bstudio-gui`), distribution and
+  binary `bormostudio`, `BSTUDIO_*` variables, `~/.cache/bormostudio`. `uvf`,
+  `uvf-gui` and `UVF_*` still work.
+
 - Whisper engines with the same model, device and compute type share one
   loaded model per process: the sync stage's rescue pass, self-check and
   repair no longer each load their own copy.
@@ -180,15 +184,15 @@ All notable changes to Studio will be documented in this file.
 
 - Reel layouts (`reels.layout`): a hook-title band over the framed picture and an
   audiogram that needs no camera; per-reel framing, crop, tracking and title
-  (`uvf reel`, Subtitles page) with an instant crop preview over an unframed still.
+  (`bstudio reel`, Subtitles page) with an instant crop preview over an unframed still.
 - Forge caption looks for reels (`reels.caption_preset` and `reels.caption_*`):
   word-timed cues, word/fill/reveal/pop/karaoke highlights, case, punctuation,
   censoring and fades, burned with the packaged fonts.
 - Speaker identities matched across recorder files and diarized sessions by voice.
 - Owned llama-server tuning (`llm.*`), per-role sampling, a streaming watchdog
   with retries, and their migration from Forge `llama_cpp.*`.
-- Measured Whisper/llama tuning (`uvf tune`, Settings) and a whole-edit preview
-  proxy on the Edit page (`uvf preview`).
+- Measured Whisper/llama tuning (`bstudio tune`, Settings) and a whole-edit preview
+  proxy on the Edit page (`bstudio preview`).
 - Mac: MLX Whisper (`transcribe.device=mlx`) and VideoToolbox encoding; not yet
   run on Apple hardware.
 
@@ -196,7 +200,7 @@ All notable changes to Studio will be documented in this file.
   verbatim-quote evidence; suggestions by default, report of rejected findings.
 - Whole-timeline cut overview, with-cut/original audition without a master, and
   duration-preserving audio crossfades on program joins (`program.crossfade_ms`).
-- Recorder track lanes and project speaker cameras with `uvf tracks`/`uvf cameras`
+- Recorder track lanes and project speaker cameras with `bstudio tracks`/`bstudio cameras`
   and a grouped Material screen with drag-and-drop regrouping.
 - Pinned, resumable, verified Whisper and Gemma 4 GGUF downloads from the app.
 - `tools/migrate_settings.py` for WhisperSync/Forge settings and
@@ -214,7 +218,7 @@ All notable changes to Studio will be documented in this file.
   with progress/cancellation, compute inspection and GGUF picker with dirty guards.
 - Managed llama-server session shared across adjacent LLM stages and batch
   projects; per-task LLM role routing; persistent project LLM response cache.
-- `uvf channel` queue with resumable acquisition report, `tools/night_run.sh`,
+- `bstudio channel` queue with resumable acquisition report, `tools/night_run.sh`,
   frozen `--gui/--cli/--worker` entry and `packaging/install_linux.sh`.
 
 - Frozen-source characterization tests and golden transcript/export contracts,

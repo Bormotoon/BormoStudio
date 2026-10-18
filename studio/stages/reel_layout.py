@@ -105,7 +105,7 @@ def compose_title(
     width, height = int(settings.get("width", 1080)), int(settings.get("height", 1920))
     band = title_band_height(settings)
     background = str(settings.get("background_color", "#111114")).replace("#", "0x")
-    with tempfile.TemporaryDirectory(prefix="uvf-title-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bstudio-title-") as temporary:
         filters = f"pad={width}:{height}:0:{band}:color={background},setsar=1"
         if text:
             filters += "," + _title_filter(Path(temporary), text, duration, settings)
@@ -127,7 +127,7 @@ def render_audiogram(
     wave_height = max(2, round(height * 0.25 / 2) * 2)
     background = str(settings.get("background_color", "#111114")).replace("#", "0x")
     wave = str(settings.get("waveform_color", "#FFFFFF")).replace("#", "0x")
-    with tempfile.TemporaryDirectory(prefix="uvf-audiogram-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bstudio-audiogram-") as temporary:
         graph = (
             f"[1:a]aformat=channel_layouts=mono,showwaves=s={width}x{wave_height}"
             f":mode=cline:scale=sqrt:draw=full:rate={fps}:colors={wave}[wave];"

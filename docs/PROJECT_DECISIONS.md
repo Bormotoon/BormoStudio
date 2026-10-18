@@ -2,8 +2,8 @@
 
 Confirmed by the project owner on 2026-10-08.
 
-- Product name: Ultimate Video Forge.
-- Development repository: `/srv/storage/docs/Ultimate-Video-Forge/`.
+- Product name: BormoStudio.
+- Development repository: `/srv/storage/docs/BormoStudio/`.
 - License for the combined project: MIT. Original license notices in preserved
   source snapshots remain intact; third-party assets retain their own licenses.
 - Immediate acceptance target: the current Linux workstation. Other platforms
@@ -31,8 +31,8 @@ The implementation is now merged into the destination with both parent histories
 preserved. Existing destination README, MIT license, plan, and remote win conflicts.
 The package and command names still need migration from `studio`.
 
-Distribution identity is `ultimate-video-forge`, with `uvf`,
-`ultimate-video-forge`, and `uvf-gui` entry points. Keep the internal `studio`
+Distribution identity is `bormostudio`, with `bstudio`,
+`bormostudio`, and `bstudio-gui` entry points. Keep the internal `studio`
 namespace and old commands during migration to avoid invalidating subprocess
 entry points and recorded project paths in the same change.
 
@@ -52,7 +52,7 @@ entry points and recorded project paths in the same change.
 
 ### Unattended batch safety (2026-10-09)
 
-- `uvf batch` runs project folders sequentially through the normal locked
+- `bstudio batch` runs project folders sequentially through the normal locked
   pipeline and reports each result. It intentionally exposes no arbitrary
   before/after shell hooks until an allowlist and explicit permission contract
   exist; an unattended helper must not be able to terminate or modify unrelated
@@ -60,7 +60,7 @@ entry points and recorded project paths in the same change.
 
 ### YouTube source safety (2026-10-09)
 
-- `uvf fetch URL DESTINATION` accepts only a new or empty material directory,
+- `bstudio fetch URL DESTINATION` accepts only a new or empty material directory,
   downloads exactly one source plus its metadata without shell execution, then
   runs the standard scan. A remote URL is never mixed into an existing local
   shoot or allowed to overwrite user media.
@@ -176,7 +176,7 @@ entry points and recorded project paths in the same change.
 
 - Boundary Flex is opt-in during migration and now runs on planned pieces before
   rendering via the preserved acoustic implementation. `sync.verify` publishes
-  realized lag/coverage verdicts; `uvf verify CAMERA VOICE` returns nonzero for
+  realized lag/coverage verdicts; `bstudio verify CAMERA VOICE` returns nonzero for
   failed or inconclusive measurements. Convert numpy scalars to JSON numbers at
   the report boundary. No unmeasured window is counted as successful sync.
 
@@ -198,7 +198,7 @@ entry points and recorded project paths in the same change.
   integrated together; local re-alignment alone is not a completed repair feature.
 
 - Preserve separation/enhancement backend algorithms behind a probe facade and
-  bounded disk-logged subprocess utility. Resolve `UVF_SEP_VENV`, the managed
+  bounded disk-logged subprocess utility. Resolve `BSTUDIO_SEP_VENV`, the managed
   separation module and local .sep-venv in that order. Supported enhancement modes
   are denoise, denoise_dereverb and resemble; other historical modes remain unavailable.
 - Enhancement happens before content check, segmentation and master generation.
@@ -400,3 +400,12 @@ entry points and recorded project paths in the same change.
   at their defaults they stay out of stage fingerprints and cache keys, so a
   release that adds a setting recomputes nothing. A test pins the transcript
   cache key.
+
+### Renamed to BormoStudio (2026-10-18)
+
+- The owner renamed the product from Ultimate Video Forge to BormoStudio:
+  distribution and binary `bormostudio`, command `bstudio` (`bstudio-gui`),
+  environment variables `BSTUDIO_*`, user folders `~/.cache/bormostudio` and the
+  matching state folder, GitHub repository `Bormotoon/BormoStudio`, local folder
+  `/srv/storage/docs/BormoStudio`. The internal package stays `studio`.
+- `uvf`, `uvf-gui` and `UVF_*` keep working as aliases for a transition period.

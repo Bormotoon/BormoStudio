@@ -63,7 +63,7 @@ _FAILED_FILE_RE = re.compile(r"Failed to process file (?P<path>.+?): (?P<reason>
 # site-packages, where no `.sep-venv` will ever exist), so the search must not
 # stop there — otherwise an installed WhisperSync can never find a venv the
 # user did set up. An explicit path always wins.
-SEP_VENV_ENV_VAR = "UVF_SEP_VENV"
+SEP_VENV_ENV_VAR = "BSTUDIO_SEP_VENV"
 
 
 def _venv_bin_names(name: str) -> tuple[str, ...]:
@@ -82,7 +82,7 @@ def _venv_bin_names(name: str) -> tuple[str, ...]:
 def sep_venv_candidates(repo_root: Path) -> list[Path]:
     """Directories that might hold the separation venv, most specific first."""
     candidates: list[Path] = []
-    explicit = os.environ.get(SEP_VENV_ENV_VAR)
+    explicit = os.environ.get(SEP_VENV_ENV_VAR) or os.environ.get("UVF_SEP_VENV")
     if explicit:
         candidates.append(Path(explicit).expanduser())
     from studio.modules.manager import ModuleManager

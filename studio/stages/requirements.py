@@ -30,8 +30,8 @@ class MissingRequirement:
 
 
 _PACKAGES = {
-    "faster-whisper": ("faster_whisper", "pip install 'ultimate-video-forge[whisper]'"),
-    "mlx-whisper": ("mlx_whisper", "pip install 'ultimate-video-forge[mlx]' (Apple Silicon)"),
+    "faster-whisper": ("faster_whisper", "pip install 'bormostudio[whisper]'"),
+    "mlx-whisper": ("mlx_whisper", "pip install 'bormostudio[mlx]' (Apple Silicon)"),
 }
 
 
@@ -68,14 +68,14 @@ def _check(item: Requirement, settings: dict[str, Any]) -> MissingRequirement | 
         from studio.modules.manager import ModuleManager
 
         return None if ModuleManager().installed(value) else report(
-            f"install the {value} module in Modules and models (uvf modules install {value})",
+            f"install the {value} module in Modules and models (bstudio modules install {value})",
             ("module", value),
         )
     if item.kind == "model":
         from studio.modules.models import ModelManager
 
         return None if ModelManager().installed(value) else report(
-            f"download {value} in Modules and models (uvf models install {value})",
+            f"download {value} in Modules and models (bstudio models install {value})",
             ("model", value),
         )
     if item.kind == "llama":

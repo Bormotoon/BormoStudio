@@ -56,7 +56,7 @@ def download_file(
         partial.unlink()
         done = 0
     if done < expected.size:
-        headers = {"User-Agent": "ultimate-video-forge"}
+        headers = {"User-Agent": "bormostudio"}
         if done:
             headers["Range"] = f"bytes={done}-"
         request = urllib.request.Request(url, headers=headers)

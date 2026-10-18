@@ -100,7 +100,7 @@ class ModulesPage(QWidget):
         self.log.clear()
         self.buffer = ""
         self.installed_result = None
-        self.cancel_directory = tempfile.TemporaryDirectory(prefix="uvf-install-")
+        self.cancel_directory = tempfile.TemporaryDirectory(prefix="bstudio-install-")
         self.cancel_file = Path(self.cancel_directory.name) / "cancel"
         self.cancel_button.setEnabled(action == "install")
         self.progress.setRange(0, 0)

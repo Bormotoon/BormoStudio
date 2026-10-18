@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 Opener = Callable[..., Any]
-TITLE = "Ultimate Video Forge"
+TITLE = "BormoStudio"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +82,7 @@ def send(
         }, ensure_ascii=False).encode()
         request = urllib.request.Request(
             options.webhook, data=payload, method="POST",
-            headers={"Content-Type": "application/json", "User-Agent": "ultimate-video-forge"},
+            headers={"Content-Type": "application/json", "User-Agent": "bormostudio"},
         )
         try:
             with opener(request, timeout=options.timeout_s) as response:

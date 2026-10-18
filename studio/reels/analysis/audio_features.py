@@ -126,7 +126,7 @@ def analysis_audio(project: Project, transcript: Transcript) -> Iterator[AudioIn
     if (voices or replay) and transcript.time_domain in {TimeDomain.TIMELINE, TimeDomain.EDITED}:
         from studio.stages.sync_outputs import render_voice_master
 
-        with tempfile.TemporaryDirectory(prefix="uvf-analysis-audio-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="bstudio-analysis-audio-") as temporary:
             if replay:
                 voices = replay_voices(project, Path(temporary))
             master = render_voice_master(project.placements, voices, Path(temporary) / "master.wav")

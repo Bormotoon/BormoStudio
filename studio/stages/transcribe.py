@@ -460,7 +460,7 @@ class WhisperEngine:
             if stream_index is not None and (not isinstance(stream_index, int)
                     or isinstance(stream_index, bool) or stream_index < 0):
                 raise ValueError("audio stream index must be a non-negative integer")
-            with tempfile.TemporaryDirectory(prefix="uvf-transcribe-") as temporary:
+            with tempfile.TemporaryDirectory(prefix="bstudio-transcribe-") as temporary:
                 decoded = Path(temporary) / "selected.wav"
                 mono = ["-af", audio_filter] if audio_filter else ["-ac", "1"]
                 stream = f"0:{stream_index}" if stream_index is not None else "0:a:0"
@@ -520,7 +520,7 @@ class WhisperEngine:
             cached = self._load(cache_path)
             if cached is not None:
                 return cached
-        with tempfile.TemporaryDirectory(prefix="uvf-tile-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="bstudio-tile-") as temporary:
             decoded = Path(temporary) / "tile.wav"
             mono = ["-af", audio_filter] if audio_filter else ["-ac", "1"]
             stream = f"0:{stream_index}" if stream_index is not None else "0:a:0"

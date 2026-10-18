@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 import venv
 from collections.abc import Callable
@@ -12,6 +11,7 @@ from pathlib import Path
 
 from platformdirs import user_data_path
 
+from studio.core.names import env
 from studio.core.workspace import project_lock
 from studio.modules.cancellation import check_cancelled, run_install
 
@@ -73,10 +73,10 @@ class ModuleManager:
         folder = self.root / name
         progress({"phase": "environment", "percent": None, "name": name})
         if getattr(sys, "frozen", False):
-            python = os.environ.get("UVF_MODULE_PYTHON")
+            python = env("MODULE_PYTHON")
             if not python:
                 raise RuntimeError(
-                    "Set UVF_MODULE_PYTHON to a compatible Python interpreter "
+                    "Set BSTUDIO_MODULE_PYTHON to a compatible Python interpreter "
                     "for module installation."
                 )
             run_install([python, "-m", "venv", "--clear", str(folder)], cancelled)

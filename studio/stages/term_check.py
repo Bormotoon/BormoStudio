@@ -79,7 +79,7 @@ class WikiTermVerifier:
             )
             request = urllib.request.Request(
                 f"https://{site}/w/api.php?{query}",
-                headers={"User-Agent": "UltimateVideoForge/0.1"},
+                headers={"User-Agent": "BormoStudio/0.1"},
             )
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310

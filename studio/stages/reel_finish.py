@@ -48,7 +48,7 @@ def normalize_loudness(
         f":measured_LRA={measured['input_lra']}:measured_thresh={measured['input_thresh']}"
         f":offset={measured['target_offset']}:linear=true"
     )
-    with tempfile.TemporaryDirectory(prefix="uvf-loudness-") as folder:
+    with tempfile.TemporaryDirectory(prefix="bstudio-loudness-") as folder:
         output = Path(folder) / video.name
         result = run_logged(
             ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(video),
@@ -126,7 +126,7 @@ def export_format(video: Path, kind: str) -> Path:
     if kind == "gif":
         output = video.with_suffix(".gif")
         scale = "fps=12,scale=480:-1:flags=lanczos"
-        with tempfile.TemporaryDirectory(prefix="uvf-gif-") as folder:
+        with tempfile.TemporaryDirectory(prefix="bstudio-gif-") as folder:
             palette = Path(folder) / "palette.png"
             for command in (
                 ["-vf", f"{scale},palettegen", str(palette)],
@@ -150,7 +150,7 @@ def concat_preview(videos: list[Path], output: Path) -> bool:
     """All finished reels back to back, without re-encoding (Forge reels_preview)."""
     if not videos:
         return False
-    with tempfile.TemporaryDirectory(prefix="uvf-preview-") as folder:
+    with tempfile.TemporaryDirectory(prefix="bstudio-preview-") as folder:
         listing = Path(folder) / "reels.txt"
         listing.write_text("".join(
             "file '" + str(video.resolve()).replace("'", "'\\''") + "'\n" for video in videos),

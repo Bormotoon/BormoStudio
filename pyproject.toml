@@ -3,7 +3,7 @@ requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ultimate-video-forge"
+name = "bormostudio"
 version = "0.1.0.dev0"
 description = "Local desktop workflow for synchronized podcast production"
 readme = "README.md"
@@ -37,8 +37,11 @@ dev = [
 ]
 
 [project.scripts]
+bstudio = "studio.cli.main:main"
+bormostudio = "studio.cli.main:main"
+bstudio-gui = "studio.app:gui_main"
+# The pre-rename commands keep working.
 uvf = "studio.cli.main:main"
-ultimate-video-forge = "studio.cli.main:main"
 uvf-gui = "studio.app:gui_main"
 studio = "studio.cli.main:main"
 studio-gui = "studio.app:gui_main"

@@ -338,7 +338,7 @@ def tune_project(
         if not assets:
             raise ValueError("Whisper tuning needs an audio or video file in the project")
         probe = inspect_compute()["whisper"]
-        with tempfile.TemporaryDirectory(prefix="uvf-tune-") as folder:
+        with tempfile.TemporaryDirectory(prefix="bstudio-tune-") as folder:
             sample = Path(folder) / "sample.wav"
             length = extract_sample(assets[0], sample, sample_s)
             report["whisper"] = tune_whisper(sample, length, settings.get("transcribe", {}),

@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from studio.core.names import models_dir
+
 LOG = logging.getLogger(__name__)
 
 try:
@@ -53,11 +55,7 @@ except ImportError:
 
 
 _MODEL_PATH = str(
-    Path(
-        os.environ.get(
-            "UVF_MODELS_DIR", str(Path.home() / ".cache" / "ultimate-video-forge" / "models")
-        )
-    )
+    models_dir()
     / "face_detection_yunet_2023mar.onnx"
 )
 

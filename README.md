@@ -1,4 +1,4 @@
-# Ultimate Video Forge
+# BormoStudio
 
 Локальное десктопное приложение для полного цикла обработки видеозаписек: сканирование материала с камер и рекордеров, транскрипция, синхронизация звука, черновой монтаж, вычитка текста, статья и короткие рилсы — с экспортом проектов для Final Cut Pro (FCPXML) и Adobe Premiere (XMEML).
 
@@ -8,12 +8,12 @@
 > ни одна фаза ещё не прошла приёмку на реальных моделях, реальной записи и в Final Cut/Premiere.
 > Подробности — [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 >
-> Установка: `pip install -e ".[dev,whisper]"`. CLI: `uvf scan|plan|run|review|verify|batch|channel|fetch|material|modules|models|compute|doctor`;
-> GUI: `uvf-gui`. Внутренний пакет `studio` и старые команды пока сохранены для совместимости.
+> Установка: `pip install -e ".[dev,whisper]"`. CLI: `bstudio scan|plan|run|review|verify|batch|channel|fetch|material|modules|models|compute|doctor`;
+> GUI: `bstudio-gui`. Внутренний пакет `studio` и старые команды пока сохранены для совместимости.
 
 ## Происхождение проекта
 
-Ultimate Video Forge объединяет два действующих проекта:
+BormoStudio объединяет два действующих проекта:
 
 | | [WhisperSync](https://github.com/Bormotoon/WhisperSync) | [Podcast Reels Forge](https://github.com/Bormotoon/Podcast-Reels-Forge) |
 |---|---|---|
@@ -78,7 +78,7 @@ pyinstaller packaging/pyinstaller/studio.spec    # локальный Linux-би
 
 Порядок знакомства: раздел 0 плана (аудит), разделы 4–5 (архитектура и этапы),
 затем текущий срез в `docs/IMPLEMENTATION_STATUS.md`. Вопросы — в
-[Issues](https://github.com/Bormotoon/Ultimate-Video-Forge/issues).
+[Issues](https://github.com/Bormotoon/BormoStudio/issues).
 
 ## Лицензия
 

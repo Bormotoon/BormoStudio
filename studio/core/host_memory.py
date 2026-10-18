@@ -375,7 +375,7 @@ def state_dir() -> Path:
     """Where the original VM sizes wait to be given back, also after a crash."""
     from platformdirs import user_state_path
 
-    return user_state_path("ultimate-video-forge")
+    return user_state_path("bormostudio")
 
 
 def free_host_memory(
@@ -559,7 +559,7 @@ def held_host_memory(compute: dict[str, Any]) -> Iterator[int]:
     """Free VM memory for the block (``compute.host_memory``); yield the MB freed.
 
     The memory goes back when the block ends, on SIGINT/SIGTERM/SIGHUP, and,
-    after a crash, on the next run or ``uvf host-memory restore``.
+    after a crash, on the next run or ``bstudio host-memory restore``.
     """
     config = config_from_compute(compute)
     if not config.enabled:

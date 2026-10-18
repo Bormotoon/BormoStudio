@@ -109,7 +109,7 @@ def test_settings_page_applies_preset(tmp_path: Path) -> None:
 
 
 def test_wizard_downloads_models_into_project_settings(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("UVF_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("BSTUDIO_MODELS_DIR", str(tmp_path / "models"))
     app = QApplication.instance() or QApplication([])
     wizard = SetupWizard(tmp_path)
     assert wizard.downloads.model.currentData() == "whisper-large-v3-turbo"

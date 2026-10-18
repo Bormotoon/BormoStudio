@@ -29,12 +29,12 @@ RACY_WINDOW_NS = 2_000_000_000
 
 _lock = threading.Lock()
 _memory: dict[str, dict[str, Any]] = {}
-REHASH_ENV = "UVF_REHASH"
-_rehash = os.environ.get(REHASH_ENV) == "1"
+REHASH_ENV = "BSTUDIO_REHASH"
+_rehash = "1" in (os.environ.get(REHASH_ENV), os.environ.get("UVF_REHASH"))
 
 
 def set_rehash(enabled: bool) -> None:
-    """Ignore the on-disk cache (``uvf run --rehash`` / ``scan.verify_digests=always``).
+    """Ignore the on-disk cache (``bstudio run --rehash`` / ``scan.verify_digests=always``).
 
     Each file is still hashed at most once per process; stage workers inherit
     the choice through the environment.

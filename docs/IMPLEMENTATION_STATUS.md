@@ -29,7 +29,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - Frozen WhisperSync suite run through `tools/legacy_suites.py` in a Python 3.12
   environment from its lock file: **403/403**, matching the snapshot. The Forge
   suite was not run locally (its lock pins torch); CI runs it through the same tool.
-- `whisper-tiny` was downloaded for real through `uvf models install` and matched
+- `whisper-tiny` was downloaded for real through `bstudio models install` and matched
   every pinned checksum. Larger catalog entries were not downloaded here.
 - The Linux one-file binary at `/tmp/opencode/uvf-dist/` predates all 2026-10-10
   work and must be rebuilt. Python **3.12** remains the intended release baseline.
@@ -46,7 +46,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 3. Owner decisions: WhisperSync's per-camera A/V calibration and pause ducking
    (not ported, see PROJECT_DECISIONS.md); a Hugging Face token for pyannote and
    room for the vision/diarization modules (the root disk is 94% full).
-4. Real-GPU `uvf tune` run with the GPU free; visual review of reel layouts,
+4. Real-GPU `bstudio tune` run with the GPU free; visual review of reel layouts,
    caption looks and the whole-edit preview; real pyannote identity check.
 5. sony_run (the real reference set): listen to the camera inserts in the repaired
    recorder (excerpts in `/srv/storage/files/sony_run-listen/`). The nine pos17v2
@@ -78,7 +78,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
   `audiogram` (waveform from the reel's audio, works without cameras). Per-reel
   framing/crop/tracking/title overrides in `_studio/reels/overrides.json`, edited
   in the subtitle editor over an unframed still with a live crop window and with
-  `uvf reel`. Forge caption looks from the shared `subtitle-presets.js`
+  `bstudio reel`. Forge caption looks from the shared `subtitle-presets.js`
   (`reels.caption_*`): word-timed cues, bottom-heavy lines, word/fill/reveal/pop/
   karaoke highlights, case, punctuation, censoring, fades; manual edits still win.
   Sample frames of title, audiogram and three caption looks were inspected.
@@ -89,12 +89,12 @@ that point in development, not today's backlog. Plan phase acceptance remains op
   `cache_ram_mb: auto`, per-role sampling/timeout, streaming watchdog with
   first-token/stall timeouts and retries. Migration maps the matching
   `llama_cpp.*`, watchdog, role override and `subtitles.*` keys.
-- Measured tuning: `uvf tune` / Settings button; Whisper type × batch and llama
+- Measured tuning: `bstudio tune` / Settings button; Whisper type × batch and llama
   layers × batch trials in separate processes with nvidia-smi peaks. One real CPU
   run (whisper tiny, 40 s espeak sample) completed six trials and recommended
   float32/batch 4 at 8.3× real time. GPU and llama trials were not run here: the
   GPU was occupied by another llama-server, which was left untouched.
-- Whole-edit preview: cached 360p proxy via `uvf preview`, GUI player with a
+- Whole-edit preview: cached 360p proxy via `bstudio preview`, GUI player with a
   synchronized playhead and seeking on the cut overview.
 - Mac: MLX Whisper backend (`transcribe.device=mlx`, `[mlx]` extra) and
   VideoToolbox encoder selection/fallback. Only substituted tests; no Mac run.
@@ -214,7 +214,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 ### Fetch and batch settings — 2026-10-10
 
 - New `fetch` section: `download` video/audio, `max_height`, `cookies_file`,
-  `retries`, `rate_limit` become yt-dlp options for `uvf fetch`, channel downloads
+  `retries`, `rate_limit` become yt-dlp options for `bstudio fetch`, channel downloads
   and the fetch stage (which previously had no valid settings section). Channel
   discovery filters `exclude`, `skip_live`, `min/max_duration_s` before the limit,
   looking up to five times deeper; unknown durations are kept, as in Forge.
@@ -232,8 +232,8 @@ that point in development, not today's backlog. Plan phase acceptance remains op
   llama, the executable and GGUF path (external endpoints are not probed).
   pyannote speakers now declare the diarization module; reel tracking declares
   vision/YuNet/Light-ASD as optional (it falls back to a static crop).
-- The planner attaches missing requirements to stages that will run; `uvf plan`
-  and run reports list them with a hint and install target. `uvf run` records a
+- The planner attaches missing requirements to stages that will run; `bstudio plan`
+  and run reports list them with a hint and install target. `bstudio run` records a
   stage with a missing mandatory requirement as failed without starting it (its
   dependents skip) and emits a warning event. The Plan page lists them and
   **Install missing requirement** opens Modules and models with it preselected.
@@ -248,7 +248,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 
 ### Wide-shot policy — 2026-10-10
 
-- `@wide` in speaker cameras (Material page "Wide shot", `uvf cameras`, settings)
+- `@wide` in speaker cameras (Material page "Wide shot", `bstudio cameras`, settings)
   names the wide camera. `CameraPolicy` (from `program.*`) selects it for
   overlaps and busy exchanges (`max_switches` within `switch_window_s`), inserts
   it into shots longer than `max_shot_s`, and switches `cut_lead_s` ahead of
@@ -264,7 +264,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
   (pause, retake, LLM) whose edge falls inside a word. "как бы" is a two-word
   filler marker; an LLM filler at the same word replaces the heuristic marker.
 - Packaged presets `roughcut-gentle/balanced/tight` (`studio/resources/presets`,
-  in wheel and PyInstaller data) merge into settings.yaml via `uvf preset` or the
+  in wheel and PyInstaller data) merge into settings.yaml via `bstudio preset` or the
   Settings page; unrelated keys survive.
 - `tools/check_program.py` re-transcribes the master and diffs words against the
   edited transcript plus `self_check` timing diagnosis. Not yet run on a real model.
@@ -286,7 +286,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
   exact sample counts, constant-power on edit joins and linear on camera changes.
 - **Material**: `RecorderTrack` and `speaker_cameras` in `project.json`
   (additive fields, schema 1 loads older projects), `core/recorder_tracks.py`,
-  `uvf tracks` / `uvf cameras`, multi-asset `uvf material`, and `gui/material.py`
+  `bstudio tracks` / `bstudio cameras`, multi-asset `bstudio material`, and `gui/material.py`
   with grouped tree and drag-and-drop regrouping.
 - **Models**: `modules/catalog.py` (pinned HF commits, per-file SHA256 or git blob
   SHA1) and `modules/downloads.py` (resume via ranges, cancellation, verified
@@ -316,7 +316,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - Intermediate area commits are not individually guaranteed to pass the suite;
   shared modules (settings, CLI, main window) changed across areas. The final
   commit state is the verified one.
-- Removed a stale agent worktree (`Ultimate-Video-Forge.worktrees/d73852f3…`)
+- Removed a stale agent worktree (`BormoStudio.worktrees/d73852f3…`)
   whose branch was fully contained in `main` and had no local changes.
 - The verification venv (`/tmp/opencode/studio-py310`) and frozen binary
   (`/tmp/opencode/uvf-dist/`) live in volatile `/tmp`. The binary predates the
@@ -547,7 +547,7 @@ an actual Whisper/model/NLE end-to-end acceptance run.
   retakes.py with dependency-free local models/settings. Eleven original detector
   regression cases and four direct parity cases pass.
 - Roughcut integrates last-take selection, stable cut IDs, saved manual decisions
-  and a word-boundary guard. CLI `uvf review SOURCE` lists the edit; `--cut ID
+  and a word-boundary guard. CLI `bstudio review SOURCE` lists the edit; `--cut ID
   --accept` / `--reject` transactionally republishes decisions and manifest without
   changing the detector fingerprint. Overrides survive later detector runs by ID.
 - FCPXML/XMEML serialize edit reasons and filler markers at edited times. Export
@@ -826,11 +826,11 @@ an actual Whisper/model/NLE end-to-end acceptance run.
   retain the source output instead of silently inventing text. Both features
   default to disabled.
 - Material role, group and device assignments are now explicit project overrides:
-  `uvf material` persists them transactionally, rescans preserve them while
+  `bstudio material` persists them transactionally, rescans preserve them while
   refreshing probe metadata, and the desktop Material page uses the same CLI
   path. The desktop Edit page lists rough-cut decisions and accepts or rejects
   them through the existing transactional review command.
-- Added `uvf batch` for sequential, isolated project queues and `uvf fetch URL
+- Added `bstudio batch` for sequential, isolated project queues and `bstudio fetch URL
   DESTINATION` for a single YouTube source in a new/empty material directory.
   Batch deliberately has no arbitrary shell hooks; fetch does not overwrite
   local media and then enters the ordinary scan workflow.
@@ -937,7 +937,7 @@ an actual Whisper/model/NLE end-to-end acceptance run.
   Viterbi speaker selection and smoothed crop-path generation under studio/vision.
   Heavy imports remain inside the optional worker path, not the GUI/stage imports.
 - Opt-in tracking feeds the reel framing pass; the desktop exposes a tracking
-  checkbox. Model paths use a writable user cache, configurable by UVF_MODELS_DIR.
+  checkbox. Model paths use a writable user cache, configurable by BSTUDIO_MODELS_DIR.
   No model download is triggered by rendering. Missing models/dependencies/GPU
   retain the configured static crop and record the fallback in render.json.
   Model content participates in render fingerprints.
@@ -972,7 +972,7 @@ an actual Whisper/model/NLE end-to-end acceptance run.
   progress while retaining pip logs. Concurrent module installs are locked.
 - PyInstaller specification now includes public core/modules/vision Python sources
   under managed/ for external-interpreter vision workers. Frozen installation
-  requires an explicit UVF_MODULE_PYTHON rather than trying to create a venv from
+  requires an explicit BSTUDIO_MODULE_PYTHON rather than trying to create a venv from
   the application executable. GUI installation commands account for frozen entry.
 - This adds packaging contracts, not a verified frozen vision inference run.
   Model-environment end-to-end acceptance, cancellation and production installers
@@ -1260,7 +1260,7 @@ an actual Whisper/model/NLE end-to-end acceptance run.
 
 - Rebuilt the current tree with PyInstaller 6.22.3 on Python 3.10.20 using
   `packaging/pyinstaller/studio.spec`. Binary is available locally at
-  `/tmp/opencode/uvf-dist/ultimate-video-forge`; build completed successfully.
+  `/tmp/opencode/uvf-dist/bormostudio`; build completed successfully.
 - Verified CLI help, worker dispatcher help, packaged resource check, model listing,
   project planning and scan through the frozen executable. Generated fixture scan
   identified four media assets including the GoPro chapter relationship.

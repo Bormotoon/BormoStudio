@@ -8,8 +8,8 @@ are imported.
 ## Accepted decisions
 
 Historical capture-time decisions below are preserved for provenance, not current
-policy. They are superseded by `docs/PROJECT_DECISIONS.md`: MIT, Ultimate Video
-Forge, original repositories left untouched, native Qt subtitle editor and Linux
+policy. They are superseded by `docs/PROJECT_DECISIONS.md`: MIT, BormoStudio (then
+Ultimate Video Forge), original repositories left untouched, native Qt subtitle editor and Linux
 first acceptance. Current-session execution evidence is Python 3.10.20; Python
 3.12 capture-time evidence below does not qualify today's installed release.
 

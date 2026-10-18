@@ -48,10 +48,10 @@ BASIC_HIDDEN = (1, 2, 3, 6, 8)
 class MainWindow(QMainWindow):
     def __init__(self, preferences: QSettings | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("Ultimate Video Forge")
+        self.setWindowTitle("BormoStudio")
         self.resize(1100, 720)
         # Per-user GUI choices such as the mode; project settings live in the project.
-        self.preferences = preferences or QSettings("Ultimate Video Forge", "Studio")
+        self.preferences = preferences or QSettings("BormoStudio", "Studio")
         self.bridge = RunnerBridge(self)
         self.source: Path | None = None
         self.pending_view = "material"
@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         self.cut_timeline = CutTimeline()
         self.source_timeline = SourceTimeline()
         self.cut_timeline.cut_selected.connect(self._select_cut_from_timeline)
-        # Whole-edit proxy: rendered by `uvf preview` in the background.
+        # Whole-edit proxy: rendered by `bstudio preview` in the background.
         self.timeline_preview: TimelinePreview | None = None
         self.timeline_video = QVideoWidget()
         self.timeline_video.setMinimumHeight(180)

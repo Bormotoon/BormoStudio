@@ -11,7 +11,7 @@ from studio.stages.requirements import missing_requirements
 
 
 def test_missing_requirements_name_install_targets(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("UVF_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("BSTUDIO_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setattr("studio.modules.manager.user_data_path", lambda name: tmp_path)
     found = missing_requirements([
         Requirement("binary", "definitely-not-a-binary-uvf", "test"),

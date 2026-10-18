@@ -59,7 +59,7 @@ class RecorderTrack:
     speaker: str | None = None
     name: str = ""
     enabled: bool = True
-    # Set by an explicit user edit (uvf tracks / the material screen): a rescan
+    # Set by an explicit user edit (bstudio tracks / the material screen): a rescan
     # never replaces such a lane with its own proposal.
     manual: bool = False
 

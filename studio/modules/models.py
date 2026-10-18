@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import os
 import sys
 import urllib.request
 from collections.abc import Callable
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from studio.core.launch import frozen_root
+from studio.core.names import models_dir
 from studio.core.workspace import project_lock, published
 from studio.modules.cancellation import check_cancelled
 
@@ -57,11 +57,7 @@ def recipes() -> dict[str, ModelRecipe]:
 
 class ModelManager:
     def __init__(self, root: Path | None = None) -> None:
-        self.root = root or Path(
-            os.environ.get(
-                "UVF_MODELS_DIR", str(Path.home() / ".cache" / "ultimate-video-forge" / "models")
-            )
-        )
+        self.root = root or models_dir()
 
     def names(self) -> list[str]:
         from studio.modules.catalog import CATALOG

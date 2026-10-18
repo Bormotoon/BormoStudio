@@ -38,7 +38,7 @@ class RunnerBridge(QObject):
         self.document_mode = command in {"scan", "plan", "material", "tracks", "cameras"}
         command_line = [command, str(source), *(arguments or [])]
         if command in {"run", "scan", "plan"}:
-            self.cancel_directory = tempfile.TemporaryDirectory(prefix="uvf-run-")
+            self.cancel_directory = tempfile.TemporaryDirectory(prefix="bstudio-run-")
             self.cancel_file = Path(self.cancel_directory.name) / "cancel"
             command_line.extend(["--cancel-file", str(self.cancel_file)])
         if command in {"scan", "plan", "run", "material"}:

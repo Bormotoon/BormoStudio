@@ -135,7 +135,7 @@ def effective_audio(asset: Asset) -> EffectiveAudio:
 
 
 def describe(analysis: object) -> str:
-    """One line for the material screen and ``uvf tracks``."""
+    """One line for the material screen and ``bstudio tracks``."""
     if not isinstance(analysis, dict):
         return ""
     parts = [str(analysis.get("class", ""))]

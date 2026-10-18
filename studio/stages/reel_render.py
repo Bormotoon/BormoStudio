@@ -16,6 +16,7 @@ from studio.core.digest import file_digest
 from studio.core.framing import load_reel_overrides, overrides_path, reel_settings
 from studio.core.launch import frozen_root
 from studio.core.media import probe
+from studio.core.names import models_dir
 from studio.core.proc import run_logged
 from studio.core.project import Project, stable_fingerprint
 from studio.core.subtitles import Cue, edit_path, load_edits, to_ass
@@ -101,11 +102,7 @@ class ReelRenderStage:
         saved = project.work_dir / "subtitles"
         if saved.is_dir():
             inputs.extend(sorted(saved.glob("*.json")))
-        model_dir = Path(
-            os.environ.get(
-                "UVF_MODELS_DIR", str(Path.home() / ".cache" / "ultimate-video-forge" / "models")
-            )
-        )
+        model_dir = models_dir()
         if _settings(settings).get("tracking", False):
             inputs.extend(
                 model_dir / name
@@ -197,7 +194,7 @@ class ReelRenderStage:
             frame, source_size = None, None
             framing_report: dict[str, object] = {"tracking": "disabled"}
             if layout == "audiogram":
-                with tempfile.TemporaryDirectory(prefix="uvf-reel-audio-") as temporary:
+                with tempfile.TemporaryDirectory(prefix="bstudio-reel-audio-") as temporary:
                     audio = Path(temporary) / "audio.wav"
                     reel_audio(context.project, transcript, start, end, audio)
                     render_audiogram(audio, video, title, end - start, reel)
@@ -567,7 +564,7 @@ def burn_subtitles(
     video: Path, subtitles: Path, output: Path, settings: dict[str, Any] | None = None
 ) -> None:
     # Keep arbitrary project filenames out of ffmpeg's filtergraph parser.
-    with tempfile.TemporaryDirectory(prefix="uvf-subtitles-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bstudio-subtitles-") as temporary:
         safe_path = Path(temporary) / f"captions{subtitles.suffix}"
         shutil.copyfile(subtitles, safe_path)
         escaped = str(safe_path).replace("\\", "/").replace(":", "\\:")
@@ -670,7 +667,7 @@ def run_vision_worker(request: dict[str, Any], timeout: float = 3600) -> dict[st
     manager = ModuleManager()
     if not manager.installed("vision"):
         raise ValueError("managed vision module is missing; install it through modules install")
-    with tempfile.TemporaryDirectory(prefix="uvf-vision-") as folder:
+    with tempfile.TemporaryDirectory(prefix="bstudio-vision-") as folder:
         request_path, output = Path(folder) / "request.json", Path(folder) / "result.json"
         request_path.write_text(json.dumps(request), encoding="utf-8")
         environment = os.environ.copy()

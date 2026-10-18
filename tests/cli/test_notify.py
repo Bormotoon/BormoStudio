@@ -28,7 +28,7 @@ def test_options_validate_and_select_outcomes() -> None:
     assert NotifyOptions(webhook="https://h").wanted("failed")
     assert not NotifyOptions(webhook="https://h").wanted("ok")
     assert NotifyOptions(webhook="https://h", when="always").wanted("ok")
-    assert summary(RUN) == "Ultimate Video Forge: run failed (1 failed, 1 ok); failed: /b"
+    assert summary(RUN) == "BormoStudio: run failed (1 failed, 1 ok); failed: /b"
 
 
 def test_webhook_and_desktop_outcomes_never_raise(monkeypatch) -> None:

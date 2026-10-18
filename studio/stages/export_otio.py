@@ -37,7 +37,7 @@ def write_otio(sequence: Sequence, output: Path) -> Path:
             tracks.append(_track(f"A{audio_number}", "Audio", clips, sequence.fps))
     timeline = {
         "OTIO_SCHEMA": "Timeline.1",
-        "metadata": {"ultimate-video-forge": {"width": sequence.width,
+        "metadata": {"bormostudio": {"width": sequence.width,
                                               "height": sequence.height}},
         "name": sequence.name,
         "global_start_time": _time(0, rate),

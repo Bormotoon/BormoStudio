@@ -27,6 +27,8 @@ from typing import Any, cast
 
 import numpy as np
 
+from studio.core.names import models_dir
+
 LOG = logging.getLogger(__name__)
 
 try:
@@ -44,11 +46,7 @@ SAMPLE_RATE = 16000
 CROP_SIZE = 112
 
 _MODEL_PATH = (
-    Path(
-        os.environ.get(
-            "UVF_MODELS_DIR", str(Path.home() / ".cache" / "ultimate-video-forge" / "models")
-        )
-    )
+    models_dir()
     / "light_asd_talkset.model"
 )
 MODEL_URL = (

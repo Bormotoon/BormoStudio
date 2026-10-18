@@ -5,6 +5,11 @@ set with `--set section.key=value` on the CLI, in the desktop Settings page, or 
 the project `_studio/settings.yaml`. Implementation and acceptance status lives in
 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
+
+The project was called Ultimate Video Forge until 2026-10-18. The `uvf` and
+`uvf-gui` commands and the `UVF_*` environment variables still work beside
+`bstudio`, `bstudio-gui` and `BSTUDIO_*`.
+
 ## Verified reels and local rendering
 
 Reels selection checks candidate quotes against timed transcript evidence, runs
@@ -73,10 +78,10 @@ with the kept window drawn over it, updated instantly as the controls change; se
 **Framing for** to **This reel only** before saving. From the CLI:
 
 ```bash
-uvf reel ./episode                                   # list overrides
-uvf reel ./episode --reel cand-12 --framing crop --crop-x 0.3 --title "Why it works"
-uvf reel ./episode --reel cand-12 --no-tracking
-uvf reel ./episode --reel cand-12 --clear            # back to project settings
+bstudio reel ./episode                                   # list overrides
+bstudio reel ./episode --reel cand-12 --framing crop --crop-x 0.3 --title "Why it works"
+bstudio reel ./episode --reel cand-12 --no-tracking
+bstudio reel ./episode --reel cand-12 --clear            # back to project settings
 ```
 
 Overrides live in `_studio/reels/overrides.json`, keyed by the moment's
@@ -143,7 +148,7 @@ are ignored, `face_follow` glides the camera within a turn, `two_speaker_layout`
 a reel that shows a face in less than `face_min_ratio` (0.3) of its samples is
 rejected like a filtered moment (`rejected.json`, `render_rejected`).
 Install its optional torch/OpenCV dependencies and model files in
-`~/.cache/ultimate-video-forge/models/` (override with `UVF_MODELS_DIR`). Rendering
+`~/.cache/bormostudio/models/` (override with `BSTUDIO_MODELS_DIR`). Rendering
 does not automatically download models. When tracking is unavailable, it uses
 the configured static crop and records the fallback in `render.json`.
 
@@ -151,14 +156,14 @@ the configured static crop and records the fallback in `render.json`.
 
 Use the desktop **Modules and models** page to install the `vision` environment
 and download `yunet` / `light-asd` with checksum verification. Installation runs
-asynchronously with a visible log. CLI equivalents are `uvf modules install vision`,
-`uvf models install yunet`, and `uvf models install light-asd`.
+asynchronously with a visible log. CLI equivalents are `bstudio modules install vision`,
+`bstudio models install yunet`, and `bstudio models install light-asd`.
 Tracking runs in the managed environment's subprocess, keeping torch/OpenCV out
-of the application process. `uvf models list` verifies the installed model files.
+of the application process. `bstudio models list` verifies the installed model files.
 Install commands accept `--events` for JSON-lines progress. The GUI shows download
 percentage when the server supplies a size, and phase progress for environment
 creation, pip installation and checksum verification. Module installs are locked
-against concurrent attempts. Packaged builds require `UVF_MODULE_PYTHON` pointing
+against concurrent attempts. Packaged builds require `BSTUDIO_MODULE_PYTHON` pointing
 to a compatible external Python for creating optional environments.
 The installation page also supports cancellation. It waits for owned child
 processes to stop; cancelled model downloads preserve previous files and cancelled
@@ -168,23 +173,23 @@ PATH` and create that file to request cancellation (exit status 130).
 
 ### Whisper and GGUF downloads
 
-The same page and `uvf models install NAME` download pinned Whisper models
+The same page and `bstudio models install NAME` download pinned Whisper models
 (`whisper-base`, `whisper-small`, `whisper-medium`, `whisper-large-v3`,
 `whisper-large-v3-turbo`; `whisper-tiny` for tests) and Gemma 4 GGUF files
 (`gguf-gemma-4-e4b-it-q4`, `gguf-gemma-4-e4b-it-q8`, `gguf-gemma-4-12b-it-q4`,
 `gguf-gemma-4-26b-a4b-it-q4`). Each entry is fixed to a Hugging Face commit; files
 are checked against the SHA256 (large files) or git blob SHA1 (small files) of that
 commit and published only when they match. Downloads continue from `.part` files
-after cancellation or a dropped connection. Files live under `UVF_MODELS_DIR`
-(default `~/.cache/ultimate-video-forge/models`): Whisper in `whisper/<name>`,
+after cancellation or a dropped connection. Files live under `BSTUDIO_MODELS_DIR`
+(default `~/.cache/bormostudio/models`): Whisper in `whisper/<name>`,
 GGUF in `llm/<repo>`. After a download in the GUI, the Whisper model name or GGUF
 path is filled into project settings; saving applies it. `transcribe` loads a
 downloaded catalog model from disk and otherwise lets faster-whisper fetch it.
 
 Before running, the plan checks what each stage needs (ffmpeg, the Whisper
 package, modules, models, a managed llama binary and GGUF). Missing items appear
-in `uvf plan` and on the Plan page with how to install them; **Install missing
-requirement** opens Modules and models with the item selected. `uvf run` does not
+in `bstudio plan` and on the Plan page with how to install them; **Install missing
+requirement** opens Modules and models with the item selected. `bstudio run` does not
 start a stage whose mandatory requirement is missing and reports it as failed.
 
 First-run setup (**Set up processing**) includes a Models page with the same
@@ -196,7 +201,7 @@ GGUF; Finish stores both in the project settings.
 The PyInstaller executable exposes `--gui`, `--cli COMMAND ...` and the internal
 `--worker` dispatcher. Local build command:
 `pyinstaller packaging/pyinstaller/studio.spec`. The binary is named
-`ultimate-video-forge`; `--check-resources` checks bundled application resources.
+`bormostudio`; `--check-resources` checks bundled application resources.
 
 ## Memory held by virtual machines
 
@@ -207,10 +212,10 @@ guest uses plus `vm_headroom_mb` (1536), never below `vm_min_mb` (1024), and the
 VMs in `vm_stop_domains` are shut down (a VM with a passed-through GPU keeps all
 its memory locked, so a balloon frees nothing there; it is never forced off, see
 `vm_shutdown_timeout_s`). Everything is given back when the run ends, also on
-Ctrl-C or SIGTERM; a queue (`uvf batch`, `uvf channel`) frees once for all its
+Ctrl-C or SIGTERM; a queue (`bstudio batch`, `bstudio channel`) frees once for all its
 projects with the queue's settings. The original sizes are written to the user
 state folder before the first change, so after a crash or reboot the next run,
-or `uvf host-memory restore`, puts them back; `uvf host-memory status` lists the
+or `bstudio host-memory restore`, puts them back; `bstudio host-memory status` lists the
 running VMs and whether a restore is pending.
 
 ## Desktop settings and running
@@ -247,11 +252,11 @@ Settings also offers **Inspect compute backends** and **Apply compute
 recommendations**. Inspection runs outside the GUI process, queries CTranslate2
 compute types and tests actual NVENC encoding. The conservative recommendations
 set Whisper device/type/batch and program encoder; they do not install missing
-backends or claim benchmark-optimal settings. CLI: `uvf compute`.
+backends or claim benchmark-optimal settings. CLI: `bstudio compute`.
 
 ## Cancellation
 
-Pipeline runs support cooperative cancellation via `uvf run SOURCE --cancel-file
+Pipeline runs support cooperative cancellation via `bstudio run SOURCE --cancel-file
 PATH`. The GUI Cancel action requests worker cleanup instead of terminating the
 CLI orchestrator. Completed results are retained; report.json records cancellation.
 `scan`, `plan` and `batch` also accept `--cancel-file`. A cancelled batch stops
@@ -450,9 +455,9 @@ terms is bounded, though each term may require multiple spelling-variant lookups
 ## Channel queue and local installation
 
 ```bash
-uvf channel 'https://www.youtube.com/@CHANNEL/videos' /path/to/channel --limit 10 --events --report /path/to/channel/report.json
+bstudio channel 'https://www.youtube.com/@CHANNEL/videos' /path/to/channel --limit 10 --events --report /path/to/channel/report.json
 bash tools/night_run.sh 'https://www.youtube.com/@CHANNEL/videos' /path/to/channel
-bash packaging/install_linux.sh /path/to/ultimate-video-forge
+bash packaging/install_linux.sh /path/to/bormostudio
 ```
 
 Channel discovery is bounded (1–1000 items); projects use validated video IDs.
@@ -460,7 +465,7 @@ Existing project directories resume processing, incomplete nonempty downloads ar
 reported rather than overwritten. Acquisition progress is saved atomically in
 `channel-acquisition.json`; batch/channel accept `--report` and emit a structured
 `queue_finished` event with `--events`.
-The nightly helper accepts extra channel options and `UVF_BIN` for the executable.
+The nightly helper accepts extra channel options and `BSTUDIO_BIN` for the executable.
 
 Notifications: `--notify-webhook URL` POSTs the JSON summary (`text`/`content`
 fields work with Slack, Discord and ntfy), `--notify-desktop` uses `notify-send`
@@ -474,8 +479,8 @@ stops the queue before a project when the source volume has less free space.
 Download options are the `fetch` section: `download` (`video` or `audio`),
 `max_height`, `cookies_file`, `retries`, `rate_limit`; channel discovery also
 applies `exclude` (video IDs), `skip_live` and `min_duration_s`/`max_duration_s`
-before `--limit` (unknown durations are kept). `uvf channel` reads
-`<channel folder>/settings.yaml` and `--set`; `uvf fetch` accepts `--set`.
+before `--limit` (unknown durations are kept). `bstudio channel` reads
+`<channel folder>/settings.yaml` and `--set`; `bstudio fetch` accepts `--set`.
 
 Cancellation (`--cancel-file`) now stops yt-dlp during discovery and during a
 download. The partial file stays in the episode folder with a `.fetch-incomplete`
@@ -556,14 +561,14 @@ voices — and plays it under the cut overview, whose playhead follows playback;
 clicking the overview seeks (a click inside a removed range jumps to the next kept
 moment). The proxy is cached in `_studio/cache/preview/` by the edit and its
 inputs, so an unchanged edit opens immediately; accepting or rejecting a cut asks
-for a new one. CLI: `uvf preview ./episode [--height 360]` prints the file and the
+for a new one. CLI: `bstudio preview ./episode [--height 360]` prints the file and the
 preview↔timeline map.
 
 ## Rough-cut presets and word check
 
 Pause thresholds come in packaged presets: `roughcut-gentle`, `roughcut-balanced`
-(the defaults) and `roughcut-tight`. `uvf preset` lists them,
-`uvf preset <folder> --apply roughcut-tight` merges one into the project
+(the defaults) and `roughcut-tight`. `bstudio preset` lists them,
+`bstudio preset <folder> --apply roughcut-tight` merges one into the project
 settings (other keys stay as they are); the Settings page has the same choice
 under **Apply preset**.
 
@@ -643,17 +648,17 @@ are stored in the project and override `program.speaker_cameras` for the same
 speaker. CLI:
 
 ```bash
-uvf tracks SOURCE                                   # list lanes and cameras
-uvf tracks SOURCE --asset zoom-h6 --channels 0,1 --speaker Anna
-uvf tracks SOURCE --asset zoom-h6 --channels 3 --disable
-uvf cameras SOURCE --speaker Anna --camera osmo
-uvf material SOURCE --asset cam-a --asset cam-b --group wide
+bstudio tracks SOURCE                                   # list lanes and cameras
+bstudio tracks SOURCE --asset zoom-h6 --channels 0,1 --speaker Anna
+bstudio tracks SOURCE --asset zoom-h6 --channels 3 --disable
+bstudio cameras SOURCE --speaker Anna --camera osmo
+bstudio material SOURCE --asset cam-a --asset cam-b --group wide
 ```
 
 ### Wide shot
 
 Assign the wide (establishing) camera like a speaker: on the Material page pick
-**Wide shot** in the speaker list, or `uvf cameras <folder> --speaker @wide --camera cam-c`
+**Wide shot** in the speaker list, or `bstudio cameras <folder> --speaker @wide --camera cam-c`
 (`program.speaker_cameras: {"@wide": cam-c}` works as a settings default). With a
 wide shot, the program and multicam selection go wide when speakers overlap and
 when `program.max_switches` speaker changes (default 3) fall inside
@@ -665,7 +670,7 @@ always win. Without a wide shot, overlaps keep the current camera as before.
 ### Suggested speaker cameras
 
 After the speakers stage, **Suggest from video** on the Material page (or
-`uvf cameras <folder> --suggest --apply`) samples up to three 4-second windows of
+`bstudio cameras <folder> --suggest --apply`) samples up to three 4-second windows of
 each speaker's longest turns on every camera. With the vision module, YuNet and
 Light-ASD it measures who is in frame and whether the visible face is speaking:
 the camera whose face speaks during S's turns (by at least 0.5 logit more than
@@ -691,7 +696,7 @@ outcomes with the 403/620 snapshot and with an earlier report.
 
 ## Measured Whisper and llama tuning
 
-`uvf tune ./episode` (or **Measure and tune Whisper / llama** in Settings) times
+`bstudio tune ./episode` (or **Measure and tune Whisper / llama** in Settings) times
 real candidates on this machine, each in its own process so an out-of-memory
 trial does not stop the run:
 
@@ -712,7 +717,7 @@ the run.
 ## Mac (Apple Silicon)
 
 `transcribe.device=mlx` runs Whisper through mlx-whisper
-(`pip install 'ultimate-video-forge[mlx]'`); `auto` picks it on Apple Silicon
+(`pip install 'bormostudio[mlx]'`); `auto` picks it on Apple Silicon
 without CUDA. Model names map to the mlx-community conversions (for example
 `large-v3-turbo` → `mlx-community/whisper-large-v3-turbo`); a repo or folder can be
 given directly. mlx-whisper has no batched pipeline, VAD filter, hotwords or
@@ -724,6 +729,6 @@ covered by substituted tests only and have not been run on a Mac.
 ## Linux installation
 
 Linux installation copies the standalone binary into `~/.local/bin`, adds the
-`uvf` link and desktop entry, and checks packaged resources. Override
-`UVF_INSTALL_PREFIX` for another location. It relies on host ffmpeg/system libraries;
+`bstudio` link and desktop entry, and checks packaged resources. Override
+`BSTUDIO_INSTALL_PREFIX` for another location. It relies on host ffmpeg/system libraries;
 this is a local installer scaffold, not a fully bundled cross-platform release.
