@@ -923,7 +923,7 @@ release-база, её квалификация в этом окружении �
   git subtree add --prefix=legacy/whispersync /home/borm/VibeCoding/WhisperSync main
   git subtree add --prefix=legacy/forge "/srv/storage/docs/Podcast Reels Forge" main
   ```
-- [ ] **Частично:** CI definitions и отдельные locks есть. Не доделано: подтверждённый запуск обоих legacy suites и smoke-матрицы 3.10–3.13; Python 3.14 не квалифицирован.
+- [x] CI на GitHub (`Bormotoon/BormoStudio`, 2026-10-18, `9fb3dec`) зелёный: Studio smoke на Python 3.10–3.13, замороженные наборы WhisperSync (403) и Forge (620, веса YuNet скачиваются с проверкой sha256), wheel/PyInstaller smoke, установленный артефакт на Windows и macOS. Python 3.14 не квалифицирован.
 - [ ] **Частично:** wheel/frozen build и same-host installed resources/CLI/GUI smoke выполнены. Не доделано: подтверждённый CI и чистое окружение, реальные поздние ML-импорты.
 - [x] Скрипт `tools/make_fixtures.py`: детерминированный синтетический проект с двумя камерами, рекордером, речью, дрейфом, сдвигом, главой GoPro, паузой и повтором фразы. Локально генерируется; сквозной ML-прогон в CI ещё нужен.
 - [ ] **Приёмка:** выбрать приватную запись 20–40 минут (2 камеры + рекордер); в workspace пока не выбрана.

@@ -37,7 +37,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 
 ### Prioritized local backlog
 
-1. Confirm the repaired type check in a new CI run.
+1. Done 2026-10-18: CI run of `9fb3dec` is green on every job (Studio 3.10-3.13, frozen WhisperSync 403 and Forge 620, wheel/PyInstaller, installed artifact on Windows and macOS).
 2. Real acceptance of the new local pieces: the basic desktop mode on real material
    through the GUI, LLM edit suggestions on a real model,
    listening to with-cut previews and program join crossfades, Material screen
