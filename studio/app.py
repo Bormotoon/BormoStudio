@@ -11,7 +11,7 @@ from studio import __version__
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="studio",
+        prog="bstudio-gui",
         description="Local synchronized podcast production workflow.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")

@@ -552,7 +552,7 @@ def _fetch_project(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="studio")
+    parser = argparse.ArgumentParser(prog="bstudio")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("scan", "plan", "run"):
