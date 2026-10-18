@@ -36,7 +36,7 @@ def select_encoder(requested: str) -> EncoderChoice:
     try:
         result = subprocess.run([
             "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i",
-            "color=c=black:s=128x128:r=25", "-frames:v", "1",
+            "color=c=black:s=256x256:r=25", "-frames:v", "1",
             "-c:v", codec, *options, "-pix_fmt", "yuv420p", "-f", "null", "-",
         ], capture_output=True, text=True, timeout=20)
         if result.returncode == 0:

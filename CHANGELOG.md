@@ -6,6 +6,14 @@ All notable changes to Studio will be documented in this file.
 
 ### Fixed
 
+- BormoStudio picks the most capable ffmpeg on PATH at startup (it runs,
+  then libass, then NVENC; `BSTUDIO_FFMPEG_DIR` overrides): on the owner's
+  machine Homebrew's ffmpeg 9 comes first but lacks libass and NVENC, which
+  /usr/bin's has. `bstudio doctor` reports libass.
+- The NVENC probe encoded a 128x128 frame, below NVENC's minimum, so NVENC
+  always read as unavailable and the program and reels encoded on the CPU.
+  It probes 256x256 now; reels smaller than 256 px on a side use libx264.
+
 - Reels prompts were sent with `{requirements}`, `{target_candidates}` and
   `{chunk_json}` left unfilled, and cleanup/judge were asked only to "keep
   grounded, complete moments": every placeholder is now filled as in Forge.

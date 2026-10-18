@@ -44,7 +44,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def gui_main() -> int:
+    from studio.core.ffmpeg_select import choose_ffmpeg
     from studio.gui.main_window import main as launch_gui
+
+    choose_ffmpeg()
 
     return launch_gui()
 

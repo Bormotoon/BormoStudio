@@ -254,6 +254,9 @@ def _doctor() -> int:
         )
         for name, codec in (("nvenc", "h264_nvenc"), ("videotoolbox", "h264_videotoolbox")):
             print(f"{name}: {'available' if codec in result.stdout else 'unavailable'}")
+        filters = subprocess.run([checks["ffmpeg"], "-hide_banner", "-filters"],
+                                 capture_output=True, text=True)
+        print(f"libass: {'available' if ' subtitles ' in filters.stdout else 'unavailable'}")
     return 0 if all(checks.values()) else 1
 
 
@@ -695,6 +698,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    from studio.core.ffmpeg_select import choose_ffmpeg
+
+    choose_ffmpeg()
     try:
         return _main(argv)
     except InstallationCancelled as exc:

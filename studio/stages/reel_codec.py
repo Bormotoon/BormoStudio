@@ -7,6 +7,9 @@ from typing import Any
 
 from studio.stages.program_encoder import EncoderChoice, select_encoder
 
+# Smallest frame side every NVENC generation accepts, with margin.
+NVENC_MIN_SIDE = 256
+
 
 @lru_cache(maxsize=8)
 def _choice(requested: str) -> EncoderChoice:
@@ -19,6 +22,10 @@ def video_codec_args(reels: dict[str, Any]) -> list[str]:
     libx264: ``preset`` at ``video_bitrate``; ``auto`` falls back to libx264."""
     bitrate = str(reels.get("video_bitrate", "8M"))
     codec = _choice(str(reels.get("encoder", "auto")))
+    # NVENC refuses tiny frames ("Frame Dimension less than the minimum").
+    small = min(int(reels.get("width", 1080)), int(reels.get("height", 1920))) < NVENC_MIN_SIDE
+    if codec.codec == "h264_nvenc" and small:
+        codec = EncoderChoice(codec.requested, "libx264", "frame below the NVENC minimum")
     if codec.codec == "h264_nvenc":
         return ["-c:v", "h264_nvenc", "-preset", str(reels.get("nvenc_preset", "p5")),
                 "-tune", "hq", "-rc", "vbr", "-cq", str(int(reels.get("nvenc_cq", 21))),
