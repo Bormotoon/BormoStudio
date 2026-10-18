@@ -51,6 +51,12 @@ that point in development, not today's backlog. Plan phase acceptance remains op
    selected by gemma4 and rendered), frames of the video/title/audiogram layouts
    and caption looks, the whole-edit preview of sony_run_check.
 5. sony_run is accepted and published; pos17v2 is closed.
+6. Found by the sony_run_check whole-edit preview (2026-10-19): the rendered voice
+   of the first camera (`stages/sync/voice/dji-0921.wav`) is digital silence for its
+   first ~140 s although the recorder covers that time, so the program, preview and
+   reels are silent there; the Final Cut multicam (whole recorder angle) is not
+   affected. Find why sync rendered a lead silence there and fill it from the
+   recorder.
 6. Installed/frozen real-processing checks, production packaging, private sample
    acceptance. The frozen Forge suite passes in its locked environment (619 passed,
    1 skipped: `test_torch_yunet_matches_opencv` needs YuNet weights inside the
