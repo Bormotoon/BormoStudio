@@ -4,7 +4,7 @@ This file distinguishes implemented contracts from plan items that still need
 legacy migration or external acceptance. It intentionally does not mark a
 phase complete merely because a similarly named module exists.
 
-## Current snapshot — 2026-10-10
+## Current snapshot — 2026-10-12
 
 This section is the authoritative current inventory. The dated continuation entries
 below are historical evidence: their test counts and remaining-gap lists describe
@@ -14,19 +14,18 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 |---|---|---|
 | 0 — Preparation | Imported histories and preserved source snapshots/patch, fixture generator, locks/CI definitions, local wheel/frozen smoke | Executed CI matrix, clean installed-artifact tests, private acceptance recording, release interpreter qualification |
 | 1 — Contracts and pipeline | Versioned project/manifests, four time domains, planner/worker/events, recoverable publication, scan/prepare/transcribe/complex sync, CLI and Qt shell | Complete legacy golden coverage and real end-to-end GUI/CLI parity |
-| 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, overlapping and explicitly positioned disjoint sessions, reference-camera choice, selected-stream matching/rendering and detached camera PCM for NLE, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Full legacy source-selection workflow parity, NLE import and relinking |
+| 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, overlapping and explicitly positioned disjoint sessions, reference-camera choice, selected-stream matching/rendering and detached camera PCM for NLE, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Full legacy source-selection workflow parity, Premiere import. Final Cut import of the sony_run multicam accepted by the owner (2026-10-12) |
 | 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, timeline cut overview, with-cut/original audition with or without master, cached 360p whole-edit preview with synchronized playhead and seeking, markers, placement-aware CFR program/transcript with duration-preserving join crossfades | Real word-integrity/listening acceptance, end-to-end re-export check |
-| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade with per-session sources, cross-file speaker identity matching (pyannote embeddings / MFCC signatures), project speaker-camera choices (GUI/CLI), wide-shot policy, retimed multicam FCPXML | Real pyannote/identity and NLE acceptance |
-| 5 — Forge workflow | Text/term-check, task model routing, verified reels/captions, cached audio probes with voice/placement/edited mapping, native editor, vision, fetch/channel/batch with webhook/desktop notifications and mid-download cancellation, reports/night helper, owned llama lifecycle, settings migration, legacy comparison runner | Remaining legacy keys (clip tiers, judge context, diversity weights, subtitle whisper_sync/speaker colours, video encoding), phase-wide reuse, full Forge golden migration |
+| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade with per-session sources, cross-file speaker identity matching (pyannote embeddings / MFCC signatures), project speaker-camera choices (GUI/CLI), wide-shot policy, retimed multicam FCPXML | Real pyannote/identity, speaker-driven angle switching on a lavalier recording, Premiere |
+| 5 — Forge workflow | Text/term-check, task model routing, Forge-order reels selection with a parity test against the frozen Forge (moments and rejections), Forge's cut stage (speech-fitted edges, filters, QA, exports, descriptions, encoder settings), speaker-aware captions and the Whisper caption check, cached audio probes, native editor, vision options, fetch/channel/batch with notifications and VM memory freeing, owned llama lifecycle, settings migration with a home or a reason for every legacy key, one Whisper model per process, legacy comparison runner (Forge 619 + 1 skipped, WhisperSync 403) | Real-model reels acceptance, overnight channel run, real vision/pyannote runs |
 | 6 — Modules/distribution | Managed modules, pinned verified YuNet/Light-ASD/Whisper/GGUF downloads with resume, LLM rough-cut detectors, native setup/settings/GGUF picker and dirty guards, basic one-folder mode and an advanced form covering every setting, compute probe, Linux frozen/local installer | Real-model LLM edit acceptance, basic-mode run on real material through the GUI, real-GPU tuning acceptance, bundled dependencies, clean-machine/Python 3.12/platform qualification |
 | 7 — Follow-up | Speaker-angle reels, vision auto-assignment, OTIO, LUFS/covers/replay ranking, hook-title and audiogram layouts, per-reel framing with instant crop preview, Forge caption looks, MLX Whisper and VideoToolbox (substituted tests only) | Visual acceptance of layouts/captions, Mac hardware run, NLE/Resolve imports |
 
 ### Current verification
 
-- Latest combined source suite: **562 passed, 3 skipped** on Python **3.10.20**
-  with offscreen Qt (2026-10-10, after the remaining feature items); Ruff passes. After the type-check repair,
-  `mypy studio tools` passes on Python 3.10 and 3.12 (124 source files).
-  The remote CI result still needs a new run with these working-tree changes.
+- Latest combined source suite: **684 passed, 2 skipped** on Python **3.12.13**
+  with offscreen Qt (2026-10-12, `8685dc8`); Ruff and `mypy studio tools` pass
+  (153 source files). The remote CI result still needs a new run.
 - Frozen WhisperSync suite run through `tools/legacy_suites.py` in a Python 3.12
   environment from its lock file: **403/403**, matching the snapshot. The Forge
   suite was not run locally (its lock pins torch); CI runs it through the same tool.
@@ -39,23 +38,26 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 ### Prioritized local backlog
 
 1. Confirm the repaired type check in a new CI run.
-2. Real acceptance of the new local pieces: LLM edit suggestions on a real model,
+2. Real acceptance of the new local pieces: the basic desktop mode on real material
+   through the GUI, LLM edit suggestions on a real model,
    listening to with-cut previews and program join crossfades, Material screen
    interaction (lanes, drag and drop, cameras), an overnight channel run with
    notifications and a cancelled-then-resumed download.
-3. Raw recorder warp replay without voice artifacts; Studio sections (batch, fetch,
-   hooks, remaining reels/llm options) for keys the migration still reports as
-   unmapped; phase-wide model ownership/reuse.
+3. Owner decisions: WhisperSync's per-camera A/V calibration and pause ducking
+   (not ported, see PROJECT_DECISIONS.md); a Hugging Face token for pyannote and
+   room for the vision/diarization modules (the root disk is 94% full).
 4. Real-GPU `uvf tune` run with the GPU free; visual review of reel layouts,
    caption looks and the whole-edit preview; real pyannote identity check.
-5. Defects from the first real-material run (pos17v2, 2026-10-10), listed with
-   evidence and done-criteria in UNIFIED_APP_PLAN.md ("Исправления по реальному
-   прогону"): verify passes on median despite a −88 ms first minute, an in-clip
-   sync step is not detected, complex mode fits a false drift, the whole recorder
-   is transcribed, the rough cut keeps the pre-speech setup, a misplaced Whisper
-   word, a confusing `--only` block, dual-mono not detected, slow source hashing.
-6. Studio-vs-legacy golden parity on the comparison suites, installed/frozen
-   real-processing checks, production packaging, private sample acceptance.
+5. sony_run (the real reference set): listen to the camera inserts in the repaired
+   recorder (excerpts in `/srv/storage/files/sony_run-listen/`). The nine pos17v2
+   defects are implemented; the owner closed pos17v2 on 2026-10-12 (edited and
+   published), so it needs no re-acceptance.
+6. Installed/frozen real-processing checks, production packaging, private sample
+   acceptance. The frozen Forge suite passes in its locked environment (619 passed,
+   1 skipped: `test_torch_yunet_matches_opencv` needs YuNet weights inside the
+   snapshot); Studio's reels selection, clip edges and caption check are compared
+   with the frozen Forge code in `tests/reels/test_forge_parity.py` and
+   `test_subtitle_sync.py`.
 
 ### Acceptance still required
 
@@ -63,8 +65,9 @@ that point in development, not today's backlog. Plan phase acceptance remains op
   inference; compare WAV/XML/moments against fixed legacy inputs/config/models.
 - Private 20–40 minute multi-camera/recorder sample; beginning/middle/end lip sync,
   cut word integrity, listening quality, and actual GUI interaction.
-- Final Cut/Premiere import, roles, channel links, multicam, speed and relinking on
-  explicitly selected versions; overnight unattended channel run.
+- Premiere import, roles, channel links, multicam, speed and relinking; overnight
+  unattended channel run. The Final Cut import of the sony_run multicam export was
+  accepted by the owner on 2026-10-12; defects found later are separate tasks.
 - CI matrix, Python 3.12 qualification and clean Linux installation first;
   Windows/macOS and process-tree cancellation afterward per owner platform priority.
 - Third-party model/font/ffmpeg license inventory before distribution.
