@@ -84,6 +84,13 @@ jobs:
           cache-dependency-path: legacy/forge/requirements-dev.lock
       - name: Install locked dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements-dev.lock
+      - name: Fetch the YuNet weights the face-tracking test compares against
+        # Outside git: the snapshot expects them in assets/models (620 tests).
+        run: |
+          mkdir -p assets/models
+          curl -fsSL -o assets/models/face_detection_yunet_2023mar.onnx \
+            https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+          echo "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4  assets/models/face_detection_yunet_2023mar.onnx" | sha256sum -c -
       - name: Run frozen baseline as a comparison set
         working-directory: .
         run: python -m tools.legacy_suites run --suite forge --output legacy-reports

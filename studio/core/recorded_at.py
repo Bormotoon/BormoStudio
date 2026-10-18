@@ -73,7 +73,9 @@ def _iso(value: str) -> datetime | None:
     if not value or "T" not in value and " " not in value.strip():
         return None
     try:
-        moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        # Python 3.10 needs the offset as +03:00, cameras write +0300 or Z.
+        text = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", value.strip().replace("Z", "+00:00"))
+        moment = datetime.fromisoformat(text)
     except ValueError:
         return None
     if moment.year < 1990:  # unset camera clocks report 1904/1970

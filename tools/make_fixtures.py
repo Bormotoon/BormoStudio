@@ -298,7 +298,7 @@ def generate_defects(output_dir: Path, *, force: bool = False) -> Path:
         def project(name: str, camera: np.ndarray, recorder: np.ndarray) -> None:
             folder = output_dir / name
             camera_wav = temp / f"{name}-camera.wav"
-            _write(camera_wav, camera + noise(len(camera) / SAMPLE_RATE, 0.003))
+            _write(camera_wav, camera + rng.standard_normal(len(camera)).astype(np.float32) * 0.003)
             _camera_video(ffmpeg, camera_wav, folder / "camera" / "DJI_0909.MOV",
                           color="0x334455", label=name)
             _write(folder / "recorder" / "2026-10-05_103823465.wav", recorder)
