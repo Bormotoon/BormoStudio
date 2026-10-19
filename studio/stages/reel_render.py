@@ -20,10 +20,12 @@ from studio.core.media import probe
 from studio.core.names import models_dir
 from studio.core.proc import run_logged
 from studio.core.project import Project, stable_fingerprint
+from studio.core.settings import fingerprint_view
 from studio.core.subtitles import Cue, edit_path, load_edits, to_ass
 from studio.core.timeline import EditMap, KeepRange, TimeDomain
 from studio.core.transcript import Segment, Transcript, Word, to_srt
 from studio.core.transcript_index import TranscriptIndex
+from studio.core.voice_fill import PLAYBACK_PREFIX
 from studio.reels.analysis.selection import quality_filters, quality_reasons
 from studio.reels.analysis.speaker_context import speaker_at, speaker_turns
 from studio.reels.clip_edges import ClipEdges, clip_intervals
@@ -93,7 +95,7 @@ class ReelRenderStage:
         inputs.extend(
             path
             for key, paths in project.outputs.items()
-            if key.startswith("sync:")
+            if key.startswith(("sync:", PLAYBACK_PREFIX))
             for path in paths
         )
         transcript = _transcript_path(project)
@@ -113,14 +115,14 @@ class ReelRenderStage:
             )
         return stable_fingerprint(
             "reel-render-v7",
-            _settings(settings),
+            fingerprint_view("reels", _settings(settings)),
             settings.get("program", {}), project.speaker_cameras,
             project.to_dict()["assets"],
             [str(placement) for placement in project.placements],
             {
                 key: [str(path) for path in paths]
                 for key, paths in project.outputs.items()
-                if key.startswith("sync:")
+                if key.startswith(("sync:", PLAYBACK_PREFIX))
             },
             [(str(path), _digest(path, project.work_dir)) for path in inputs if path.is_file()],
             *filter(None, [calibration_view(settings)]),
@@ -718,6 +720,7 @@ def tracking_filter(
             "follow": bool(settings.get("face_follow", True)),
             "layout": str(settings.get("two_speaker_layout", "speaker")),
             "switch": str(settings.get("speaker_switch", "cut")),
+            "faceless": str(settings.get("faceless_shots", "fit")),
         })
         if info is not None:
             info.update(face_rate=value.get("face_rate"), plan=value.get("plan"))

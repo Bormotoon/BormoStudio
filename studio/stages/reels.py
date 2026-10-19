@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from studio.core.project import Project, stable_fingerprint
+from studio.core.settings import fingerprint_view
 from studio.core.transcript import Transcript
 from studio.core.transcript_index import TranscriptIndex
 from studio.llm.providers import LlamaProvider
@@ -139,7 +140,7 @@ class ReelsStage:
         return stable_fingerprint(
             "reels-select-v12",
             content,
-            reels,
+            fingerprint_view("reels", reels),
             prompts,
             model_identity(settings),
             _metadata_identity(project) if reels["episode_context"] or reels["replay"] else "",

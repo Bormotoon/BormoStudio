@@ -436,6 +436,8 @@ SECTIONS: tuple[Section, ...] = (
             Item("two_speaker_layout", "Two people in frame", "speaker: the one talking; "
                  "split: both, stacked."),
             Item("speaker_switch", "New speaker", "cut, or pan when they sit close."),
+            Item("faceless_shots", "Shots without a face",
+                 "fit: screenshots and slides whole over a blurred fill; crop: the centre."),
             Item("face_min_ratio", "Reject reels with faces in less than",
                  "Share of the reel; with tracking only. 0 keeps every reel."),
             Item("speaker_angles", "Switch cameras by speaker"),

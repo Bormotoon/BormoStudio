@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -298,3 +299,42 @@ def test_torch_yunet_matches_opencv() -> None:
         np.testing.assert_allclose(
             kps.numpy().reshape(-1), ref[f"kps_{stride}"].reshape(-1), atol=1e-3
         )
+
+
+def _render(filter_graph: str, output: Path, *, seconds: int = 4) -> np.ndarray:
+    """One RGB frame per second of a 1920x1080 test pattern through ``filter_graph``."""
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+         f"testsrc2=size=1920x1080:rate=10:duration={seconds}", "-vf",
+         f"{filter_graph},fps=1", "-f", "rawvideo", "-pix_fmt", "rgb24", str(output)],
+        check=True)
+    return np.frombuffer(output.read_bytes(), np.uint8).reshape(-1, 192, 108, 3)
+
+
+def test_faceless_shots_are_shown_whole_over_a_blurred_fill(tmp_path: Path) -> None:
+    middle = (1920 - crop_width(1920, 1080, 108, 192)) / 2
+    plan = FramingPlan(duration=4.0, src_w=1920, src_h=1080,
+                       x_path=[PathSegment(0.0, 4.0, middle, middle)], split_shots=[],
+                       rate=0.5, fit_shots=[(2.0, 4.0)])
+    graph = build_framing_filter(plan, out_w=108, out_h=192)
+    assert "cuda" not in graph and "between(t,2.000,3.999)" in graph
+    frames = _render(graph, tmp_path / "frames.rgb")
+    assert len(frames) == 4
+    cropped, fitted = frames[1].astype(float), frames[3].astype(float)
+    # The fitted frame is the whole picture in a band: its rows differ from the
+    # crop, and the blurred fill above and below is darker and smooth.
+    band = (192 - 108 * 1080 // 1920) // 2
+    assert np.abs(fitted - cropped).mean() > 10
+    fill = fitted[: band - 2]
+    assert np.abs(np.diff(fill, axis=1)).mean() < np.abs(np.diff(cropped, axis=1)).mean()
+    assert plan.as_dict()["fit_shots"] == [[2.0, 4.0]]
+
+
+def test_split_shots_and_faceless_shots_compose(tmp_path: Path) -> None:
+    middle = (1920 - crop_width(1920, 1080, 108, 192)) / 2
+    plan = FramingPlan(duration=4.0, src_w=1920, src_h=1080,
+                       x_path=[PathSegment(0.0, 4.0, middle, middle)],
+                       split_shots=[(0.0, 2.0, [(0.3, 0.4), (0.7, 0.4)])],
+                       rate=0.5, fit_shots=[(2.0, 4.0)])
+    frames = _render(build_framing_filter(plan, out_w=108, out_h=192), tmp_path / "frames.rgb")
+    assert len(frames) == 4

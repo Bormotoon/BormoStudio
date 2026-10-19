@@ -45,7 +45,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +95,11 @@ class TrackingSettings:
     layout: str = "speaker"
     #: New speaker: "cut" (hard cut) or "pan" (glide when they sit close).
     switch: str = "cut"
+    #: Shots without a face to follow (screenshots, slides, wide inserts):
+    #: "fit" shows the whole picture over a blurred fill, "crop" the centre.
+    faceless: str = "fit"
+    #: Faceless shots shorter than this keep the crop: a flash is not an insert.
+    faceless_min_s: float = 1.0
     #: Dead zone: how far (share of the output width) the face may drift
     #: from where the camera points before it moves.
     deadzone: float = 0.12
@@ -190,6 +195,8 @@ class FramingPlan:
     turns: list[tuple[float, float, int, float | None]] = field(default_factory=list)
     tracks: list[dict[str, Any]] = field(default_factory=list)
     active_speaker_used: bool = False
+    #: Faceless shots shown whole over a blurred fill: (t0, t1).
+    fit_shots: list[tuple[float, float]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -216,6 +223,7 @@ class FramingPlan:
                 }
                 for a, b, c in self.split_shots
             ],
+            "fit_shots": [[round(a, 2), round(b, 2)] for a, b in self.fit_shots],
             "camera_x": [
                 [round(s.t0, 3), round(s.t1, 3), round(s.v0, 1), round(s.v1, 1)]
                 for s in self.x_path
@@ -976,6 +984,7 @@ def analyze_clip(
 
     path: list[PathSegment] = []
     turns: list[tuple[float, float, int, float | None]] = []
+    fit_shots: list[tuple[float, float]] = []
     min_turn = max(1, int(round(settings.min_turn_s * fps)))
     # Dead zone and speed are shares of the output width, i.e. of the window.
     deadzone_px = settings.deadzone * crop_w
@@ -993,6 +1002,8 @@ def analyze_clip(
         if not mine:
             path.append(PathSegment(a, b, center_x, center_x))
             turns.append((a, b, -1, None))
+            if settings.faceless == "fit" and b - a >= settings.faceless_min_s:
+                fit_shots.append((a, b))
             continue
 
         series = {t.id: t.series(n) for t in mine}
@@ -1086,6 +1097,36 @@ def analyze_clip(
             for t in strong
         ],
         active_speaker_used=bool(speaking),
+        fit_shots=_merge_shots(fit_shots),
+    )
+
+
+def _merge_shots(shots: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    merged: list[tuple[float, float]] = []
+    for a, b in shots:
+        if merged and a - merged[-1][1] <= 1e-3:
+            merged[-1] = (merged[-1][0], b)
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def fit_filter(out_w: int, out_h: int) -> str:
+    """The whole frame, as wide as the output, over a darkened blur of itself.
+
+    The blur runs at a quarter of the size: it is a backdrop, and full-size
+    blurring every frame of a reel would cost more than the crop itself.
+    """
+    small_w, small_h = max(2, out_w // 4 - out_w // 4 % 2), max(2, out_h // 4 - out_h // 4 % 2)
+    # boxblur caps the radius at half the (chroma) plane.
+    radius = max(1, min(8, small_w // 8))
+    return (
+        "split=2[fitb][fitf];"
+        f"[fitb]scale={small_w}:{small_h}:force_original_aspect_ratio=increase,"
+        f"crop={small_w}:{small_h},boxblur={radius}:2,eq=brightness=-0.12,"
+        f"scale={out_w}:{out_h}[fitbg];"
+        f"[fitf]scale={out_w}:-2[fitfg];"
+        "[fitbg][fitfg]overlay=(W-w)/2:(H-h)/2"
     )
 
 
@@ -1146,6 +1187,13 @@ def build_framing_filter(
         return (
             f"scale=w={out_w}:h={out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h}"
         )
+    if plan.fit_shots:
+        # Faceless shots (screenshots, slides) are shown whole instead of cropped.
+        base = build_framing_filter(replace(plan, fit_shots=[]), gpu=False,
+                                    out_w=out_w, out_h=out_h)
+        enable = "+".join(f"between(t,{a:.3f},{b - 1e-3:.3f})" for a, b in plan.fit_shots)
+        return (f"split=2[fitm][fitx];[fitm]{base}[fitbase];[fitx]{fit_filter(out_w, out_h)}"
+                f"[fitted];[fitbase][fitted]overlay=0:0:enable='{enable}'")
     # No exact=1: crop then keeps x even. Decoded NV12 interleaves U and V in
     # one plane, and an odd x would start that plane on a V byte — every such
     # frame came out with swapped colours (an orange jumper turned blue).

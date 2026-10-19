@@ -389,6 +389,9 @@ class ReelsSettings:
     face_follow: bool = True
     two_speaker_layout: str = "speaker"
     speaker_switch: str = "cut"
+    # With tracking, shots without a face (screenshots, slides, wide inserts):
+    # "fit" shows them whole over a blurred fill, "crop" cuts the centre out.
+    faceless_shots: str = "fit"
     # With tracking, a reel showing a face in less than this share of its
     # samples is rejected (0 keeps every reel).
     face_min_ratio: float = 0.3
@@ -558,6 +561,7 @@ LATER_DEFAULTS: dict[str, Any] = {
     "sync.pause_duck_db": -18.0,
     "sync.pause_duck_fade_ms": 80,
     "sync.pause_duck_min_pause_s": 0.6,
+    "reels.faceless_shots": "fit",
 }
 # Kept under a section whose stage does not read them. The lip-sync calibration
 # only moves pictures in exports, the program, previews and reels, which
@@ -615,6 +619,7 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "reels.caption_vertical_align": ("style", "top", "center", "bottom"),
     "reels.two_speaker_layout": ("speaker", "split"),
     "reels.speaker_switch": ("cut", "pan"),
+    "reels.faceless_shots": ("fit", "crop"),
     "reels.tracking_device": ("cpu", "cuda"),
     "reels.layout": ("video", "title", "audiogram"),
     "reels.title_field": ("hook", "title"),

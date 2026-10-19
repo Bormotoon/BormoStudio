@@ -24,6 +24,7 @@ def main() -> None:
         follow=bool(request.get("follow", True)),
         layout=str(request.get("layout", "speaker")),
         switch=str(request.get("switch", "cut")),
+        faceless=str(request.get("faceless", "fit")),
     )
     if request.get("mode") == "camera_evidence":
         from studio.vision.camera_evidence import window_evidence
