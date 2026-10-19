@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ class TimelineStage:
     after: tuple[str, ...] = ("transcribe", "sync")
     # Settings that can change this stage's result; they alone enter its fingerprint.
     settings_keys: tuple[str, ...] = ("sync.mode", "sync.reference_camera",
-                                     "sync.recorder_fill")
+                                     "sync.recorder_fill", "text.term_fixes")
     optional_after = ("sync",)
     gpu = GpuUse.NONE
 
@@ -211,6 +212,7 @@ class TimelineStage:
                     f"place(s); the cameras' sound fills {len(voices)} voice(s)"
                     + (f" and their words {sum(len(seg.words) for seg in added)} word(s) "
                        "of the transcript" if added else ""))
+        transcript = _fixed_terms(transcript, context.settings)
         output = context.work_dir / "stages" / "timeline" / "transcript.json"
         transcript.save(output)
         transcripts = {**context.project.transcripts, "timeline": output}
@@ -219,6 +221,33 @@ class TimelineStage:
         if len(cameras) == 1 and not context.project.placements and source_id == cameras[0].id:
             changes["placements"] = [placement]
         return StageOutput((output, *artifacts), changes, tuple(warnings))
+
+
+def _fixed_terms(transcript: Transcript, settings: dict[str, Any]) -> Transcript:
+    """``text.term_fixes`` ({heard: written}) applied to the timeline transcript.
+
+    Whisper's glossary is a hint; these replacements are certain, and captions,
+    reels and the rough cut read this transcript. Words are realigned to the
+    corrected text on the original timings.
+    """
+    text = settings.get("text", {})
+    pairs = text.get("term_fixes", {}) if isinstance(text, dict) else {}
+    if not isinstance(pairs, dict) or not pairs:
+        return transcript
+    from studio.core.transcript_align import realign_transcript_words
+    from studio.stages.term_check import TermFix, apply_term_fixes
+
+    fixes = [TermFix(str(wrong), str(right), 0, "manual") for wrong, right in pairs.items()]
+    segments, count = [], 0
+    for segment in transcript.segments:
+        corrected, changes = apply_term_fixes(segment.text, fixes)
+        count += changes
+        segments.append(replace(segment, text_override=corrected) if changes else segment)
+    if not count:
+        return transcript
+    fixed, _ = realign_transcript_words(replace(transcript, segments=segments))
+    fixed.metadata = {**transcript.metadata, "term_fixes_applied": count}
+    return fixed
 
 
 def _recorder_ids(project: Project) -> set[str]:

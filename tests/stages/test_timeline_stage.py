@@ -53,3 +53,26 @@ def test_timeline_stage_maps_words_without_retranscription(tmp_path: Path) -> No
     assert timeline.words[0].start == 1.272
     assert timeline.words[0].end == 1.777
     assert timeline.map_id == "placement:rec"
+
+
+def test_term_fixes_correct_the_timeline_transcript(tmp_path: Path) -> None:
+    work = tmp_path / "_studio"
+    source_path = work / "stages" / "transcribe" / "rec.json"
+    Transcript(Path("rec.wav"), "ru", 10, [Segment(1, 4, (
+        Word("копируешь", 1, 1.5), Word("со", 1.6, 1.8), Word("стекловерфлею,", 1.9, 2.8),
+        Word("то", 3.0, 3.2),
+    ))]).save(source_path)
+    project = Project(
+        tmp_path, work,
+        assets=[Asset("rec", Path("rec.wav"), AssetKind.AUDIO, AssetRole.RECORDER)],
+        transcripts={"rec": source_path},
+    )
+    settings = {"text": {"term_fixes": {"стекловерфлею": "Stack Overflow"}}}
+    result = TimelineStage().run(StageContext(project, settings, work))
+    timeline = Transcript.load(result.artifacts[0])
+    assert timeline.segments[0].text == "копируешь со Stack Overflow, то"
+    assert [word.text for word in timeline.words] == [
+        "копируешь", "со", "Stack", "Overflow,", "то"]
+    assert timeline.words[2].start >= 1.9 and timeline.words[3].end <= 2.8
+    assert timeline.metadata["term_fixes_applied"] == 1
+    assert "text.term_fixes" in TimelineStage.settings_keys

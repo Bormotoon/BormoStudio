@@ -34,3 +34,9 @@ def test_manual_fix_is_supported_without_network() -> None:
         "Курокрада",
         1,
     )
+
+
+def test_a_capital_the_fix_adds_on_purpose_is_kept() -> None:
+    fix = TermFix("стекловерфлею", "Stack Overflow", 1, "")
+    assert apply_term_fixes("со стекловерфлею, то", [fix]) == ("со Stack Overflow, то", 1)
+    assert apply_term_fixes("Стекловерфлею!", [fix]) == ("Stack Overflow!", 1)

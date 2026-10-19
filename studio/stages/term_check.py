@@ -161,9 +161,15 @@ def apply_term_fixes(text: str, fixes: Iterable[TermFix]) -> tuple[str, int]:
     for fix in fixes:
         pattern = re.compile(r"\b(" + re.escape(fix.wrong) + r")([а-яёa-z]*)\b", re.IGNORECASE)
 
-        def replace(match: re.Match[str], fix: TermFix = fix) -> str:
+        # A capital the fix adds on purpose (стекловерфлею → Stack Overflow) is
+        # kept; otherwise the replacement follows the case of what was heard.
+        deliberate = fix.wrong[:1].islower() and fix.right[:1].isupper()
+
+        def replace(match: re.Match[str], fix: TermFix = fix, deliberate: bool = deliberate) -> str:
             head, tail = match.group(1), match.group(2)
-            return (fix.right if head[:1].isupper() else fix.right.lower()) + tail
+            if deliberate or head[:1].isupper():
+                return fix.right + tail
+            return fix.right.lower() + tail
 
         result, current = pattern.subn(replace, result)
         count += current
