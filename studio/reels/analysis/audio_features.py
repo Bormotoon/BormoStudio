@@ -13,6 +13,7 @@ from typing import Any
 from studio.core.project import Project, stable_fingerprint
 from studio.core.timeline import AudioWarpMap, SourcePlacement, TimeDomain
 from studio.core.transcript import Transcript
+from studio.core.voice_fill import playback_voice
 from studio.core.workspace import published
 from studio.modules.models import digest
 from studio.reels.analysis.contracts import MomentRecord, replace_record
@@ -105,11 +106,13 @@ def replay_voices(project: Project, directory: Path) -> dict[str, Path]:
 
 
 def synchronized_voices(project: Project) -> dict[str, Path]:
-    return {
-        key.split(":", 1)[1]: paths[0]
-        for key, paths in project.outputs.items()
-        if key.startswith("sync:") and paths and paths[0].is_file()
-    }
+    """Camera voices for listening, filled where the recorder heard nothing."""
+    voices = {}
+    for key, paths in project.outputs.items():
+        if key.startswith("sync:") and paths and paths[0].is_file():
+            asset_id = key.split(":", 1)[1]
+            voices[asset_id] = playback_voice(project, asset_id) or paths[0]
+    return voices
 
 
 AudioInput = tuple[Path | None, SourcePlacement | None, str]

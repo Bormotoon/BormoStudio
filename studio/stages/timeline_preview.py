@@ -16,6 +16,7 @@ from typing import Any
 from studio.core.av_calibration import calibration_view, picture_shifts
 from studio.core.project import Project, stable_fingerprint
 from studio.core.transcript import Transcript
+from studio.core.voice_fill import PLAYBACK_PREFIX
 
 PREVIEW_HEIGHT = 360
 
@@ -51,8 +52,8 @@ def _identity(path: Path) -> list[object]:
 
 def preview_key(project: Project, settings: dict[str, Any], edit: Any, height: int) -> str:
     inputs = [project.source_dir / asset.path for asset in project.assets]
-    inputs += [path for key, paths in project.outputs.items() if key.startswith("sync:")
-               for path in paths]
+    inputs += [path for key, paths in project.outputs.items()
+               if key.startswith(("sync:", PLAYBACK_PREFIX)) for path in paths]
     return stable_fingerprint(
         "timeline-preview-v1", height, [(k.start_s, k.end_s, k.camera_id) for k in edit.keep],
         [str(item) for item in project.placements],

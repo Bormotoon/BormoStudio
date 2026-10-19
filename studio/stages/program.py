@@ -23,6 +23,7 @@ from studio.core.timeline import (
     timeline_to_file,
 )
 from studio.core.transcript import Segment, Transcript, Word
+from studio.core.voice_fill import PLAYBACK_PREFIX, playback_voice
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 from studio.stages.program_encoder import select_encoder
 
@@ -63,7 +64,7 @@ class ProgramStage:
             [
                 describe_artifact(project.work_dir, path, project.work_dir)
                 for key, paths in project.outputs.items()
-                if key.startswith("sync:")
+                if key.startswith(("sync:", PLAYBACK_PREFIX))
                 for path in paths
                 if path.is_file()
             ],
@@ -249,7 +250,7 @@ def program_pieces(
             placement = available[0]
             asset = cameras[placement.asset_id]
             source = project.source_dir / asset.path
-            voice = next(iter(project.outputs.get(f"sync:{asset.id}", [])), None)
+            voice = playback_voice(project, asset.id)
             has_audio = bool(asset.manual.get("media_info", {}).get("audio_codec"))
             audio = voice or (source if has_audio else None)
             result.append(ProgramPiece(

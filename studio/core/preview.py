@@ -16,6 +16,7 @@ from studio.core.media import build_atempo_chain
 from studio.core.project import AssetRole, Project
 from studio.core.timeline import SourcePlacement, timeline_to_file
 from studio.core.transcript import Transcript
+from studio.core.voice_fill import playback_voice
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +46,7 @@ def audio_sources(project: Project) -> list[AudioSource]:
         sources.append(AudioSource(master, None, "master"))
     placements = {item.asset_id: item for item in project.placements}
     for asset in project.assets:
-        voice = next(iter(project.outputs.get(f"sync:{asset.id}", [])), None)
+        voice = playback_voice(project, asset.id)
         if (asset.role is AssetRole.CAMERA and voice is not None and voice.is_file()
                 and asset.id in placements):
             sources.append(AudioSource(voice, placements[asset.id], "synced voice"))

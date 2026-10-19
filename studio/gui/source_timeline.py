@@ -4,6 +4,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QProgressBar, QTreeWidget, QTreeWidgetItem
 
 from studio.core.project import Project
+from studio.core.voice_fill import playback_voice
 
 
 class SourceTimeline(QTreeWidget):
@@ -30,9 +31,9 @@ class SourceTimeline(QTreeWidget):
             end = placement.offset_s + placement.duration_s * placement.k
             item = QTreeWidgetItem(parent, [str(asset.path), f"{placement.offset_s:.3f}",
                                           f"{end:.3f}", f"{placement.k:.6f}"])
-            voice = project.outputs.get(f"sync:{asset.id}", [])
+            voice = playback_voice(project, asset.id)
             detail = (f"{placement.provenance}; source in: {placement.in_s:.3f}s; "
-                      f"voice: {voice[0].name if voice else 'original audio'}")
+                      f"voice: {voice.name if voice else 'original audio'}")
             item.setToolTip(0, detail)
             item.setData(0, Qt.ItemDataRole.UserRole, asset.id)
             bar = QProgressBar()

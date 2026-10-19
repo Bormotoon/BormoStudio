@@ -11,6 +11,7 @@ from studio.core.audio_spans import Span, detect_silence, unknown_sound_spans, w
 from studio.core.project import Project, stable_fingerprint
 from studio.core.timeline import file_to_timeline, timeline_to_file
 from studio.core.transcript import Transcript, Word
+from studio.core.voice_fill import subtract
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 from studio.stages.retake_models import RetakeGroup, RetakeSettings
 from studio.stages.retakes import detect_retakes
@@ -99,7 +100,7 @@ class RoughcutStage:
         llm_identity: object = None
         if conf.get("llm", False):
             from studio.llm.session import model_identity
-            from studio.stages.roughcut_llm import prompt_text
+            from studio.stages.roughcut_llm import prompt_text, task_texts
 
             llm = settings.get("llm", {})
             roles = llm.get("roles", {}) if isinstance(llm, dict) else {}
@@ -108,6 +109,7 @@ class RoughcutStage:
                 roles.get("roughcut", {}),
                 [prompt_text(name, language) for name in ("roughcut_chunk", "roughcut_delivery")
                  for language in ("ru", "en")],
+                task_texts(),
             )
         return stable_fingerprint(
             "roughcut-v6", content, project.placements,
@@ -147,6 +149,7 @@ class RoughcutStage:
         if placement is not None:
             silence = [Span(file_to_timeline(span.start_s, placement),
                             file_to_timeline(span.end_s, placement)) for span in silence]
+        silence = _camera_fill_silence(context.project, transcript, silence, threshold)
         retakes = RetakeSettings(
             detect_retakes=bool(conf.get("detect_retakes", True)),
             retake_min_words=int(conf.get("retake_min_words", 4)),
@@ -188,6 +191,43 @@ class RoughcutStage:
         edit.save(output)
         outputs = {**context.project.outputs, "roughcut": [output]}
         return StageOutput((output, *artifacts), {"outputs": outputs})
+
+
+def _camera_fill_silence(
+    project: Project, transcript: Transcript, silence: list[Span], threshold_db: float,
+) -> list[Span]:
+    """Silence where cameras stand in for a recorder that heard nothing.
+
+    There the recorder's zeros say nothing: the camera's own sound is read
+    instead, with the threshold moved by the gain that matched it to the voice.
+    """
+    filled = transcript.metadata.get("camera_fill") or []
+    if not filled:
+        return silence
+    placements = {item.asset_id: item for item in project.placements}
+    assets = {asset.id: asset for asset in project.assets}
+    holes = [(float(item["start"]), float(item["end"])) for item in filled]
+    kept = [Span(a, b) for span in silence
+            for a, b in subtract([(span.start_s, span.end_s)], holes)]
+    for item in filled:
+        asset, placement = assets.get(str(item["asset_id"])), placements.get(str(item["asset_id"]))
+        if asset is None or placement is None:
+            continue
+        start, end = float(item["start"]), float(item["end"])
+        file_start = max(0.0, timeline_to_file(start, placement))
+        try:
+            heard = detect_silence(
+                project.source_dir / asset.path,
+                threshold_db=threshold_db - float(item.get("gain_db") or 0.0),
+                start_s=file_start, duration_s=(end - start) / placement.k,
+            )
+        except RuntimeError:
+            continue
+        kept.extend(Span(max(start, file_to_timeline(span.start_s, placement)),
+                         min(end, file_to_timeline(span.end_s, placement)))
+                    for span in heard)
+    return sorted((span for span in kept if span.end_s > span.start_s),
+                  key=lambda span: span.start_s)
 
 
 def _conf(settings: dict[str, Any]) -> dict:

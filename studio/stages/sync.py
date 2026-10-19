@@ -198,7 +198,7 @@ def _render_complex(context: StageContext,
     warps = []
     outputs = {key: paths for key, paths in project.outputs.items()
                if not key.startswith(("sync:", "sync-tracks:", "voice-segments:", "ambience:",
-                                      "recorder:"))
+                                      "recorder:", "voice:"))
                and key not in {"master_wav", "self_check", "repair", "verify", "audio_processing"}}
     sync = context.settings.get("sync", {})
     sync = sync if isinstance(sync, dict) else {}
