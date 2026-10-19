@@ -119,6 +119,23 @@ def resumable_fetch(destination: Path, url: str) -> bool:
     )
 
 
+def completed_fetch(destination: Path, video_id: str) -> bool:
+    """Whether ``destination`` holds a finished download of ``video_id`` whose
+    project was never created (stopped between the download and discovery)."""
+    if not destination.is_dir() or (destination / INCOMPLETE).exists():
+        return False
+    media = [path for path in destination.iterdir() if path.is_file()
+             and path.name.startswith("source.") and not path.name.endswith(
+                 (".info.json", ".part", ".ytdl"))]
+    info = destination / "source.info.json"
+    if len(media) != 1 or not info.is_file():
+        return False
+    try:
+        return str(read_fetch_metadata(info).get("id")) == video_id
+    except (OSError, ValueError):
+        return False
+
+
 def _yt_dlp_command() -> list[str]:
     manager = ModuleManager()
     if manager.installed("youtube"):

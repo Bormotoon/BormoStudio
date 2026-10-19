@@ -67,3 +67,22 @@ def test_fetch_settings_become_yt_dlp_options():
         "--format", "bv*[height<=720]+ba/b[height<=720]/b", "--cookies", "c.txt",
         "--limit-rate", "5M",
     ]
+
+
+def test_a_finished_download_without_a_project_is_taken_as_is(tmp_path, monkeypatch):
+    monkeypatch.setattr(channel, "discover_channel", lambda *args: ["abcdefghijk"])
+    folder = tmp_path / "abcdefghijk"
+    folder.mkdir()
+    (folder / "source.webm").write_bytes(b"media")
+    (folder / "source.info.json").write_text('{"id": "abcdefghijk"}', encoding="utf-8")
+
+    def fetch(url, folder, cancelled):
+        raise AssertionError("must not download again")
+
+    sources, results = channel.acquire_channel("url", tmp_path, 1, fetch)
+    assert sources == [folder]
+    assert results == [{"id": "abcdefghijk", "status": "downloaded", "source": str(folder)}]
+    (folder / "source.info.json").write_text('{"id": "other000000"}', encoding="utf-8")
+    calls = []
+    channel.acquire_channel("url", tmp_path, 1, lambda *args: calls.append(args))
+    assert calls  # another video's info: not this download

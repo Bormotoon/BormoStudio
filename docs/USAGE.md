@@ -484,8 +484,9 @@ bash packaging/install_linux.sh /path/to/bormostudio
 ```
 
 Channel discovery is bounded (1–1000 items); projects use validated video IDs.
-Existing project directories resume processing, incomplete nonempty downloads are
-reported rather than overwritten. Acquisition progress is saved atomically in
+Existing project directories resume processing; a finished download whose
+project was never created (stopped between download and discovery) is taken as
+it is; incomplete nonempty downloads are reported rather than overwritten. Acquisition progress is saved atomically in
 `channel-acquisition.json`; batch/channel accept `--report` and emit a structured
 `queue_finished` event with `--events`.
 The nightly helper accepts extra channel options and `BSTUDIO_BIN` for the executable.

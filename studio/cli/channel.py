@@ -9,7 +9,7 @@ from typing import Any
 
 from studio.core.workspace import project_lock, published
 from studio.modules.cancellation import InstallationCancelled, check_cancelled, run_cancellable
-from studio.stages.fetch import _yt_dlp_command
+from studio.stages.fetch import _yt_dlp_command, completed_fetch
 
 
 def discover_channel(
@@ -87,6 +87,8 @@ def acquire_channel(
                     if existing.source_dir.resolve() != folder.resolve():
                         raise ValueError("channel project belongs to another source directory")
                     status = "reused"
+                elif completed_fetch(folder, video_id):
+                    status = "downloaded"
                 else:
                     # Incomplete downloads remain intact for inspection; never overwrite.
                     fetch(f"https://www.youtube.com/watch?v={video_id}", folder, cancelled)
