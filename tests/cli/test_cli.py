@@ -280,3 +280,66 @@ def test_failed_sync_check_is_listed_for_review(tmp_path: Path) -> None:
     ]}))
     assert _sync_review(tmp_path) == {"dji-0921": "failed: shifted beyond 20.0 ms",
                                       "mvi-0844": "inconclusive: 29% of the clip"}
+
+
+def test_a_project_with_no_media_is_blocked_not_ok(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "notes.txt").write_text("not media", encoding="utf-8")
+    assert main(["batch", str(empty), "--json"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "failed"
+    assert report["projects"][0]["status"] == "blocked"
+    assert "no media" in report["projects"][0]["error"]
+    run = json.loads((empty / "_studio" / "report.json").read_text(encoding="utf-8"))
+    assert run["status"] == "blocked" and "prepare" in run["blocked"]
+
+
+def test_fetched_channel_projects_start_from_the_channel_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template = tmp_path / "settings.yaml"
+    template.write_text("reels:\n  enabled: true\n", encoding="utf-8")
+    destination = tmp_path / "abcdefghijk"
+
+    def download(url: str, directory: Path, cancelled=None, options=None) -> tuple[Path, Path]:  # type: ignore[no-untyped-def]
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "source.webm").write_bytes(b"media")
+        (directory / "source.info.json").write_text("{}", encoding="utf-8")
+        return directory / "source.webm", directory / "source.info.json"
+
+    def discover(directory: Path, *, include_prepare: bool, overrides=None) -> Project:
+        project = Project(directory, directory / "_studio")
+        project.save(project.work_dir / "project.json")
+        return project
+
+    monkeypatch.setattr(cli_main, "fetch_to_directory", download)
+    monkeypatch.setattr(cli_main, "_run_discovery", discover)
+    cli_main._fetch_project("https://youtu.be/abcdefghijk", destination, template=template)
+    assert (destination / "_studio" / "settings.yaml").read_text(encoding="utf-8") == (
+        "reels:\n  enabled: true\n")
+
+
+def test_scan_takes_webm_downloads() -> None:
+    from studio.stages.scan import MEDIA_SUFFIXES
+
+    assert ".webm" in MEDIA_SUFFIXES
+
+
+def test_resumed_channel_downloads_get_the_channel_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "settings.yaml").write_text("reels:\n  enabled: true\n", encoding="utf-8")
+    resumed = tmp_path / "abcdefghijk"
+    resumed.mkdir()
+    monkeypatch.setattr("studio.cli.channel.acquire_channel",
+                        lambda *args: ([resumed], [{"id": "abcdefghijk", "status": "resumed"}]))
+    seen = []
+    monkeypatch.setattr(cli_main, "_run_batch", lambda sources, *args, **kwargs: (
+        seen.append((resumed / "_studio" / "settings.yaml").read_text(encoding="utf-8"))
+        or (0, [{"source": str(resumed), "status": "ok"}])))
+    assert main(["channel", "https://youtube.com/@x", str(tmp_path)]) == 0
+    assert seen == ["reels:\n  enabled: true\n"]
+    capsys.readouterr()

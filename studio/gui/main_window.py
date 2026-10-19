@@ -350,6 +350,9 @@ class MainWindow(QMainWindow):
             lines += [f"  {clip}: {reason}" for clip, reason in report.get("review", {}).items()]
         elif status == "failed":
             lines.append("Some steps failed: " + ", ".join(report.get("failures", {})))
+        elif status == "blocked":
+            lines.append("Some steps could not run:")
+            lines += [f"  {stage}: {reason}" for stage, reason in report.get("blocked", {}).items()]
         elif status == "ok":
             lines.append("Done.")
         names = {".fcpxml": "Final Cut Pro", ".xml": "Premiere Pro / DaVinci Resolve",

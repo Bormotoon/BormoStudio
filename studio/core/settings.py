@@ -29,7 +29,7 @@ class ScanSettings:
     # Files shorter than this are false starts (a camera switched on and off by
     # mistake) and are ignored; 0 keeps everything.
     min_duration_s: float = 3.0
-    # Media suffixes beyond .mp4 .mov .mkv .avi .wav .flac .mp3 .m4a (".mts").
+    # Media suffixes beyond .mp4 .mov .mkv .avi .webm .wav .flac .mp3 .m4a (".mts").
     extra_extensions: list[str] = field(default_factory=list)
 
 

@@ -196,11 +196,16 @@ def _run_pipeline(
                 failures[candidate.stage_id] = str(exc)
                 print(str(exc), file=sys.stderr)
         review = _sync_review(project.work_dir)
+        # A blocked stage did not run for a reason the user has to fix (no media
+        # found, a missing input): the run is not "ok" even though nothing failed.
+        blocked = {item.stage_id: item.decision.reason for item in plan.stages
+                   if item.decision.kind.value == "blocked"} if not cancelled_run else {}
         report = {
             "schema_version": 1,
             "status": "cancelled" if cancelled_run else "failed" if failures
-            else "needs_review" if review else "ok",
+            else "blocked" if blocked else "needs_review" if review else "ok",
             "failures": failures,
+            "blocked": blocked,
             # Clips whose rendered voice failed or could not pass the sync check.
             "review": review,
             "warnings": warnings,
@@ -478,6 +483,21 @@ def _run_batch(
                           cancel_file=cancel_file, min_free_gb=min_free_gb, results=results)
 
 
+def _queue_result(source: Path) -> dict[str, str]:
+    """A finished project's queue entry: blocked when its run report says so."""
+    try:
+        report = json.loads((source.resolve() / "_studio" / "report.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"source": str(source), "status": "ok"}
+    blocked = report.get("blocked") or {}
+    if report.get("status") == "blocked" and isinstance(blocked, dict) and blocked:
+        first = next(iter(blocked))
+        return {"source": str(source), "status": "blocked",
+                "error": f"{first}: {blocked[first]}"}
+    return {"source": str(source), "status": "ok"}
+
+
 def _run_queue(
     sources: list[Path],
     overrides: list[str],
@@ -521,16 +541,30 @@ def _run_queue(
                 owner.close()
                 results.append({"source": str(source), "status": "failed", "error": str(exc)})
             else:
-                results.append({"source": str(source), "status": "ok"})
-        return (1 if any(result["status"] == "failed" for result in results) else 0), results
+                results.append(_queue_result(source))
+        return (1 if any(result["status"] in {"failed", "blocked"} for result in results)
+                else 0), results
     finally:
         owner.close()
 
 
+def _seed_settings(sources: list[Path], template: Path) -> None:
+    """Copy ``template`` into each project of ``sources`` that has no settings yet."""
+    if not template.is_file():
+        return
+    for source in sources:
+        target = source / "_studio" / "settings.yaml"
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(template, target)
+
+
 def _fetch_project(
     url: str, destination: Path, cancelled: Callable[[], bool] = lambda: False,
-    conf: dict[str, Any] | None = None,
+    conf: dict[str, Any] | None = None, template: Path | None = None,
 ) -> tuple[Project, dict[str, Any]]:
+    """Download ``url`` into a new project; ``template`` seeds its settings.yaml
+    (a channel's own settings) unless the project already has one."""
     from studio.stages.fetch import resumable_fetch, yt_dlp_options
 
     destination = destination.resolve()
@@ -543,6 +577,8 @@ def _fetch_project(
     destination.mkdir(parents=True, exist_ok=True)
     media, info = fetch_to_directory(url, destination, cancelled,
                                      options=yt_dlp_options(conf or {}))
+    if template is not None:
+        _seed_settings([destination], template)
     project = _run_discovery(destination, include_prepare=False)
     report_path = project.work_dir / "stages" / "fetch" / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -875,7 +911,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
                     args.destination,
                     args.limit,
                     lambda url, folder, cancelled: _fetch_project(
-                        url, folder, cancelled, fetch_conf
+                        url, folder, cancelled, fetch_conf,
+                        template=args.destination / "settings.yaml",
                     ),
                     lambda: args.cancel_file is not None and args.cancel_file.exists(),
                     fetch_conf,
@@ -885,6 +922,10 @@ def _main(argv: Sequence[str] | None = None) -> int:
                 report_path = args.destination / "channel-acquisition.json"
                 if report_path.is_file():
                     acquisition = json.loads(report_path.read_text(encoding="utf-8"))["videos"]
+            else:
+                # Resumed downloads have no project yet: they start from the
+                # channel's settings too.
+                _seed_settings(sources, args.destination / "settings.yaml")
         if status != 130:
             status, results = _run_batch(
                 sources,

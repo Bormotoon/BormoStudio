@@ -19,7 +19,8 @@ from studio.stages.base import (
     select_settings,
 )
 
-MEDIA_SUFFIXES = {".mp4", ".mov", ".mkv", ".avi", ".wav", ".flac", ".mp3", ".m4a"}
+# .webm is what yt-dlp saves YouTube videos as by default.
+MEDIA_SUFFIXES = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".wav", ".flac", ".mp3", ".m4a"}
 IGNORED_SUFFIXES = {".lrf", ".lrv", ".thm"}
 GOPRO_CHAPTER = re.compile(r"^G[HX](\d{2})(\d{4})$", re.IGNORECASE)
 

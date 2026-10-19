@@ -489,6 +489,11 @@ reported rather than overwritten. Acquisition progress is saved atomically in
 `channel-acquisition.json`; batch/channel accept `--report` and emit a structured
 `queue_finished` event with `--events`.
 The nightly helper accepts extra channel options and `BSTUDIO_BIN` for the executable.
+A `settings.yaml` in the channel folder is copied into each new video project
+(`<id>/_studio/settings.yaml`) before discovery, so every episode runs with the
+channel's settings; a project that already has settings keeps them. A project
+whose stages are blocked (no media found, a missing input) is reported as
+`blocked` with the reason, and the queue — and its notification — as failed.
 
 Notifications: `--notify-webhook URL` POSTs the JSON summary (`text`/`content`
 fields work with Slack, Discord and ntfy), `--notify-desktop` uses `notify-send`
