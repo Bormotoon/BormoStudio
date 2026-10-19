@@ -38,8 +38,11 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 ### Prioritized local backlog
 
 1. Done 2026-10-18: CI run of `9fb3dec` is green on every job (Studio 3.10-3.13, frozen WhisperSync 403 and Forge 620, wheel/PyInstaller, installed artifact on Windows and macOS).
-2. Real acceptance still open: the overnight channel run with notifications
-   (see 7). GUI acceptance (basic mode on real material, Material screen,
+2. Done 2026-10-19: the unattended channel run (`tools/night_run.sh`, newest
+   @PedObraz episode, 2 h 48 min): download, every stage, 22 reels, webhook and
+   desktop notifications sent. Its first attempts found four defects (webm not
+   scanned, channel settings not reaching the project, all-blocked reported as
+   ok, a finished download without a project refused), all fixed. GUI acceptance (basic mode on real material, Material screen,
    listening in the app) is deferred by the owner (2026-10-18).
 3. Done 2026-10-18: owner decisions — sync technical acceptance passed (sony_run
    published); calibration and pause ducking ported; downloads in `var/`.

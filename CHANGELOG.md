@@ -16,6 +16,17 @@ All notable changes to Studio will be documented in this file.
 - Program, preview and reels show recorder-only stretches (the recorder
   started before the cameras) as black picture with the recorder's sound
   instead of failing with "no camera covers retained range".
+- Where no recorder heard anything under a camera (a muted input, or no
+  recorder running), the timeline stage gives playback the camera's own sound,
+  level-matched (`voice:<camera>`), and the timeline transcript the cameras'
+  words; recorder time with neither sound nor camera is cut as dead air.
+  `sync.recorder_fill: silence` turns the filling off.
+- `reels.faceless_shots: fit` (default): with face tracking, shots without a
+  face (screenshots, slides, inserts) are shown whole over a blurred fill
+  instead of centre-cropped.
+- `text.term_fixes` also corrects the timeline transcript that captions, reels
+  and the rough cut read, without transcribing again.
+- `docs/THIRD_PARTY.md`: third-party licence inventory.
 
 ### Fixed
 
@@ -32,6 +43,17 @@ All notable changes to Studio will be documented in this file.
 - A caption could start with punctuation Whisper split off ("?» меня…"); it
   now stays with the word before it.
 - A stage that failed in a run was reported as "disabled by user".
+- LLM rough cut: a slip is only suggested with the speaker's verbatim
+  correction (gemma4 proposed whole sentences with an uncorrected wrong
+  ending); changing the detectors' wording now reruns the stage.
+- Channel runs: `.webm` downloads were not scanned, the channel folder's
+  settings did not reach the episode projects, a run whose stages were all
+  blocked was reported and notified as "ok", and a finished download without
+  a project was refused on the next run.
+- A cancelled download said "Installation cancelled."; files written
+  atomically were 0600 regardless of the umask.
+- Captions split hyphenated words Whisper emits apart ("кто" / "-то") and
+  glued a standalone dash to the word before it.
 
 - BormoStudio picks the most capable ffmpeg on PATH at startup (it runs,
   then libass, then NVENC; `BSTUDIO_FFMPEG_DIR` overrides): on the owner's
