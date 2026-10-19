@@ -82,6 +82,15 @@ pyinstaller packaging/pyinstaller/studio.spec    # локальный Linux-би
 
 ## Лицензия
 
-MIT. Решения владельца и политика обновления технологий зафиксированы в
-[docs/PROJECT_DECISIONS.md](docs/PROJECT_DECISIONS.md). Лицензии сторонних ресурсов
-и уведомления исходных snapshot сохраняются отдельно.
+Copyright (C) 2026 Bormotoon.
+
+BormoStudio — свободная программа: её можно распространять и изменять на условиях
+[GNU General Public License](LICENSE) версии 3 или (на ваш выбор) любой более
+поздней версии, опубликованной Free Software Foundation (`GPL-3.0-or-later`).
+Программа распространяется без каких-либо гарантий.
+
+До 2026-10-19 проект был под MIT; полученные тогда копии остаются под MIT.
+Код из Podcast Reels Forge сохраняет своё уведомление MIT
+(`studio/resources/subtitle_editor/LICENSE-Forge.txt`, `legacy/forge/LICENSE`).
+Лицензии сторонних компонентов — в [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md),
+решения владельца — в [docs/PROJECT_DECISIONS.md](docs/PROJECT_DECISIONS.md).

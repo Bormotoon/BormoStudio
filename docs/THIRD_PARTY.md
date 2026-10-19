@@ -1,5 +1,8 @@
 # Third-party components and licenses
 
+BormoStudio is `GPL-3.0-or-later` (see `LICENSE`). Every component below is
+GPL v3-compatible unless an open issue says otherwise.
+
 Inventory before distribution (2026-10-19). “Bundled” ships inside the wheel or
 the PyInstaller build; “on demand” is downloaded by the user's machine through
 Modules/Models (or a managed module environment) and is not redistributed by
@@ -8,11 +11,9 @@ from memory and must be checked against the upstream license before a release.
 
 ## Open issues before a public release
 
-1. **PyQt6 is GPL v3 (or a Riverbank commercial license).** The desktop app and
-   the frozen build bundle it, so a binary distribution must either be offered
-   under GPL v3 terms (with source), use a commercial PyQt licence, or move the
-   GUI to PySide6 (LGPL v3). The project itself is MIT; the CLI without the GUI
-   does not need PyQt.
+1. ~~PyQt6 is GPL v3~~ — resolved 2026-10-19: BormoStudio itself is now
+   `GPL-3.0-or-later`, so binaries bundling PyQt6 are distributed under GPL v3
+   with `LICENSE` inside and the source at the tagged commit.
 2. **`bignoodletoooblique.ttf` has no license file.** BigNoodleTitling Oblique
    (James Arboghast / Sentinel Type) is distributed as freeware; its terms for
    redistribution inside another product are not recorded here. Obtain and ship
@@ -27,15 +28,15 @@ from memory and must be checked against the upstream license before a release.
 
 | Component | Use | License |
 |---|---|---|
-| PyQt6 | desktop GUI | GPL v3 / commercial (see issue 1) |
+| PyQt6 | desktop GUI | GPL v3 (matches the project's licence) |
 | Qt 6 (PyQt6-Qt6 wheels) | GUI, Qt Multimedia playback | LGPL v3 (Qt Multimedia's FFmpeg backend: LGPL) |
 | NumPy | audio analysis | BSD-3-Clause |
 | PyYAML | settings | MIT |
 | platformdirs | user folders | MIT |
 | Montserrat, Oswald, Unbounded (static instances), Russo One, Press Start 2P, Rubik Mono One | caption looks | SIL OFL 1.1 (`studio/resources/fonts/licenses/`); instanced fonts renamed, no Reserved Font Name |
 | BigNoodleTitling Oblique | caption look | unknown (issue 2) |
-| Subtitle editor (`subtitle_editor/`), prompts, presets | from Podcast Reels Forge | MIT (Podcast Reels Forge Contributors) |
-| WhisperSync / Forge legacy snapshots (`legacy/`) | comparison suites, not shipped in the wheel | their own MIT licences |
+| Subtitle editor (`subtitle_editor/`), prompts, presets | from Podcast Reels Forge | MIT (Podcast Reels Forge Contributors), notice in `subtitle_editor/LICENSE-Forge.txt` |
+| Legacy snapshots (`legacy/`) | frozen comparison suites; not in the wheel or the PyInstaller build | Forge: MIT; WhisperSync: PolyForm Noncommercial 1.0.0 (the owner's own code; the parts ported into `studio/` are released by the owner under the project's GPL) |
 
 ## Optional extras and managed modules (installed on the user's machine)
 

@@ -4,8 +4,10 @@ Confirmed by the project owner on 2026-10-08.
 
 - Product name: BormoStudio.
 - Development repository: `/srv/storage/docs/BormoStudio/`.
-- License for the combined project: MIT. Original license notices in preserved
-  source snapshots remain intact; third-party assets retain their own licenses.
+- License for the combined project: GPL-3.0-or-later since 2026-10-19 (MIT
+  before; see “Relicensed to GPL v3” below). Original license notices in
+  preserved source snapshots remain intact; third-party assets retain their own
+  licenses.
 - Immediate acceptance target: the current Linux workstation. Other platforms
   are deferred until the local workflow can be tested end to end.
 - Original WhisperSync and Podcast Reels Forge repositories are left untouched.
@@ -447,3 +449,23 @@ entry points and recorded project paths in the same change.
   sets `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD`: torch ≥ 2.6 loads weights only and
   rejects pyannote's Lightning checkpoints. Moving to pyannote.audio 4
   (`speaker-diarization-community-1`) would remove these pins; not done yet.
+
+### Relicensed to GPL v3 (2026-10-19)
+
+The owner chose GPL v3 for the whole project: the desktop app bundles PyQt6,
+which is GPL v3 (or commercial), and the project's MIT licence could not cover a
+binary that contains it. The licence is `GPL-3.0-or-later` (FSF's recommended
+form; compatible with PyQt6's GPL v3).
+
+- `LICENSE` holds the GPL v3 text; `pyproject.toml` declares `GPL-3.0-or-later`.
+- Copies obtained while the project was MIT stay MIT; every commit is the
+  owner's (the one external commit is a merge without code of its own).
+- WhisperSync is the owner's own code: what was ported into `studio/` is
+  released under GPL v3 with the project. The frozen snapshot in
+  `legacy/whispersync` keeps its PolyForm Noncommercial licence; it is only a
+  comparison suite and ships in neither the wheel nor the PyInstaller build.
+- Code from Podcast Reels Forge (MIT) is GPL-compatible and keeps its notice:
+  `studio/resources/subtitle_editor/LICENSE-Forge.txt` and `legacy/forge/LICENSE`.
+- A binary release must come with, or point to, the corresponding source
+  (the tagged commit on GitHub) and ship `LICENSE`; the PyInstaller build
+  includes it.

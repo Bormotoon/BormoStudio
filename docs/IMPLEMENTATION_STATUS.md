@@ -106,9 +106,9 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 - CI matrix, Python 3.12 qualification and clean Linux installation first;
   Windows/macOS and process-tree cancellation afterward per owner platform priority.
 - Third-party license inventory: written 2026-10-19 (`docs/THIRD_PARTY.md`).
-  Before a public release: PyQt6 is GPL v3 (GPL terms, a commercial licence or
-  PySide6), BigNoodleTitling has no licence file, Gemma 4 and Light-ASD terms
-  are to be verified.
+  The project is `GPL-3.0-or-later` since 2026-10-19 (PyQt6 is GPL v3). Before
+  a public release: BigNoodleTitling has no licence file, Gemma 4 and Light-ASD
+  terms are to be verified.
 
 ### Remaining feature items — 2026-10-10
 

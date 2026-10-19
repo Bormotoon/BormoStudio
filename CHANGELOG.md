@@ -4,6 +4,12 @@ All notable changes to Studio will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- BormoStudio is now licensed under the GNU GPL v3 or later
+  (`GPL-3.0-or-later`; it was MIT). The desktop app bundles PyQt6, which is
+  GPL v3. Code from Podcast Reels Forge keeps its MIT notice.
+
 ### Added
 
 - WhisperSync's lip-sync calibration: `sync.camera_av_offset_ms` and

@@ -15,6 +15,8 @@ a = Analysis(
     pathex=[str(root)],
     binaries=[],
     datas=[
+        # GPL v3: the binary carries its licence (the source is the tagged commit).
+        (str(root / "LICENSE"), "."),
         (str(root / "studio" / "gui" / "theme.qss"), "studio/gui"),
         (str(resource_root / "prompts"), "studio/resources/prompts"),
         (str(resource_root / "presets"), "studio/resources/presets"),
