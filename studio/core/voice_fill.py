@@ -291,23 +291,42 @@ def recorder_audio(project: Project, asset_id: str) -> tuple[Path, int | None] |
     return (source, int(stream) if stream is not None else None) if source.is_file() else None
 
 
-def unheard_spans(project: Project, *, min_s: float = DEAD_S) -> Spans:
-    """Timeline stretches a camera covers where no recorder has live sound.
+@dataclass(frozen=True, slots=True)
+class RecorderSound:
+    """Where the placed recorders have live sound, on the timeline."""
 
-    That is a recorder's dead input (exact zeros) or time before or after every
-    recorder. Empty without placed recorders or when a recorder can't be read.
-    """
+    alive: Spans
+    #: Every recorder's placement, dead stretches included.
+    extent: Spans
+    #: Every placed camera.
+    cameras: Spans
+
+    def unheard(self, min_s: float = DEAD_S) -> Spans:
+        """Camera time no recorder heard: a dead input, or before/after every recorder."""
+        return [span for span in subtract(self.cameras, self.alive)
+                if span[1] - span[0] >= min_s]
+
+    def dead_air(self, min_s: float = DEAD_S) -> Spans:
+        """Recorder time where nothing at all was recorded: no live recorder, no camera."""
+        return [span for span in subtract(self.extent, [*self.alive, *self.cameras])
+                if span[1] - span[0] >= min_s]
+
+
+def recorder_sound(project: Project, *, min_s: float = DEAD_S) -> RecorderSound | None:
+    """Live recorder sound on the timeline; ``None`` without placed recorders or
+    when one can't be read."""
     placements = {item.asset_id: item for item in project.placements}
     recorders = [asset for asset in project.assets
                  if asset.role is AssetRole.RECORDER and asset.id in placements]
     if not recorders:
-        return []
+        return None
     alive: Spans = []
+    extent: Spans = []
     for asset in recorders:
         placement = placements[asset.id]
         found = recorder_audio(project, asset.id)
         if found is None:
-            return []
+            return None
         path, stream = found
         info = asset.manual.get("media_info", {})
         try:
@@ -316,12 +335,19 @@ def unheard_spans(project: Project, *, min_s: float = DEAD_S) -> Spans:
                 int(info.get("audio_channels") or 1), "pcm_s24le"))
             runs = zero_runs(path, min_s=min_s, stream=stream, audio=audio)
         except (OSError, RuntimeError, ValueError):
-            return []
+            return None
         span = (placement.offset_s, placement.offset_s + placement.duration_s * placement.k)
         dead = [(file_to_timeline(start, placement), file_to_timeline(end, placement))
                 for start, end in runs_seconds(runs, audio)]
+        extent.append(span)
         alive.extend(subtract([span], dead))
     cameras = [(item.offset_s, item.offset_s + item.duration_s * item.k)
                for asset in project.assets if asset.role is AssetRole.CAMERA
                for item in [placements.get(asset.id)] if item is not None]
-    return [span for span in subtract(cameras, alive) if span[1] - span[0] >= min_s]
+    return RecorderSound(merge(alive), merge(extent), merge(cameras))
+
+
+def unheard_spans(project: Project, *, min_s: float = DEAD_S) -> Spans:
+    """Timeline stretches a camera covers where no recorder has live sound."""
+    sound = recorder_sound(project, min_s=min_s)
+    return sound.unheard(min_s) if sound is not None else []

@@ -19,9 +19,9 @@ from studio.core.voice_fill import (
     fill_voice,
     level_gain_db,
     merge,
+    recorder_sound,
     runs_seconds,
     subtract,
-    unheard_spans,
     zero_runs,
 )
 from studio.stages.base import (
@@ -86,7 +86,7 @@ class TimelineStage:
             for path in project.outputs.get(f"recorder:{asset.id}", [])
             if path.is_file() and path.is_relative_to(project.work_dir)
         ]
-        return stable_fingerprint("timeline-v5", source_id, content, placement,
+        return stable_fingerprint("timeline-v6", source_id, content, placement,
                                   session_inputs, project.placements, camera_inputs, recorders,
                                   select_settings(settings, self.settings_keys))
 
@@ -184,9 +184,15 @@ class TimelineStage:
                    if not key.startswith(PLAYBACK_PREFIX)}
         artifacts: list[Path] = []
         warnings: list[str] = []
-        if (sync.get("recorder_fill", "camera") == "camera" and sync.get("mode") != "camera"
-                and source_id in _recorder_ids(context.project)):
-            unheard = unheard_spans(context.project)
+        sound = (recorder_sound(context.project)
+                 if sync.get("mode") != "camera" and source_id in _recorder_ids(context.project)
+                 else None)
+        if sound is not None and sound.dead_air():
+            # Nothing recorded and no camera: the rough cut removes it.
+            transcript.metadata["dead_air"] = [[round(a, 3), round(b, 3)]
+                                               for a, b in sound.dead_air()]
+        if sound is not None and sync.get("recorder_fill", "camera") == "camera":
+            unheard = sound.unheard()
             added, filled = _camera_words(context.project, transcript, unheard)
             if added:
                 segments.extend(added)

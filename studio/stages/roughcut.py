@@ -182,6 +182,8 @@ class RoughcutStage:
                             if placement else None),
             head_tail_sound=str(conf.get("head_tail_sound", "cut")),
             coverage=coverage or None,
+            dead_air=[Span(float(a), float(b))
+                      for a, b in transcript.metadata.get("dead_air", [])],
         )
         overrides = context.project.work_dir / "edit-overrides.json"
         if overrides.is_file():
@@ -338,6 +340,7 @@ def build_edit_list(
     audio_coverage: Span | None = None,
     head_tail_sound: str = "cut",
     coverage: list[Span] | None = None,
+    dead_air: list[Span] | None = None,
 ) -> EditList:
     """Cuts and markers for ``transcript``.
 
@@ -390,6 +393,16 @@ def build_edit_list(
         cuts.append(
             Cut(start, start + trim, "pause", 0.95, f"pause {gap.duration_s:.2f}s")
         )
+    # Nothing recorded and no camera (a muted recorder before the cameras): a
+    # black, silent stretch even when sounds around it keep the pause whole.
+    taken = [(cut.start, cut.end) for cut in cuts]
+    for span in dead_air or []:
+        for left, right in subtract([(span.start_s + keep_pause_s / 2,
+                                      span.end_s - keep_pause_s / 2)], taken):
+            if right - left >= minimum_pause_s and not any(
+                    word.start < right and word.end > left for word in words):
+                cuts.append(Cut(left, right, "pause", 0.95,
+                                f"nothing was recorded {right - left:.2f}s"))
     def inside_word(at: float) -> bool:
         return any(word.start < at < word.end for word in words)
 

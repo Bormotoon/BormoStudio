@@ -225,3 +225,35 @@ def test_playback_voice_falls_back_to_the_sync_voice(tmp_path: Path) -> None:
     project.outputs["voice:cam"] = [tmp_path / "missing.wav"]
     assert playback_voice(project, "cam") == project.outputs["sync:cam"][0]
     assert playback_voice(project, "other") is None
+
+
+def test_dead_air_is_recorder_time_with_neither_sound_nor_camera(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    project.placements = [SourcePlacement("rec", 0, 0, 40), SourcePlacement("cam", 15, 0, 20)]
+    sound = voice_fill.recorder_sound(project)
+    assert sound is not None
+    assert sound.dead_air() == [(10.0, 15.0)]
+    assert sound.unheard() == [(15.0, 30.0)]
+    result = TimelineStage().run(StageContext(project, {}, project.work_dir))
+    assert Transcript.load(result.artifacts[0]).metadata["dead_air"] == [[10.0, 15.0]]
+
+
+def test_the_rough_cut_removes_dead_air_even_inside_a_noisy_gap() -> None:
+    from studio.core.audio_spans import Span
+    from studio.stages.roughcut import build_edit_list
+
+    transcript = Transcript(Path("rec.wav"), "ru", 200, [
+        Segment(27, 28, (Word("включил?", 27, 28),)),
+        Segment(171, 172, (Word("Ну,", 171, 172),)),
+    ])
+    # Sounds at 30-33 s keep the 27-171 s gap from being one quiet pause.
+    silence = [Span(28, 30), Span(33, 171)]
+    options = dict(mode="cut", minimum_pause_s=1.0, keep_pause_s=0.4, edge_pad_s=0.2,
+                   silence=silence)
+    plain = build_edit_list(transcript, **options)
+    assert not [cut for cut in plain.cuts if cut.reason == "pause"]
+    edit = build_edit_list(transcript, dead_air=[Span(34, 170.6)], **options)
+    cuts = [(round(cut.start, 1), round(cut.end, 1)) for cut in edit.cuts if cut.reason == "pause"]
+    assert cuts == [(34.2, 170.4)]
+    assert [cut.note for cut in edit.cuts if cut.reason == "pause"] == [
+        "nothing was recorded 136.20s"]
