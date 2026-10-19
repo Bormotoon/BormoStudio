@@ -147,6 +147,10 @@ are ignored, `face_follow` glides the camera within a turn, `two_speaker_layout`
 `speaker_switch` `pan` glides between people sitting close instead of cutting, and
 a reel that shows a face in less than `face_min_ratio` (0.3) of its samples is
 rejected like a filtered moment (`rejected.json`, `render_rejected`).
+Shots without a face to follow (screenshots, slides, wide inserts) are shown
+whole over a darkened blur of themselves (`reels.faceless_shots: fit`, default);
+`crop` keeps the old centre crop. Faceless shots shorter than a second keep the
+crop.
 Install its optional torch/OpenCV dependencies and model files in
 `~/.cache/bormostudio/models/` (override with `BSTUDIO_MODELS_DIR`). Rendering
 does not automatically download models. When tracking is unavailable, it uses
@@ -455,6 +459,22 @@ work offline; MediaWiki requests require both term_check and term_check_network.
 Lookup cache is atomic; failures preserve text with diagnostics. Maximum suspect
 terms is bounded, though each term may require multiple spelling-variant lookups.
 
+### Glossary for Whisper
+
+Terms Whisper mishears (English names in Russian speech, brands, jargon) go into
+`transcribe.glossary`, a list of spellings; they join Whisper's prompt and, unless
+`transcribe.hotwords` is set, its hotwords. On a POS-17 excerpt `Stack Overflow` turned
+“стекловерфлею” into “Stack Overflow” and “гитхаба” into “GitHub”; over the whole
+episode, where the prompt also carries the previous text, it fixed one of the two
+places. Changing the glossary transcribes again.
+
+What must be right goes into `text.term_fixes` ({heard: written}, e.g.
+`стекловерфлею: Stack Overflow`): besides the article text, the timeline stage
+applies it to the timeline transcript that captions, reels and the rough cut
+read, realigning words on the original timings, without transcribing again.
+A capital the fix adds on purpose is kept; otherwise the replacement follows the
+case of what was heard.
+
 ## Channel queue and local installation
 
 ```bash
@@ -591,7 +611,9 @@ master, and a clean result is evidence, not proof, of clean joins.
 
 `roughcut.llm: true` runs four detectors through the local LLM (role `roughcut`):
 `start` (where the conversation really begins), `slips` (corrected slips of the
-tongue), `fillers` (semantic fillers) and `delivery` (best take of a retake
+tongue: the model also quotes the speaker's correction, and a slip whose
+correction is not said right after it, in the same or the next phrase, is
+rejected — an uncorrected wrong ending is what was said, not a slip), `fillers` (semantic fillers) and `delivery` (best take of a retake
 group). The model only returns phrase numbers and verbatim quotes; a quote must
 match transcript words exactly, and cut times come from those words. Findings
 below `roughcut.llm_min_confidence`, longer than `llm_max_cut_s`, beyond
@@ -599,6 +621,33 @@ below `roughcut.llm_min_confidence`, longer than `llm_max_cut_s`, beyond
 `stages/roughcut/llm-report.json`. With `roughcut.llm_apply: suggest` (default)
 LLM cuts appear unaccepted in the Edit list and delivery choices as markers;
 `cut` applies them. Fillers are always markers.
+
+## When the recorder heard nothing
+
+A recorder whose input was muted or unplugged writes exact zeros. Where it did
+(at least a second) or where no recorder runs at all but a camera does, the
+timeline stage lets the cameras stand in, as long as `sync.recorder_fill` is
+`camera` (default):
+
+- the camera voices used for playback get the camera's own sound there, brought
+  to the voice's level (the gain is measured on the louder, speech half of the
+  stretches where both are heard) with short fades; they are written to
+  `stages/timeline/voice/<camera>.wav` (`voice:<camera>` in the project) and used
+  by the program, previews, reels and the editor's audition. The sync voices and
+  the Final Cut/Premiere exports are unchanged;
+- the timeline transcript takes the cameras' words for those stretches (the
+  camera with the most words first, never over a word already there); they are
+  listed with their camera and gain in the transcript's `metadata.camera_fill`,
+  and the rough cut reads silence there from the camera's sound.
+
+The stage reports it as a warning: “no recorder heard N s under the cameras”.
+`sync.recorder_fill: silence` leaves both voices and transcript as they were.
+
+Recorder time where nothing at all was recorded — no live recorder and no camera,
+which the program would show as a black, silent frame — is listed in the
+timeline transcript's `metadata.dead_air`, and the rough cut removes it as a
+pause (“nothing was recorded”) even when a few sounds around it keep the
+surrounding word gap from being one quiet pause.
 
 ## Lip-sync calibration and pause ducking
 

@@ -38,10 +38,9 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 ### Prioritized local backlog
 
 1. Done 2026-10-18: CI run of `9fb3dec` is green on every job (Studio 3.10-3.13, frozen WhisperSync 403 and Forge 620, wheel/PyInstaller, installed artifact on Windows and macOS).
-2. Real acceptance still open: LLM rough-cut suggestions on a real model, an
-   overnight channel run with notifications and a cancelled-then-resumed download.
-   GUI acceptance (basic mode on real material, Material screen, listening in the
-   app) is deferred by the owner (2026-10-18).
+2. Real acceptance still open: the overnight channel run with notifications
+   (see 7). GUI acceptance (basic mode on real material, Material screen,
+   listening in the app) is deferred by the owner (2026-10-18).
 3. Done 2026-10-18: owner decisions — sync technical acceptance passed (sony_run
    published); calibration and pause ducking ported; downloads in `var/`.
 4. Done 2026-10-18/19 with the GPU free: `bstudio tune` (defaults confirmed),
@@ -49,15 +48,42 @@ that point in development, not today's backlog. Plan phase acceptance remains op
    every merge right; across episodes one voice matched, to be confirmed by ear
    from `/srv/storage/files/identity-listen/`), real-model reels on POS-17 (19 reels
    selected by gemma4 and rendered), frames of the video/title/audiogram layouts
-   and caption looks, the whole-edit preview of sony_run_check.
+   and caption looks, the whole-edit preview of sony_run_check (joins checked:
+   same angle on both sides, no black or discoloured frames).
 5. sony_run is accepted and published; pos17v2 is closed.
-6. Found by the sony_run_check whole-edit preview (2026-10-19): the rendered voice
-   of the first camera (`stages/sync/voice/dji-0921.wav`) is digital silence for its
-   first ~140 s although the recorder covers that time, so the program, preview and
-   reels are silent there; the Final Cut multicam (whole recorder angle) is not
-   affected. Find why sync rendered a lead silence there and fill it from the
-   recorder.
-6. Installed/frozen real-processing checks, production packaging, private sample
+6. Done 2026-10-19: the silent start of the first sony_run voice. The recorder
+   itself is exact zeros from 34 s to 355 s (its input was muted after “Включи
+   его, ты включил?”), so sync rendered it faithfully. The timeline stage now
+   fills such stretches from the cameras' own sound for playback (`voice:`)
+   and adds the cameras' words (110 on sony_run_check, two voices filled, gains
+   +3.6/−6.2 dB); see USAGE “When the recorder heard nothing”.
+7. Done 2026-10-19 with the GPU free (pedobraz paused):
+   - LLM rough-cut suggestions on gemma4-26b, sony_run_check (3.75 h): 32
+     requests, no failures, ~6 min per run with the model fully on the GPU and
+     `cache_ram_mb: 2048` (the `auto` prompt cache was what oomd killed on
+     2026-10-13). The model offered whole sentences with an uncorrected wrong
+     ending as slips; slips now need the speaker's verbatim correction (75 of 79
+     rejected, 4 suggested, 167 fillers, 7 delivery choices). Detector wording is
+     now part of the stage fingerprint (a wording change was silently reused).
+   - Cancelled-then-resumed download through the `youtube` module (installed
+     here for the first time): cancel exits 130 and keeps the `.part`, the same
+     command finishes it (`yt-dlp --continue`).
+   - Glossary: `transcribe.glossary` fixes “стекловерфлею” → “Stack Overflow”
+     on a POS-17 excerpt, but over the whole episode only one of two places
+     (quality mode prompts with the previous text). `text.term_fixes` now also
+     corrects the timeline transcript: pos17_check has both right.
+   - pos17_check rerun with the glossary and term fix: 21 reels selected by
+     gemma4 and rendered; three of them have faceless shots (film inserts, a
+     logo) now shown whole over a blurred fill (`reels.faceless_shots: fit`)
+     instead of a centre crop.
+   - sony_run_check: 34–170 s, where the recorder was muted and no camera ran,
+     is now cut as dead air (136 s of black silence at the start of the
+     preview); the rerun preview checks the filled camera sound after it.
+   - pyannote.audio 4.0.7 with `speaker-diarization-community-1` on POS-17:
+     same speech, 99.3 % label agreement with 3.1, two tiny voices merged. Not
+     adopted: it brings torch 2.14/cu130 and torchcodec (shared ffmpeg libraries
+     on Windows/macOS) and identity thresholds would need re-validation.
+8. Installed/frozen real-processing checks, production packaging, private sample
    acceptance. The frozen Forge suite passes in its locked environment (619 passed,
    1 skipped: `test_torch_yunet_matches_opencv` needs YuNet weights inside the
    snapshot); Studio's reels selection, clip edges and caption check are compared
