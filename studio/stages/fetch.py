@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from studio.core.project import Project, stable_fingerprint
-from studio.modules.cancellation import run_cancellable
+from studio.modules.cancellation import InstallationCancelled, run_cancellable
 from studio.modules.manager import ModuleManager
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 
@@ -85,7 +85,12 @@ def fetch_to_directory(
         "--",
         url,
     ]
-    result = run_cancellable(command, cancelled)
+    try:
+        result = run_cancellable(command, cancelled)
+    except InstallationCancelled:
+        raise InstallationCancelled(
+            "Download cancelled; the partial file is kept and the same command resumes it."
+        ) from None
     if result.returncode:
         raise RuntimeError(f"yt-dlp failed: {result.stderr.strip()}")
     media = [

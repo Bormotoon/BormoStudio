@@ -14,6 +14,7 @@ from typing import Any
 from studio.core.digest import file_digest
 from studio.core.enums import StrEnum
 from studio.core.timeline import AudioWarpMap, AudioWarpPiece, SourcePlacement, TimeDomain
+from studio.core.workspace import ordinary_mode
 
 PROJECT_SCHEMA_VERSION = 1
 MANIFEST_SCHEMA_VERSION = 1
@@ -268,6 +269,7 @@ def _atomic_json(path: Path, data: dict[str, Any]) -> None:
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
     try:
+        ordinary_mode(temporary)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(data, handle, ensure_ascii=False, indent=2)
             handle.write("\n")

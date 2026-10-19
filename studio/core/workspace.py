@@ -12,6 +12,29 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def ordinary_mode(path: str | Path) -> None:
+    """Give a ``mkstemp`` file the mode a plain write would (``0o666`` minus umask).
+
+    ``mkstemp`` always creates 0600; published under the final name that would
+    hide project files from other users of a shared folder (an editor on a Mac
+    reading the exports over the network).
+    """
+    os.chmod(path, 0o666 & ~_umask())
+
+
+def _umask() -> int:
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            for line in status:
+                if line.startswith("Umask:"):
+                    return int(line.split()[1], 8)
+    except (OSError, ValueError):
+        pass
+    current = os.umask(0o022)
+    os.umask(current)
+    return current
+
+
 class ProjectLockedError(RuntimeError):
     """Another live Studio process owns this project workspace."""
 
@@ -23,6 +46,7 @@ def published(final_path: Path) -> Iterator[Path]:
         dir=final_path.parent, prefix=f".{final_path.name}.", suffix=".tmp"
     )
     os.close(descriptor)
+    ordinary_mode(name)
     temporary = Path(name)
     try:
         yield temporary

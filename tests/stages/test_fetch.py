@@ -68,7 +68,7 @@ def test_cancel_mid_download_keeps_partial_and_same_url_resumes(tmp_path, monkey
     def cancel_once_partial_exists():
         return (destination / "source.mp4.part").exists()
 
-    with pytest.raises(InstallationCancelled):
+    with pytest.raises(InstallationCancelled, match="Download cancelled; the partial file"):
         fetch_to_directory("https://youtu.be/x", destination, cancel_once_partial_exists)
     assert time.monotonic() - started < 20
     assert (destination / "source.mp4.part").read_bytes() == b"partial"

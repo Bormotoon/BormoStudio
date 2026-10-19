@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from studio.core.workspace import ordinary_mode
+
 SAMPLE_BYTES = 64 * 1024
 CACHE_SCHEMA = "studio/digests/1"
 # Timestamps of coarse filesystems (FAT, HFS+, some network shares) cannot tell
@@ -172,6 +174,7 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".digests.", suffix=".tmp")
     try:
+        ordinary_mode(temporary)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(data, handle, ensure_ascii=False)
         os.replace(temporary, path)

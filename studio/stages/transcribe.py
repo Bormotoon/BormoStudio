@@ -25,6 +25,7 @@ from studio.core.transcript_sanity import (
     speech_clips,
     suspect_count,
 )
+from studio.core.workspace import ordinary_mode
 from studio.stages.base import Decision, GpuUse, Requirement, StageContext, StageOutput
 
 CACHE_SCHEMA = "studio/transcript-cache/3"
@@ -567,6 +568,7 @@ class WhisperEngine:
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
+            ordinary_mode(temporary)
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
                 json.dump(
                     {"cache_schema": CACHE_SCHEMA, "transcript": transcript.to_dict()},
