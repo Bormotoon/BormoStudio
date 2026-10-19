@@ -52,6 +52,15 @@ def test_punctuation_whisper_split_off_stays_with_its_word() -> None:
     assert [cue.text for cue in build_cues(words, one)] == ["«Почему?»", "меня"]
 
 
+def test_hyphenated_words_whisper_split_stay_whole() -> None:
+    one = CaptionOptions(max_words=1, text_case="upper")
+    words = [TimedWord("кто", 0.0, 0.3, "A"), TimedWord("-то", 0.3, 0.5, "A"),
+             TimedWord("конкуренты", 0.6, 1.2, "A"), TimedWord("—", 1.3, 1.4, "A"),
+             TimedWord("да", 1.5, 1.7, "A")]
+    assert [cue.text for cue in build_cues(words, one)] == [
+        "КТО-ТО", "КОНКУРЕНТЫ", "—", "ДА"]
+
+
 def test_text_transforms_and_censoring() -> None:
     options = CaptionOptions(text_case="upper", punctuation="periods",
                              censor=("бля*",), censor_style="middle")

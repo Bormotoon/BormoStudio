@@ -199,13 +199,17 @@ def build_cues(words: list[TimedWord], options: CaptionOptions) -> list[CaptionC
     limit = chars_per_line(options) * max(1, options.max_lines)
     shown = [TimedWord(display_word(w.text, options), w.start, w.end, w.speaker) for w in words]
     shown = [word for word in shown if word.text]
-    # Whisper sometimes emits closing punctuation as its own word ("«Почему" "?»");
-    # it belongs to the word before it, never at the start of the next cue.
+    # Whisper sometimes emits closing punctuation as its own word ("«Почему" "?»")
+    # and splits hyphenated words ("кто" "-то", "карго" "-культ"); both belong to
+    # the word before, never at the start of the next line or cue.
     joined: list[TimedWord] = []
     for word in shown:
         # Even across a speaker boundary: diarization cuts between words, not
         # inside "«Почему?»".
-        if joined and not any(ch.isalnum() for ch in word.text):
+        hyphenated = word.text[:1] == "-" and word.text[1:2].isalpha()
+        # A dash stands between words with spaces around it ("да — нет").
+        dash = word.text.strip() in {"—", "–", "-"}
+        if joined and not dash and (hyphenated or not any(ch.isalnum() for ch in word.text)):
             last = joined[-1]
             joined[-1] = TimedWord(last.text + word.text, last.start, max(last.end, word.end),
                                    last.speaker)
