@@ -16,7 +16,7 @@ removed in a rough cut. A human makes the final decision.
 
 # Response format
 {"start": {"phrase": 3, "reason": "..."} or null,
- "slips": [{"phrase": 12, "quote": "...", "reason": "...", "confidence": 0.8}],
+ "slips": [{"phrase": 12, "quote": "...", "fix": "...", "reason": "...", "confidence": 0.8}],
  "fillers": [{"phrase": 15, "quote": "...", "reason": "...", "confidence": 0.7}]}
 
 # Phrases

@@ -26,7 +26,13 @@ _TASKS = {
                  "по существу после проверки звука, отсчёта и подготовки. null, если "
                  "разговор начинается сразу.",
         "slips": "slips — оговорки: неверное слово или начало фразы, которое спикер "
-                 "тут же поправил. quote — только ошибочный кусок, без поправки.",
+                 "тут же поправил. quote — только ошибочный кусок, без поправки; fix — "
+                 "дословно то, чем спикер поправился (в той же или следующей фразе). "
+                 "Нет поправки — нет оговорки: неверное окончание, падеж или неудачная "
+                 "формулировка, которые спикер не исправил, не предлагай. Пример: во "
+                 "фразе «приходи в среду, то есть в четверг» quote — «в среду, то есть», "
+                 "fix — «в четверг»; quote никогда не содержит поправку, а fix "
+                 "не пересказывает её своими словами.",
         "fillers": "fillers — паразиты по смыслу: «как бы», «в общем», «то есть», "
                    "которые ничего не добавляют именно в этом месте.",
     },
@@ -35,7 +41,12 @@ _TASKS = {
                  "substantive phrase after sound checks, countdowns and setup. null if "
                  "the conversation starts right away.",
         "slips": "slips — slips of the tongue: a wrong word or false start the speaker "
-                 "immediately corrected. quote is only the wrong part, not the fix.",
+                 "immediately corrected. quote is only the wrong part, not the fix; fix is "
+                 "the speaker's correction, verbatim (in the same or the next phrase). "
+                 "No correction, no slip: never suggest a wrong ending or awkward wording "
+                 "the speaker left as it was. Example: in \"come on Wednesday, I mean "
+                 "Thursday\" quote is \"on Wednesday, I mean\" and fix is \"Thursday\"; "
+                 "quote never contains the correction and fix never rewords it.",
         "fillers": "fillers — semantic fillers: \"like\", \"you know\", \"I mean\" that add "
                    "nothing at this exact spot.",
     },
@@ -131,6 +142,11 @@ def chunk_phrases(phrases: list[Phrase], max_chars: int) -> list[list[Phrase]]:
     if current:
         chunks.append(current)
     return chunks
+
+
+def task_texts() -> dict[str, dict[str, str]]:
+    """The detector task wording that fills ``{tasks}``: part of the prompt."""
+    return {language: dict(tasks) for language, tasks in _TASKS.items()}
 
 
 def prompt_text(name: str, language: str) -> str:
@@ -283,6 +299,9 @@ def _accept_quote(
         _reject(result, detector, item, "quote not found verbatim in phrase")
         return
     words = by_id[phrase_id].words[span[0]:span[1]]
+    if detector == "slips" and not _corrected(item.get("fix"), by_id, phrase_id, span):
+        _reject(result, detector, item, "no correction follows the slip")
+        return
     if len(words) == len(by_id[phrase_id].words) and detector == "fillers":
         _reject(result, detector, item, "filler quote covers the whole phrase")
         return
@@ -294,6 +313,26 @@ def _accept_quote(
         detector, start, end, " ".join(word.text for word in words),
         str(item.get("reason", ""))[:200], confidence,
     ))
+
+
+def _corrected(
+    fix: Any, by_id: dict[int, Phrase], phrase_id: int, span: tuple[int, int],
+) -> bool:
+    """Whether ``fix`` is said right after the slip: later in its phrase or in the next.
+
+    A slip is only cut when the speaker corrected it; cutting an uncorrected one
+    removes what was said, not a mistake on the way to saying it.
+    """
+    if not isinstance(fix, str) or not fix.strip():
+        return False
+    phrase = by_id[phrase_id]
+    if " ".join(word.text for word in phrase.words[span[0]:span[1]]).strip().lower() == (
+            fix.strip().lower()):
+        return False
+    if locate_quote(phrase.words[span[1]:], fix) is not None:
+        return True
+    following = by_id.get(phrase_id + 1)
+    return following is not None and locate_quote(following.words, fix) is not None
 
 
 def _accept_delivery(

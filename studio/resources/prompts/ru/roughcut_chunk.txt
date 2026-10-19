@@ -16,7 +16,7 @@
 
 # Формат ответа
 {"start": {"phrase": 3, "reason": "..."} или null,
- "slips": [{"phrase": 12, "quote": "...", "reason": "...", "confidence": 0.8}],
+ "slips": [{"phrase": 12, "quote": "...", "fix": "...", "reason": "...", "confidence": 0.8}],
  "fillers": [{"phrase": 15, "quote": "...", "reason": "...", "confidence": 0.7}]}
 
 # Фразы

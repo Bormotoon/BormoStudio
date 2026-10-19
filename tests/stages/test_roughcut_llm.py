@@ -48,7 +48,11 @@ def test_detectors_snap_to_words_and_reject_unproven_findings() -> None:
         return {
             "start": {"phrase": 1, "reason": "sound check", "confidence": 0.9},
             "slips": [
-                {"phrase": 2, "quote": "был вторник,", "reason": "corrected", "confidence": 0.8},
+                {"phrase": 2, "quote": "был вторник,", "fix": "то есть среда",
+                 "reason": "corrected", "confidence": 0.8},
+                {"phrase": 3, "quote": "важная тема", "reason": "wrong ending", "confidence": 0.9},
+                {"phrase": 2, "quote": "среда", "fix": "вторник", "reason": "fix before",
+                 "confidence": 0.9},
                 {"phrase": 2, "quote": "был четверг", "reason": "invented", "confidence": 0.9},
                 {"phrase": 99, "quote": "это", "reason": "bad id", "confidence": 0.9},
                 {"phrase": 2, "quote": "это", "reason": "weak", "confidence": 0.2},
@@ -64,9 +68,30 @@ def test_detectors_snap_to_words_and_reject_unproven_findings() -> None:
     ]
     reasons = sorted(item["why"] for item in result.rejected)
     assert reasons == [
-        "below llm_min_confidence", "invalid confidence",
-        "quote not found verbatim in phrase", "unknown phrase",
+        "below llm_min_confidence", "invalid confidence", "no correction follows the slip",
+        "no correction follows the slip", "quote not found verbatim in phrase", "unknown phrase",
     ]
+
+
+def test_a_whole_phrase_false_start_is_a_slip_when_the_next_phrase_fixes_it() -> None:
+    transcript = Transcript(Path("a.wav"), "ru", 30, [
+        _segment("Перезопустим в видео два", 0.0),
+        _segment("Перезапустим видео два", 3.0),
+        _segment("это лучший колледже в Москве", 6.0),
+    ])
+    result = run_detectors(transcript, [], lambda prompt: {
+        "start": None,
+        "slips": [
+            {"phrase": 0, "quote": "Перезопустим в видео два", "fix": "Перезапустим видео два",
+             "reason": "restarted", "confidence": 0.9},
+            {"phrase": 2, "quote": "это лучший колледже в Москве", "fix": "колледж",
+             "reason": "wrong ending", "confidence": 0.9},
+            {"phrase": 1, "quote": "видео", "fix": "видео", "reason": "same", "confidence": 0.9},
+        ],
+    }, _options())
+    assert [(item.detector, item.start) for item in result.findings] == [("slips", 0.0)]
+    assert [item["why"] for item in result.rejected] == [
+        "no correction follows the slip", "no correction follows the slip"]
 
 
 def test_start_beyond_limit_and_bad_payloads_are_reported() -> None:
@@ -91,7 +116,8 @@ def test_llm_suggestions_are_unaccepted_and_fillers_stay_markers() -> None:
     transcript = _transcript()
     result = run_detectors(transcript, [], lambda prompt: {
         "start": None,
-        "slips": [{"phrase": 2, "quote": "был вторник", "reason": "fix", "confidence": 0.9}],
+        "slips": [{"phrase": 2, "quote": "был вторник", "fix": "среда", "reason": "fix",
+                   "confidence": 0.9}],
         "fillers": [{"phrase": 3, "quote": "как бы", "reason": "empty", "confidence": 0.9}],
     }, _options())
     options = dict(mode="cut", minimum_pause_s=5, keep_pause_s=0.4, edge_pad_s=0.2, silence=None)
@@ -150,3 +176,17 @@ def test_settings_and_runner_ownership() -> None:
     assert not stage_uses_llm(stage, {"roughcut": {"llm": False}})
     assert stage_uses_llm(stage, {"roughcut": {"llm": True}})
     assert stage.requirements({"roughcut": {"llm": True, "model": "gemma"}})[0].kind == "llama"
+
+
+def test_detector_wording_is_part_of_the_fingerprint(tmp_path, monkeypatch) -> None:
+    from studio.core.project import Project
+    from studio.stages import roughcut_llm
+
+    work = tmp_path / "_studio"
+    path = work / "timeline.json"
+    _transcript().save(path)
+    project = Project(tmp_path, work, transcripts={"timeline": path})
+    settings = {"roughcut": {"llm": True}}
+    before = RoughcutStage().fingerprint(project, settings)
+    monkeypatch.setitem(roughcut_llm._TASKS["ru"], "slips", "другая формулировка")
+    assert RoughcutStage().fingerprint(project, settings) != before
