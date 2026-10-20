@@ -122,31 +122,41 @@ class SpeakersStage:
         tracks = microphone_tracks(context.project, conf)
         placements = {item.asset_id: item for item in context.project.placements}
         assets = {asset.id: asset for asset in context.project.assets}
-        decoded: dict[str, np.ndarray] = {}
+        from studio.stages.speaker_identity import voice_signature
+
+        match_files = bool(conf.get("match_files", True))
+        # One recorder file in memory at a time: a long session has dozens of
+        # files, and holding them all decoded runs the machine out of memory.
+        signatures: dict[str, np.ndarray | None] = {}
+        lane_envelopes: dict[str, np.ndarray] = {}
+        warped_assets: set[str] = set()
+        by_asset: dict[str, list[str]] = {}
         for track in tracks:
-            asset_id = track.rsplit(":", 1)[0]
-            if asset_id not in decoded:
-                asset = assets[asset_id]
-                decoded[asset_id] = decode_channels(
-                    recorder_audio(context.project, asset),
-                    int(asset.manual.get("media_info", {}).get("audio_channels") or 1),
-                )
+            by_asset.setdefault(track.rsplit(":", 1)[0], []).append(track)
+        for asset_id, asset_tracks in by_asset.items():
+            asset = assets[asset_id]
+            decoded = decode_channels(
+                recorder_audio(context.project, asset),
+                int(asset.manual.get("media_info", {}).get("audio_channels") or 1),
+            )
+            warp = recorder_warp(context.project, asset_id)
+            warped_assets.update([asset_id] if warp else [])
+            for track in asset_tracks:
+                samples = decoded[:, int(track.rsplit(":", 1)[1])]
+                if match_files:
+                    signatures[track] = voice_signature(samples)
+                lane_envelopes[track] = timeline_envelope(
+                    samples, placements[asset_id], transcript.duration, step_s=step, warp=warp)
+            del decoded
         identities: dict[str, object] | None = None
-        if conf.get("match_files", True):
+        if match_files:
             tracks, identities = match_microphone_lanes(
-                context.project, conf, tracks, decoded, placements,
+                context.project, conf, tracks, signatures, placements,
                 threshold=float(conf.get("match_threshold", 0.9)),
             )
         envelopes: dict[str, np.ndarray] = {}
-        warped_assets: set[str] = set()
         for track, speaker in tracks.items():
-            asset_id, channel_text = track.rsplit(":", 1)
-            channel = int(channel_text)
-            samples = decoded[asset_id][:, channel]
-            warp = recorder_warp(context.project, asset_id)
-            warped_assets.update([asset_id] if warp else [])
-            envelope = timeline_envelope(samples, placements[asset_id], transcript.duration,
-                                         step_s=step, warp=warp)
+            envelope = lane_envelopes[track]
             # Several files/channels assigned to one speaker share one lane.
             envelopes[speaker] = np.maximum(envelopes.get(speaker, np.zeros_like(envelope)),
                                             envelope)
@@ -202,18 +212,17 @@ def match_microphone_lanes(
     project: Project,
     conf: dict[str, object],
     tracks: dict[str, str],
-    decoded: dict[str, np.ndarray],
+    signatures: dict[str, np.ndarray | None],
     placements: dict[str, SourcePlacement],
     *,
     threshold: float,
-    sample_rate: int = 16000,
 ) -> tuple[dict[str, str], dict[str, object] | None]:
     """Give one person one name across recorder files that do not play together.
 
     Lanes in one file, or in files that overlap on the timeline, are different
     people. Names the user gave are kept and can be inherited by matching lanes.
     """
-    from studio.stages.speaker_identity import VoiceLabel, match_labels, voice_signature
+    from studio.stages.speaker_identity import VoiceLabel, match_labels
 
     groups = sorted({track.rsplit(":", 1)[0] for track in tracks})
     simultaneous = {
@@ -227,8 +236,8 @@ def match_microphone_lanes(
     named = named_microphone_tracks(project, conf)
     labels: list[VoiceLabel] = []
     for track, speaker in tracks.items():
-        asset_id, channel = track.rsplit(":", 1)
-        signature = voice_signature(decoded[asset_id][:, int(channel)], sample_rate)
+        asset_id = track.rsplit(":", 1)[0]
+        signature = signatures.get(track)
         if signature is None:
             continue
         placement = placements.get(asset_id)

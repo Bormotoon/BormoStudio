@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 
@@ -61,19 +62,35 @@ def voice_signature(samples: np.ndarray, rate: int = SAMPLE_RATE) -> np.ndarray 
     if len(samples) < frame * 20:
         return None
     count = 1 + (len(samples) - frame) // hop
-    index = np.arange(frame)[None, :] + hop * np.arange(count)[:, None]
-    frames = samples[index] * np.hamming(frame)
-    energy = np.sqrt(np.mean(np.square(frames), axis=1))
+    window = np.hamming(frame)
+
+    def frames(start: int, stop: int) -> np.ndarray:
+        # Framed in chunks: a whole recording at once is gigabytes per hour.
+        index = np.arange(frame)[None, :] + hop * np.arange(start, stop)[:, None]
+        return cast(np.ndarray, samples[index] * window)
+
+    chunk = 20000
+    energy = np.concatenate([
+        np.sqrt(np.mean(np.square(frames(start, min(start + chunk, count))), axis=1))
+        for start in range(0, count, chunk)
+    ])
     loud = energy > max(1e-4, float(np.percentile(energy, 60)))
     # Bleed from other microphones is quieter: keep frames near this lane's peak.
     loud &= 20 * np.log10(np.maximum(energy, 1e-12)) > 20 * np.log10(energy.max()) - 30
     if loud.sum() < 20:
         return None
-    spectrum = np.abs(np.fft.rfft(frames[loud], fft_size)) ** 2
-    logmel = np.log(spectrum @ _mel_filters(bands, fft_size, rate).T + 1e-10)
+    filters = _mel_filters(bands, fft_size, rate)
     basis = np.cos(np.pi / bands * (np.arange(bands)[None, :] + 0.5)
                    * np.arange(1, coefficients)[:, None])
-    cepstra = logmel @ basis.T
+    parts = []
+    for start in range(0, count, chunk):
+        selected = start + np.flatnonzero(loud[start:start + chunk])
+        if not len(selected):
+            continue
+        index = np.arange(frame)[None, :] + hop * selected[:, None]
+        spectrum = np.abs(np.fft.rfft(samples[index] * window, fft_size)) ** 2
+        parts.append(np.log(spectrum @ filters.T + 1e-10) @ basis.T)
+    cepstra = np.concatenate(parts)
     # Per-coefficient scale keeps low coefficients from dominating the cosine.
     weights = 1 / np.arange(1, coefficients)
     signature: np.ndarray = np.concatenate(
