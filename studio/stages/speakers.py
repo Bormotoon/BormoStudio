@@ -43,7 +43,7 @@ class SpeakersStage:
 
     def requirements(self, settings: dict[str, Any]) -> list[Requirement]:
         speakers = settings.get("speakers", {})
-        if isinstance(speakers, dict) and speakers.get("method") == "pyannote":
+        if isinstance(speakers, dict) and speakers.get("method") in {"pyannote", "cascade"}:
             return [Requirement("module", "diarization", "pyannote speaker diarization")]
         return [Requirement("binary", "ffmpeg", "decode microphone channels")]
 
@@ -53,7 +53,7 @@ class SpeakersStage:
         method = str(conf.get("method", "auto"))
         if method == "off":
             return Decision.skip("speaker detection is off")
-        if method == "pyannote":
+        if method in {"pyannote", "cascade"}:
             from studio.modules.manager import ModuleManager
 
             if "timeline" not in project.transcripts:
@@ -61,7 +61,7 @@ class SpeakersStage:
             if not ModuleManager().installed("diarization"):
                 return Decision.blocked("diarization module is missing",
                                         "install diarization module")
-            return Decision.run({"method": "pyannote"})
+            return Decision.run({"method": method})
         tracks = microphone_tracks(project, conf)
         if len(set(tracks.values())) < 2:
             return (Decision.skip("fewer than two microphone speakers") if method == "auto"
@@ -86,9 +86,24 @@ class SpeakersStage:
         )
         conf = settings.get("speakers", {})
         conf = conf if isinstance(conf, dict) else {}
-        tracks = {} if conf.get("method") == "pyannote" else microphone_tracks(project, conf)
+        method = conf.get("method")
+        tracks = {} if method in {"pyannote", "cascade"} else microphone_tracks(project, conf)
         selected = {key.split(":", 1)[0] for key in tracks}
-        if conf.get("method") == "pyannote":
+        llm_identity: object = None
+        if method == "cascade" and transcript and transcript.is_file():
+            from studio.stages.speaker_cascade import cascade_sources
+
+            selected = {asset.id for asset, _placement in cascade_sources(
+                project, Transcript.load(transcript),
+                float(conf.get("cascade_min_source_s", 30.0)))}
+            if conf.get("cascade_llm", True):
+                from studio.llm.session import model_identity
+
+                llm = settings.get("llm", {})
+                roles = llm.get("roles", {}) if isinstance(llm, dict) else {}
+                llm_identity = (model_identity(settings), roles.get("speakers", {}),
+                                bool(isinstance(llm, dict) and llm.get("managed")))
+        if method == "pyannote":
             from studio.stages.timeline import _primary_source_id
 
             source_id = (Transcript.load(transcript).metadata.get("source_asset_id")
@@ -104,12 +119,15 @@ class SpeakersStage:
         identities = [describe_artifact(project.source_dir, project.source_dir / asset.path,
                                         project.work_dir)
                       for asset in project.assets if asset.id in selected]
+        from studio.core.settings import fingerprint_view
+
         return stable_fingerprint(
             "speakers-v7", content, tracks, identities, project.placements,
             [warp for warp in project.audio_warp_maps if warp.source_asset_id in selected],
             # num_speakers came later: at its default it leaves results reusable.
-            {key: value for key, value in conf.items()
+            {key: value for key, value in fingerprint_view("speakers", conf).items()
              if not (key == "num_speakers" and not value)},
+            *([] if llm_identity is None else [llm_identity]),
         )
 
     def run(self, context: StageContext) -> StageOutput:
@@ -118,6 +136,8 @@ class SpeakersStage:
         transcript = Transcript.load(context.project.transcripts["timeline"])
         if conf.get("method") == "pyannote":
             return run_pyannote(context, transcript, conf)
+        if conf.get("method") == "cascade":
+            return run_cascade_stage(context, transcript, conf)
         step = float(conf.get("step_s", 0.05))
         tracks = microphone_tracks(context.project, conf)
         placements = {item.asset_id: item for item in context.project.placements}
@@ -492,6 +512,82 @@ def run_pyannote(context: StageContext, transcript: Transcript, conf: dict) -> S
     return StageOutput((output, raw_output, report, *logs), {"outputs": {
         **project.outputs, "speakers": [output, report], "speakers_raw": [raw_output],
     }})
+
+
+def run_cascade_stage(
+    context: StageContext, transcript: Transcript, conf: dict,
+) -> StageOutput:
+    from studio.stages.speaker_cascade import LLM_SCHEMA, run_cascade
+
+    project = context.project
+    directory = context.work_dir / "stages" / "speakers"
+    session, complete = _cascade_llm(context, conf)
+    try:
+        segments, report = run_cascade(
+            project, transcript, conf, directory,
+            lambda asset: recorder_audio(project, asset), context.progress,
+            complete=None if complete is None else lambda prompt: complete(
+                prompt, LLM_SCHEMA),
+        )
+    finally:
+        if session is not None:
+            session.close()
+    turns = [SpeakerTurn(item.start, item.end, item.final_speaker(), f"cascade:{item.step}")
+             for item in segments]
+    output = directory / "diarization.json"
+    raw_output = directory / "diarization.raw.json"
+    details = directory / "cascade.json"
+    save_turns(raw_output, turns)
+    max_gap = float(conf.get("max_gap_s", 0.3))
+    merged = merge_adjacent_turns(
+        [SpeakerTurn(turn.start, turn.end, turn.speaker, "cascade") for turn in turns], max_gap)
+    save_turns(output, smooth_short_turns(merged, min_turn_s=float(conf.get("min_turn_s", 0.3)),
+                                        max_gap_s=max_gap))
+    details.write_text(json.dumps([item.to_dict() for item in segments], ensure_ascii=False)
+                       + "\n", encoding="utf-8")
+    report_path = directory / "report.json"
+    report_path.write_text(json.dumps({
+        "schema_version": 1, "time_domain": "timeline", "method": "cascade",
+        "model": conf.get("model", "pyannote/speaker-diarization-3.1"),
+        "device": conf.get("device", "cpu"), **report,
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    logs = tuple(sorted(directory.rglob("logs/*.log")))
+    return StageOutput((output, raw_output, details, report_path, *logs), {"outputs": {
+        **project.outputs, "speakers": [output, report_path], "speakers_raw": [raw_output],
+    }})
+
+
+def _cascade_llm(context: StageContext, conf: dict) -> tuple[Any, Any]:
+    """The cascade's own llama session, started only when its step needs it.
+
+    The stage does not declare the LLM to the runner: the model would hold the
+    GPU through diarization and Light-ASD, which need it first.
+    """
+    if not conf.get("cascade_llm", True):
+        return None, None
+    settings = context.settings
+    llm = settings.get("llm", {}) if isinstance(settings.get("llm"), dict) else {}
+    if not llm.get("managed") and not conf.get("base_url"):
+        return None, None
+    from studio.llm.providers import LlamaProvider
+    from studio.llm.retries import JsonRequestBudget
+    from studio.llm.roles import role_provider
+    from studio.llm.session import ManagedLlamaSession
+
+    session = ManagedLlamaSession(llm, context.work_dir) if llm.get("managed") else None
+    provider = role_provider(settings, "speakers", "speakers",
+                             context.project.work_dir / "cache" / "llm", LlamaProvider)
+    budget = JsonRequestBudget(1, 20)
+    started = False
+
+    def complete(prompt: str, schema: dict) -> Any:
+        nonlocal started
+        if session is not None and not started:
+            session.ensure()
+            started = True
+        return budget.request(provider, prompt, schemas=(schema,))
+
+    return session, complete
 
 
 def recorder_audio(project: Project, asset: Asset) -> Path:

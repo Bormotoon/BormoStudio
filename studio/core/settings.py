@@ -236,6 +236,14 @@ class SpeakerSettings:
     match_files: bool = True
     match_threshold: float = 0.9
     embedding_threshold: float = 0.5
+    # method "cascade": audio of every source, then close-up cameras, then the
+    # language model; each step only for phrases still below this confidence.
+    cascade_confident: float = 0.95
+    cascade_vision: bool = True
+    cascade_llm: bool = True
+    cascade_min_source_s: float = 30.0
+    # Language model of the cascade when Studio does not own a llama server.
+    base_url: str = ""
 
 
 @dataclass(slots=True)
@@ -562,6 +570,11 @@ LATER_DEFAULTS: dict[str, Any] = {
     "sync.pause_duck_fade_ms": 80,
     "sync.pause_duck_min_pause_s": 0.6,
     "reels.faceless_shots": "fit",
+    "speakers.cascade_confident": 0.95,
+    "speakers.cascade_vision": True,
+    "speakers.cascade_llm": True,
+    "speakers.cascade_min_source_s": 30.0,
+    "speakers.base_url": "",
 }
 # Kept under a section whose stage does not read them. The lip-sync calibration
 # only moves pictures in exports, the program, previews and reels, which
@@ -610,7 +623,7 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "roughcut.llm_prompt_language": ("auto", "ru", "en"),
     "export.markers": ("cuts", "all", "none"),
     "program.encoder": ("auto", "nvenc", "videotoolbox", "libx264", "cpu"),
-    "speakers.method": ("auto", "mics", "pyannote", "off"),
+    "speakers.method": ("auto", "mics", "pyannote", "cascade", "off"),
     "speakers.device": ("cpu", "cuda"),
     "text.prompt_language": ("auto", "ru", "en"),
     "reels.prompt_language": ("auto", "ru", "en"),
@@ -715,9 +728,10 @@ def validate_settings(settings: Settings) -> None:
     if settings.speakers.num_speakers < 0:
         raise SettingsError("speakers.num_speakers must be 0 (automatic) or a count")
     _positive("speakers.step_s", settings.speakers.step_s)
+    _non_negative("speakers.cascade_min_source_s", settings.speakers.cascade_min_source_s)
     _non_negative("speakers.min_turn_s", settings.speakers.min_turn_s)
     _non_negative("speakers.max_gap_s", settings.speakers.max_gap_s)
-    for name in ("match_threshold", "embedding_threshold"):
+    for name in ("match_threshold", "embedding_threshold", "cascade_confident"):
         value = getattr(settings.speakers, name)
         if not math.isfinite(value) or not 0 <= value <= 1:
             raise SettingsError(f"speakers.{name} must be between 0 and 1")
@@ -956,7 +970,8 @@ def validate_settings(settings: Settings) -> None:
         raise SettingsError("export.name must be text")
 
 
-LLM_ROLES = {"proofread", "article", "context", "scout", "cleanup", "judge", "roughcut"}
+LLM_ROLES = {"proofread", "article", "context", "scout", "cleanup", "judge", "roughcut",
+             "speakers"}
 
 
 def _validate_llm_tuning(llm: LlmSettings) -> None:

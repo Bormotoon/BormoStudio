@@ -273,7 +273,8 @@ SECTIONS: tuple[Section, ...] = (
         Group("Attribution", (
             Item("method", "Method",
                  "auto, mics (who is loudest on their own microphone), pyannote "
-                 "(diarization) or off."),
+                 "(diarization), cascade (every source, then cameras, then the "
+                 "language model) or off."),
             Item("tracks", "Speaker per microphone",
                  "{asset:channel: speaker}; lanes named on the Material page win."),
             Item("margin_db", "Microphone margin, dB",
@@ -293,6 +294,17 @@ SECTIONS: tuple[Section, ...] = (
                  "Cosine similarity of the MFCC voice signatures."),
             Item("embedding_threshold", "Embedding match",
                  "Cosine similarity of pyannote speaker embeddings."),
+        )),
+        Group("Cascade", (
+            Item("cascade_confident", "Stop at confidence",
+                 "A phrase this sure after a step skips the later steps."),
+            Item("cascade_vision", "Check close-up cameras",
+                 "Light-ASD: whose face speaks during uncertain phrases."),
+            Item("cascade_llm", "Ask the language model",
+                 "Decides the phrases still uncertain from the conversation."),
+            Item("cascade_min_source_s", "Shortest clip to diarize, s"),
+            Item("base_url", "Language model address",
+                 "Used when Studio does not run its own llama server."),
         )),
     )),
     Section("program", "Review video", (
