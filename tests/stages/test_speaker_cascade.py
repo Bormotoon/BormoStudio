@@ -15,10 +15,13 @@ from studio.stages.speaker_cascade import (
     apply_llm_answers,
     audio_votes,
     build_source,
+    cached_worker,
+    calibrate,
     cascade_sources,
     cluster_labels,
     decide,
     llm_windows,
+    posterior,
     run_cascade,
     segment_words,
     vision_step,
@@ -134,29 +137,41 @@ def test_agreeing_sources_stop_the_cascade_after_audio(tmp_path: Path) -> None:
 
 def test_language_model_decides_only_the_open_phrases(tmp_path: Path) -> None:
     project, raw = _three_sources(tmp_path)
-    # The guest camera hears the swap late: 60-80 s is disputed.
-    raw["camB"] = _turns("Y", "X", switch=80)
+    # The host camera hears the change late (60-80 s) and errs at 90-100 s too;
+    # in 60-80 s the guest camera is silent, so the sound alone is split.
+    raw["camA"] = {"turns": [{"start": 0, "end": 80, "speaker": "X"},
+                             {"start": 80, "end": 90, "speaker": "Y"},
+                             {"start": 90, "end": 100, "speaker": "X"},
+                             {"start": 100, "end": 120, "speaker": "Y"}], "embeddings": {}}
+    raw["camB"] = {"turns": [{"start": 0, "end": 60, "speaker": "Y"},
+                             {"start": 80, "end": 120, "speaker": "X"}], "embeddings": {}}
     asked: list[str] = []
 
     def complete(prompt: str) -> Any:
+        # A model that reads the conversation right: the change is at 60 s.
         asked.append(prompt)
-        open_lines = [int(line.split("]")[0][1:]) for line in prompt.splitlines()
-                      if line.startswith("[") and "] ?" in line]
-        return {"answers": [{"line": line, "speaker": "SPEAKER_01", "confidence": 0.9}
-                            for line in open_lines] + [
-                {"line": 0, "speaker": "SPEAKER_01", "confidence": 1.0}]}
+        answers = []
+        for line in prompt.splitlines():
+            if line.startswith("[") and "] ?:" in line:
+                number, text = int(line.split("]")[0][1:]), line.split("?:", 1)[1]
+                start = int(text.split()[0][1:]) * 2
+                answers.append({"line": number, "confidence": 0.9,
+                                "speaker": "SPEAKER_00" if start < 60 else "SPEAKER_01"})
+        return {"answers": answers + [{"line": 0, "speaker": "SPEAKER_01", "confidence": 1}]}
 
     with patch("studio.stages.speaker_cascade.diarize_sources", return_value=raw):
         segments, report = run_cascade(project, _transcript(tmp_path),
                                        {"cascade_vision": False}, tmp_path,
                                        lambda asset: tmp_path / asset.path,
                                        complete=complete)
-    disputed = [item for item in segments if 60 <= item.start < 80]
+    disputed = [item for item in segments if 62 <= item.start < 80]
     assert disputed and all(item.step == "llm" for item in disputed)
     assert all(item.speaker == "SPEAKER_01" for item in disputed)
-    # A line the audio was sure of is never reopened by the model.
-    assert segments[0].speaker == "SPEAKER_00" and "llm" not in segments[0].votes
-    assert asked and report["steps"][-1]["step"] == "llm"
+    # Control lines it answered right make the model count.
+    assert report["steps"][-1]["reliability"]["llm"] > 0.8
+    # A line the audio was sure of is never overturned by the model.
+    assert segments[0].speaker == "SPEAKER_00"
+    assert asked and "?:" in asked[0] and "SPEAKER_00 0." not in asked[0]
     assert LLM_SCHEMA["required"] == ["answers"]
 
 
@@ -196,9 +211,12 @@ def test_model_answers_are_checked() -> None:
 
 def test_uncertain_neighbours_share_one_request() -> None:
     segments = [Segment(i, i, i + 1, str(i)) for i in range(60)]
-    windows = llm_windows(segments, [10, 12, 50], context=3)
+    windows = llm_windows(segments, [10, 12, 50], context=3, control=0)
     assert [open_lines for _shown, open_lines in windows] == [[10, 12], [50]]
     assert windows[0][0] == list(range(7, 16))
+    controlled = llm_windows(segments, [10, 12, 50], context=3, control=2)
+    assert [len(open_lines) for _shown, open_lines in controlled] == [4, 3]
+    assert set(controlled[0][1]) - {10, 12} <= set(range(7, 16)) - {10, 12}
 
 
 def test_frame_grid_follows_the_placement() -> None:
@@ -253,3 +271,51 @@ def test_voices_compare_around_their_common_component() -> None:
     names, _report = cluster_labels(sources)
     assert names[("a", "S0")] == names[("b", "S1")] == names[("c", "S0")]
     assert names[("a", "S0")] != names[("a", "S1")]
+
+
+def test_an_unreliable_source_is_outvoted_and_one_source_is_not_certain() -> None:
+    votes = {"good": {"P": 1.0}, "fair": {"P": 1.0}, "bad": {"Q": 1.0}}
+    weights = dict.fromkeys(votes, 1.0)
+    speaker, sure = posterior(votes, weights, {"good": 0.95, "fair": 0.9, "bad": 0.6})
+    assert speaker == "P" and sure > 0.99
+    alone = posterior({"good": {"P": 1.0}}, {"good": 1.0}, {"good": 0.93}, ["P", "Q"])
+    assert alone == ("P", pytest.approx(0.93))
+    # A vote with little behind it moves toward chance.
+    faint = posterior({"good": {"P": 1.0}}, {"good": 0.2}, {"good": 0.93}, ["P", "Q"])
+    assert 0.5 < faint[1] < 0.7
+
+
+def test_reliability_follows_agreement_with_the_others() -> None:
+    segments = []
+    for index in range(40):
+        truth = "P" if index % 2 else "Q"
+        wrong = "Q" if truth == "P" else "P"
+        segment = Segment(index, index, index + 1, str(index))
+        segment.votes = {"a": {truth: 1.0}, "b": {truth: 1.0},
+                         "c": {wrong if index % 4 == 0 else truth: 1.0}}
+        segment.weights = dict.fromkeys(segment.votes, 1.0)
+        segment.decide("audio")
+        segments.append(segment)
+    reliability = calibrate(segments, ["P", "Q"], "audio", {item.id for item in segments})
+    assert reliability["a"] > 0.9 and reliability["b"] > 0.9
+    assert 0.6 < reliability["c"] < 0.85
+    assert all(item.speaker == ("P" if item.id % 2 else "Q") for item in segments)
+
+
+def test_light_asd_results_are_reused(tmp_path: Path) -> None:
+    video = tmp_path / "cam.mp4"
+    video.write_bytes(b"video")
+    calls: list[list] = []
+
+    def worker(request: dict) -> dict:
+        calls.append(request["windows"])
+        return {"active_speaker": True,
+                "windows": [{"faces": 1, "speaking": float(low)}
+                            for low, _high in request["windows"]]}
+
+    cached = cached_worker(worker, tmp_path / "asd")
+    request = {"mode": "camera_evidence", "video": str(video), "windows": [[1, 2], [3, 4]]}
+    first = cached(request)
+    second = cached({**request, "windows": [[3, 4], [5, 6]]})
+    assert calls == [[[1, 2], [3, 4]], [[5, 6]]]
+    assert first["windows"][1] == second["windows"][0] == {"faces": 1, "speaking": 3.0}

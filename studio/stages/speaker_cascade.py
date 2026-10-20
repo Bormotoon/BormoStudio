@@ -14,8 +14,10 @@ own votes, so a later step can only add certainty, never throw evidence away.
 3. LLM: the remaining phrases go to the language model with their context,
    sample lines of each person and the camera names; it votes on the text.
 
-Confidence is the winner's share of the weighted votes, discounted by how much
-independent evidence there is: one microphone alone is never certain.
+Confidence is the probability of the winner given every vote, each key right
+with its own rate estimated from the votes themselves (Dawid–Skene): a camera
+that often contradicts the rest counts little, and a source is only as sure as
+its record, so one microphone alone is rarely certain.
 """
 
 from __future__ import annotations
@@ -84,8 +86,11 @@ class Segment:
     confidence: float = 0.0
     step: str = ""
 
-    def decide(self, step: str) -> None:
-        self.speaker, self.confidence = decide(self.votes, self.weights)
+    def decide(self, step: str, reliability: dict[str, float] | None = None,
+               people: Iterable[str] = ()) -> None:
+        self.speaker, self.confidence = (
+            decide(self.votes, self.weights) if reliability is None
+            else posterior(self.votes, self.weights, reliability, people))
         self.step = step
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,6 +122,86 @@ def decide(
             scores[speaker] += weights.get(key, 0.0) * value
     best = max(sorted(scores), key=lambda name: scores[name])
     return best, scores[best] / total * (1 - DOUBT_PER_WEIGHT ** total)
+
+
+#: Independence is an approximation (sources hear one room); never claim more.
+MAX_POSTERIOR = 0.999
+UNKNOWN_RELIABILITY = 0.7
+
+
+def posterior(
+    votes: dict[str, dict[str, float]], weights: dict[str, float],
+    reliability: dict[str, float], people: Iterable[str] = (),
+) -> tuple[str, float]:
+    """The most probable speaker and its probability given every vote.
+
+    Each evidence key is right with its own probability (``reliability``); a
+    vote with little behind it (``weights`` below 1) moves toward chance.
+    """
+    candidates = sorted(set(people) | {name for distribution in votes.values()
+                                       for name in distribution})
+    voting = [(key, distribution) for key, distribution in votes.items()
+              if distribution and weights.get(key, 0.0) > 0]
+    if not candidates or not voting:
+        return "unknown", 0.0
+    count = max(2, len(candidates))
+    chance = 1 / count
+    log_odds = dict.fromkeys(candidates, 0.0)
+    for key, distribution in voting:
+        accuracy = reliability.get(key, UNKNOWN_RELIABILITY)
+        accuracy = chance + (accuracy - chance) * min(1.0, weights[key])
+        for name in candidates:
+            share = distribution.get(name, 0.0)
+            log_odds[name] += math.log(
+                max(1e-12, accuracy * share + (1 - accuracy) / (count - 1) * (1 - share)))
+    peak = max(log_odds.values())
+    total = sum(math.exp(value - peak) for value in log_odds.values())
+    best = max(candidates, key=lambda name: log_odds[name])
+    return best, min(MAX_POSTERIOR, 1 / total)
+
+
+def calibrate(
+    segments: list[Segment], people: list[str], step: str, open_ids: set[int],
+    *, iterations: int = 10,
+) -> dict[str, float]:
+    """How often each evidence key agrees with the decisions, and the decisions
+    from those reliabilities, refined together (Dawid–Skene, one rate per key).
+
+    ``open_ids`` are the phrases this step looked at; they take its name.
+    """
+    reliability: dict[str, float] = {}
+    for _round in range(iterations):
+        agree: dict[str, float] = defaultdict(float)
+        total: dict[str, float] = defaultdict(float)
+        for segment in segments:
+            for key, distribution in segment.votes.items():
+                weight = min(1.0, segment.weights.get(key, 0.0))
+                if weight <= 0 or not distribution:
+                    continue
+                # Judged against the others alone: a key that only votes where
+                # the rest disagree must not be measured against itself.
+                others = {name: votes for name, votes in segment.votes.items() if name != key}
+                label, sure = posterior(others, segment.weights, reliability, people)
+                if label in NON_SPEAKERS:
+                    continue
+                count = max(2, len(set(people) | set(distribution) | {label}))
+                trust = max(0.0, (sure - 1 / count) / (1 - 1 / count))
+                agree[key] += weight * trust * distribution.get(label, 0.0)
+                total[key] += weight * trust
+        # Laplace keeps a rarely seen key near chance.
+        updated = {key: min(0.99, max(0.5, (agree[key] + 1) / (total[key] + 2)))
+                   for key in total}
+        changed = 0
+        for segment in segments:
+            before = segment.speaker
+            segment.decide(step if segment.id in open_ids else segment.step, updated, people)
+            changed += segment.speaker != before
+        stable = all(abs(updated.get(key, 0) - reliability.get(key, 0)) < 1e-3
+                     for key in updated)
+        reliability = updated
+        if not changed and stable:
+            break
+    return reliability
 
 
 def segment_words(
@@ -368,7 +453,7 @@ LLM_PROMPTS = {
         "можно верить.\n"
         "3. Для каждой реплики с «?» выбери участника из списка выше по смыслу "
         "разговора: кто задаёт вопрос, кто отвечает, к кому обращаются по имени, "
-        "кто продолжает свою мысль. Подсказки по звуку даны в скобках.\n"
+        "кто продолжает свою мысль.\n"
         "4. confidence — число от 0 до 1. Не уверен — ставь ниже 0.5 или speaker "
         "\"unknown\".\n5. Верни только JSON.\n\n"
         "# Формат ответа\n{\"answers\": [{\"line\": 12, \"speaker\": \"SPEAKER_01\", "
@@ -383,7 +468,7 @@ LLM_PROMPTS = {
         "trust them.\n"
         "3. For every line marked \"?\" pick a participant from the list above from "
         "the conversation: who asks, who answers, who is addressed by name, who goes "
-        "on with their own thought. Sound hints are in brackets.\n"
+        "on with their own thought.\n"
         "4. confidence is a number from 0 to 1. Unsure: go below 0.5 or answer "
         "speaker \"unknown\".\n5. Return JSON only.\n\n"
         "# Answer format\n{\"answers\": [{\"line\": 12, \"speaker\": \"SPEAKER_01\", "
@@ -423,8 +508,13 @@ def llm_people(
 
 def llm_windows(
     segments: list[Segment], uncertain: list[int], *, context: int = 8, max_open: int = 20,
+    control: int = 2,
 ) -> list[tuple[list[int], list[int]]]:
-    """(lines shown, lines to answer) per request; uncertain phrases share context."""
+    """(lines shown, lines to answer) per request; uncertain phrases share context.
+
+    ``control`` already decided lines of each window are asked too, unmarked:
+    the answers on them measure how often the model is right.
+    """
     windows: list[tuple[list[int], list[int]]] = []
     for position in uncertain:
         low, high = max(0, position - context), min(len(segments), position + context + 1)
@@ -434,7 +524,26 @@ def llm_windows(
             open_lines.append(position)
         else:
             windows.append((list(range(low, high)), [position]))
+    asked = set(uncertain)
+    for shown, open_lines in windows:
+        decided = [position for position in shown if position not in asked]
+        if decided and control:
+            step = len(decided) / min(control, len(decided))
+            open_lines.extend(decided[int(step * index + step / 2)]
+                              for index in range(min(control, len(decided))))
+            open_lines.sort()
     return windows
+
+
+def control_sample(segments: list[Segment], open_ids: set[int], count: int) -> list[int]:
+    """Decided phrases spread over the recording, checked like open ones to
+    measure a step's own accuracy."""
+    decided = [item.id for item in segments
+               if item.id not in open_ids and item.speaker not in NON_SPEAKERS]
+    if not decided or count <= 0:
+        return []
+    step = len(decided) / min(count, len(decided))
+    return [decided[int(step * index + step / 2)] for index in range(min(count, len(decided)))]
 
 
 def llm_prompt(
@@ -445,22 +554,12 @@ def llm_prompt(
     for position in shown:
         item = segments[position]
         if position in open_lines:
-            hints = sorted(_scores(item).items(), key=lambda pair: -pair[1])[:3]
-            hint = ", ".join(f"{name} {value:.2f}" for name, value in hints)
-            lines.append(f"[{item.id}] ? ({hint}): {item.text}")
+            # No sound hints: the model judges the text alone, an independent vote.
+            lines.append(f"[{item.id}] ?: {item.text}")
         else:
             lines.append(f"[{item.id}] {item.final_speaker()}: {item.text}")
     template = LLM_PROMPTS.get(language, LLM_PROMPTS["ru"])
     return template.replace("{people}", people_text).replace("{lines}", "\n".join(lines))
-
-
-def _scores(segment: Segment) -> dict[str, float]:
-    total = sum(segment.weights.get(key, 0.0) for key in segment.votes)
-    scores: dict[str, float] = defaultdict(float)
-    for key, distribution in segment.votes.items():
-        for name, value in distribution.items():
-            scores[name] += segment.weights.get(key, 0.0) * value / (total or 1)
-    return dict(scores)
 
 
 def apply_llm_answers(
@@ -723,12 +822,15 @@ def run_cascade(
     audio_votes(segments, sources, names)
     for segment in segments:
         segment.decide("audio")
+    people = people_of(segments, options.min_person_s)
+    every = {item.id for item in segments}
+    reliability = calibrate(segments, people, "audio", every)
     report["sources"] = [{"asset_id": source.asset_id, "key": source.key,
                           "labels": {label: names[(source.asset_id, label)]
                                      for label in source.labels}} for source in sources]
     report["identity_pairs"] = [pair for pair in pairs if pair["merged"]]
-    report["steps"] = [_step_report("audio", segments, options.confident)]
-    people = people_of(segments, options.min_person_s)
+    report["steps"] = [{**_step_report("audio", segments, options.confident),
+                        "reliability": _rounded(reliability)}]
     report["people"] = people
 
     def open_ids() -> list[int]:
@@ -741,16 +843,19 @@ def run_cascade(
             if worker is None:
                 from studio.stages.reel_render import run_vision_worker
                 worker = run_vision_worker
+            worker = cached_worker(worker, project.work_dir / "cache" / "speakers" / "asd")
             bound, suggestion = bind_cameras(project, segments, sources, people, options,
                                              worker)
             report["camera_binding"] = {"bound": bound, "contrast": suggestion["contrast"]}
             errors: list[str] = []
-            votes = vision_step(project, segments, open_ids(), sources, bound, people,
+            asked = open_ids()
+            asked += control_sample(segments, set(asked), max(50, len(asked) // 10))
+            votes = vision_step(project, segments, sorted(asked), sources, bound, people,
                                 worker, errors) if bound else 0
-            for position in open_ids():
-                segments[position].decide("vision")
+            reliability = calibrate(segments, people, "vision", set(open_ids()))
             report["steps"].append({**_step_report("vision", segments, options.confident),
-                                    "votes": votes, "failed_requests": errors[:50]})
+                                    "votes": votes, "failed_requests": errors[:50],
+                                    "reliability": _rounded(reliability)})
             assets = {asset.id: asset for asset in project.assets}
             for key, person in bound.items():
                 group = key.split(":", 1)[1]
@@ -774,14 +879,50 @@ def run_cascade(
                                              set(open_lines), people, payload)
             except (OSError, ValueError, KeyError, TypeError):
                 failed += 1
-        for position in open_ids():
-            segments[position].decide("llm")
+        reliability = calibrate(segments, people, "llm", set(open_ids()))
         report["steps"].append({**_step_report("llm", segments, options.confident),
                                 "requests": len(windows), "failed": failed,
-                                "answers": applied})
+                                "answers": applied, "reliability": _rounded(reliability)})
     elif options.llm and open_ids():
         report["steps"].append({"step": "llm", "skipped": "no language model configured"})
     return segments, report
+
+
+def _rounded(values: dict[str, float]) -> dict[str, float]:
+    return {key: round(value, 4) for key, value in sorted(values.items())}
+
+
+def cached_worker(
+    worker: Callable[[dict[str, Any]], dict[str, Any]], directory: Path,
+) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Light-ASD window results kept per video file: a rerun reads only new windows."""
+    from studio.core.workspace import published
+
+    def window_key(window: list[float]) -> str:
+        return f"{float(window[0]):.3f}:{float(window[1]):.3f}"
+
+    def call(request: dict[str, Any]) -> dict[str, Any]:
+        if request.get("mode") != "camera_evidence":
+            return worker(request)
+        video = Path(request["video"])
+        stat = video.stat()
+        identity = stable_fingerprint("asd-v1", str(video), stat.st_size, stat.st_mtime_ns)
+        path = directory / f"{identity[:24]}.json"
+        known: dict[str, Any] = (json.loads(path.read_text(encoding="utf-8"))
+                                 if path.is_file() else {})
+        missing = [window for window in request["windows"] if window_key(window) not in known]
+        if missing:
+            value = worker({**request, "windows": missing})
+            if not value.get("active_speaker"):
+                return value
+            for window, item in zip(missing, value["windows"], strict=True):
+                known[window_key(window)] = item
+            with published(path) as temporary:
+                temporary.write_text(json.dumps(known), encoding="utf-8")
+        return {"active_speaker": True,
+                "windows": [known[window_key(window)] for window in request["windows"]]}
+
+    return call
 
 
 def _step_report(step: str, segments: list[Segment], confident: float) -> dict[str, Any]:
