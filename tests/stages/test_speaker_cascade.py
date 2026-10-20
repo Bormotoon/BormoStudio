@@ -21,10 +21,12 @@ from studio.stages.speaker_cascade import (
     cluster_labels,
     decide,
     llm_windows,
+    people_of,
     posterior,
     run_cascade,
     segment_words,
     vision_step,
+    vision_vote,
 )
 
 
@@ -189,7 +191,7 @@ def test_close_up_speaking_votes_for_its_person(tmp_path: Path) -> None:
             {"faces": 1, "speaking": 3.0}, {"faces": 1, "speaking": -3.0}]}
 
     votes = vision_step(project, segments, [0, 1], [source], {"camera:гость": "Q"},
-                        ["P", "Q"], worker)
+                        {"P": 0.5, "Q": 0.5}, worker)
     assert votes == 2 and len(requests) == 1
     assert segments[0].votes["vision:camera:гость"]["Q"] > 0.9
     assert segments[1].votes["vision:camera:гость"]["P"] > 0.9
@@ -247,7 +249,7 @@ def test_a_failing_vision_request_costs_only_its_part(tmp_path: Path) -> None:
 
     errors: list[str] = []
     votes = vision_step(project, segments, list(range(5)), [source], {"camera:гость": "Q"},
-                        ["P", "Q"], worker, errors, chunk=2)
+                        {"P": 0.5, "Q": 0.5}, worker, errors, chunk=2)
     assert calls == 3 and votes == 3 and len(errors) == 1
     assert not segments[0].votes and segments[4].votes
 
@@ -334,3 +336,14 @@ def test_cascade_results_follow_the_cascade_version(tmp_path: Path) -> None:
     before = SpeakersStage().fingerprint(project, settings)
     with patch.object(speaker_cascade, "CASCADE_VERSION", "cascade-test"):
         assert SpeakersStage().fingerprint(project, settings) != before
+
+
+def test_fragments_are_not_people_and_silence_points_to_who_talks() -> None:
+    segments = [Segment(i, i, i + 1, "x", speaker="P") for i in range(80)]
+    segments += [Segment(100 + i, 100 + i, 101 + i, "x", speaker="Q") for i in range(25)]
+    segments.append(Segment(200, 200, 201, "x", speaker="R"))
+    assert people_of(segments, 5.0) == ["P", "Q"]
+    probe = Segment(0, 0, 1, "x")
+    vision_vote(probe, "guest", "Q", -5.0, {"P": 0.75, "Q": 0.2, "R": 0.05})
+    vote = probe.votes["vision:guest"]
+    assert vote["P"] > 0.9 * (1 - vote["Q"]) and vote["R"] < 0.07

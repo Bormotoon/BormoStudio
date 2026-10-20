@@ -37,7 +37,7 @@ from studio.core.timeline import SourcePlacement, timeline_to_file
 from studio.core.transcript import Transcript, Word
 
 #: Changes whenever the cascade decides differently: results are recomputed.
-CASCADE_VERSION = "cascade-v2"
+CASCADE_VERSION = "cascade-v3"
 FRAME_S = 0.1
 AUDIO_WEIGHT = 1.0
 VISION_WEIGHT = 1.5
@@ -419,14 +419,18 @@ def audio_votes(
 
 
 def vision_vote(
-    segment: Segment, camera_key: str, person: str, logit: float, people: list[str],
+    segment: Segment, camera_key: str, person: str, logit: float, shares: dict[str, float],
 ) -> None:
-    """A close-up of ``person`` speaking (logit > 0) or silent during the phrase."""
+    """A close-up of ``person`` speaking (logit > 0) or silent during the phrase.
+
+    A silent face points to the others in proportion to how much they talk.
+    """
     probability = 1 / (1 + math.exp(-max(-30.0, min(30.0, logit))))
-    others = [name for name in people if name != person]
+    others = {name: share for name, share in shares.items() if name != person and share > 0}
     distribution = {person: probability}
-    for name in others:
-        distribution[name] = (1 - probability) / len(others)
+    rest = sum(others.values())
+    for name, share in others.items():
+        distribution[name] = (1 - probability) * share / rest
     if not others:
         distribution = {person: 1.0} if probability >= 0.5 else {}
     if distribution:
@@ -691,12 +695,26 @@ def diarize_sources(
     return found
 
 
-def people_of(segments: list[Segment], min_person_s: float) -> list[str]:
+def talk_shares(segments: list[Segment]) -> dict[str, float]:
     talk: dict[str, float] = defaultdict(float)
     for segment in segments:
         if segment.speaker not in NON_SPEAKERS:
             talk[segment.speaker] += segment.end - segment.start
-    return sorted(name for name, value in talk.items() if value >= min_person_s)
+    total = sum(talk.values()) or 1.0
+    return {name: value / total for name, value in talk.items()}
+
+
+def people_of(segments: list[Segment], min_person_s: float, min_share: float = 0.03) -> list[str]:
+    """The people of the conversation: labels with a real part of the speech.
+
+    Diarization leaves fragments (a minute of one person split off); offered
+    to camera binding or the language model they only attract wrong answers.
+    """
+    shares = talk_shares(segments)
+    total = sum(segment.end - segment.start for segment in segments
+                if segment.speaker not in NON_SPEAKERS)
+    return sorted(name for name, share in shares.items()
+                  if share * total >= min_person_s and share >= min_share)
 
 
 def bind_cameras(
@@ -744,7 +762,7 @@ def bind_cameras(
 
 def vision_step(
     project: Project, segments: list[Segment], open_ids: list[int], sources: list[Source],
-    bound: dict[str, str], people: list[str],
+    bound: dict[str, str], shares: dict[str, float],
     worker: Callable[[dict[str, Any]], dict[str, Any]],
     errors: list[str] | None = None, chunk: int = 120,
 ) -> int:
@@ -785,7 +803,7 @@ def vision_step(
                 if item.get("speaking") is None or item.get("faces", 0) != 1:
                     continue
                 vision_vote(segments[position], key, bound[key], float(item["speaking"]),
-                            people)
+                            shares)
                 votes += 1
     if failures:
         errors.extend(failures)
@@ -852,7 +870,9 @@ def run_cascade(
             errors: list[str] = []
             asked = open_ids()
             asked += control_sample(segments, set(asked), max(50, len(asked) // 10))
-            votes = vision_step(project, segments, sorted(asked), sources, bound, people,
+            shares = {name: share for name, share in talk_shares(segments).items()
+                      if name in people}
+            votes = vision_step(project, segments, sorted(asked), sources, bound, shares,
                                 worker, errors) if bound else 0
             reliability = calibrate(segments, people, "vision", set(open_ids()))
             report["steps"].append({**_step_report("vision", segments, options.confident),
