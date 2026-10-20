@@ -232,3 +232,24 @@ def test_a_failing_vision_request_costs_only_its_part(tmp_path: Path) -> None:
                         ["P", "Q"], worker, errors, chunk=2)
     assert calls == 3 and votes == 3 and len(errors) == 1
     assert not segments[0].votes and segments[4].votes
+
+
+def test_voices_compare_around_their_common_component() -> None:
+    # Raw cosines of every pair are above 0.99; only the deviations tell people apart.
+    base = np.full(8, 10.0)
+    p, q = base.copy(), base.copy()
+    p[0] += 1
+    q[1] += 1
+    cams = [Asset(name, Path(f"{name}.mp4"), "video", AssetRole.CAMERA) for name in "abc"]
+    sources = []
+    for index, asset in enumerate(cams):
+        turns = [{"start": 0, "end": 20, "speaker": "S0"},
+                 {"start": 20, "end": 40, "speaker": "S1"}]
+        vectors = {"S0": (p if index != 1 else q).tolist(), "S1": (q if index != 1 else p).tolist()}
+        source = build_source(asset, SourcePlacement(asset.id, index * 100, 0, 40), turns,
+                              vectors, 400)
+        assert source is not None
+        sources.append(source)
+    names, _report = cluster_labels(sources)
+    assert names[("a", "S0")] == names[("b", "S1")] == names[("c", "S0")]
+    assert names[("a", "S0")] != names[("a", "S1")]

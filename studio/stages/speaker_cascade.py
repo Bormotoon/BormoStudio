@@ -204,8 +204,8 @@ def cluster_labels(
 
     Two sources that play together for ``min_common_s`` compare labels by how
     much they talk at the same moments (intersection over union of speech);
-    sources of different times compare voice embeddings. Labels merge best
-    first, mutual best only, and never two labels of one source.
+    sources of different times compare voice embeddings around their mean.
+    Labels merge best first, mutual best only, and never two labels of one source.
     """
     items = [(source, label) for source in sources for label in source.labels]
     index = {(source.asset_id, label): i for i, (source, label) in enumerate(items)}
@@ -228,6 +228,15 @@ def cluster_labels(
                     if union[i, j] > 0:
                         pair = (index[(first.asset_id, left)], index[(second.asset_id, right)])
                         scores[pair] = (float(inter[i, j] / union[i, j]), "together")
+    # pyannote centroids share a large common component (raw cosines of
+    # different people reach 0.95); compared around their mean they separate.
+    known = [source.embeddings[label] for source, label in items if label in source.embeddings]
+    center = np.mean(known, axis=0) if len(known) >= 3 else None
+
+    def voice(source: Source, label: str) -> np.ndarray | None:
+        vector = source.embeddings.get(label)
+        return None if vector is None or center is None else vector - center
+
     for i, (first, left) in enumerate(items):
         for j in range(i + 1, len(items)):
             second, right = items[j]
@@ -235,7 +244,7 @@ def cluster_labels(
                     or (first.asset_id, second.asset_id) in together
                     or (second.asset_id, first.asset_id) in together):
                 continue
-            u, v = first.embeddings.get(left), second.embeddings.get(right)
+            u, v = voice(first, left), voice(second, right)
             if u is not None and v is not None:
                 norm = float(np.linalg.norm(u) * np.linalg.norm(v))
                 if norm > 0:
