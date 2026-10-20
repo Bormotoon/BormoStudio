@@ -36,6 +36,8 @@ from studio.core.project import Asset, AssetRole, Project, describe_artifact, st
 from studio.core.timeline import SourcePlacement, timeline_to_file
 from studio.core.transcript import Transcript, Word
 
+#: Changes whenever the cascade decides differently: results are recomputed.
+CASCADE_VERSION = "cascade-v2"
 FRAME_S = 0.1
 AUDIO_WEIGHT = 1.0
 VISION_WEIGHT = 1.5

@@ -319,3 +319,18 @@ def test_light_asd_results_are_reused(tmp_path: Path) -> None:
     second = cached({**request, "windows": [[3, 4], [5, 6]]})
     assert calls == [[[1, 2], [3, 4]], [[5, 6]]]
     assert first["windows"][1] == second["windows"][0] == {"faces": 1, "speaking": 3.0}
+
+
+def test_cascade_results_follow_the_cascade_version(tmp_path: Path) -> None:
+    from studio.stages import speaker_cascade
+    from studio.stages.speakers import SpeakersStage
+
+    project = _project(tmp_path, [Asset("rec", Path("rec.wav"), "audio", AssetRole.RECORDER)])
+    (tmp_path / "rec.wav").write_bytes(b"x")
+    timeline = tmp_path / "timeline.json"
+    _transcript(tmp_path).save(timeline)
+    project.transcripts["timeline"] = timeline
+    settings = {"speakers": {"method": "cascade", "cascade_llm": False}}
+    before = SpeakersStage().fingerprint(project, settings)
+    with patch.object(speaker_cascade, "CASCADE_VERSION", "cascade-test"):
+        assert SpeakersStage().fingerprint(project, settings) != before

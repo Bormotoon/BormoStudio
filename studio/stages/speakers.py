@@ -91,7 +91,7 @@ class SpeakersStage:
         selected = {key.split(":", 1)[0] for key in tracks}
         llm_identity: object = None
         if method == "cascade" and transcript and transcript.is_file():
-            from studio.stages.speaker_cascade import cascade_sources
+            from studio.stages.speaker_cascade import CASCADE_VERSION, cascade_sources
 
             selected = {asset.id for asset, _placement in cascade_sources(
                 project, Transcript.load(transcript),
@@ -103,6 +103,7 @@ class SpeakersStage:
                 roles = llm.get("roles", {}) if isinstance(llm, dict) else {}
                 llm_identity = (model_identity(settings), roles.get("speakers", {}),
                                 bool(isinstance(llm, dict) and llm.get("managed")))
+            llm_identity = (CASCADE_VERSION, llm_identity)
         if method == "pyannote":
             from studio.stages.timeline import _primary_source_id
 
