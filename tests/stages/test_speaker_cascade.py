@@ -209,3 +209,26 @@ def test_frame_grid_follows_the_placement() -> None:
     assert source.seconds(110, 120)[0] == pytest.approx(10.0)
     assert source.seconds(100, 110)[0] == 0
     assert np.asarray(source.active).shape[1] == 500
+
+
+def test_a_failing_vision_request_costs_only_its_part(tmp_path: Path) -> None:
+    cam = Asset("cam", Path("cam.mp4"), "video", AssetRole.CAMERA, group_id="гость")
+    project = _project(tmp_path, [cam])
+    source = build_source(cam, project.placements[0], _turns("X", "Y")["turns"], {}, 120)
+    assert source is not None
+    segments = [Segment(i, i * 2.0, i * 2.0 + 1.5, str(i)) for i in range(5)]
+    calls = 0
+
+    def worker(request: dict) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("worker crashed")
+        return {"active_speaker": True,
+                "windows": [{"faces": 1, "speaking": 2.0} for _w in request["windows"]]}
+
+    errors: list[str] = []
+    votes = vision_step(project, segments, list(range(5)), [source], {"camera:гость": "Q"},
+                        ["P", "Q"], worker, errors, chunk=2)
+    assert calls == 3 and votes == 3 and len(errors) == 1
+    assert not segments[0].votes and segments[4].votes

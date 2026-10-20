@@ -612,12 +612,15 @@ def bind_cameras(
             windows = evidence_windows(project, turns, member.asset_id)
             if not windows:
                 continue
-            value = worker({
-                "mode": "camera_evidence",
-                "video": str((project.source_dir / assets[member.asset_id].path).resolve()),
-                "windows": [[window.start_s, window.end_s] for window in windows],
-                "device": "cuda", "active_speaker": True,
-            })
+            try:
+                value = worker({
+                    "mode": "camera_evidence",
+                    "video": str((project.source_dir / assets[member.asset_id].path).resolve()),
+                    "windows": [[window.start_s, window.end_s] for window in windows],
+                    "device": "cuda", "active_speaker": True,
+                })
+            except (RuntimeError, ValueError, OSError):
+                continue  # one unreadable clip; the camera's other clips still count
             if not value.get("active_speaker"):
                 raise RuntimeError("Light-ASD model is unavailable")
             evidence.setdefault(key, []).extend(
@@ -633,8 +636,10 @@ def vision_step(
     project: Project, segments: list[Segment], open_ids: list[int], sources: list[Source],
     bound: dict[str, str], people: list[str],
     worker: Callable[[dict[str, Any]], dict[str, Any]],
+    errors: list[str] | None = None, chunk: int = 120,
 ) -> int:
     """Votes of bound close-ups on the open phrases; returns how many votes."""
+    errors = [] if errors is None else errors
     placements = {item.asset_id: item for item in project.placements}
     assets = {asset.id: asset for asset in project.assets}
     requests: dict[str, list[tuple[int, float, float]]] = defaultdict(list)
@@ -649,19 +654,31 @@ def vision_step(
                 requests[source.asset_id].append((
                     position, timeline_to_file(low, placement), timeline_to_file(high, placement)))
     votes = 0
+    failures: list[str] = []
     for asset_id, windows in requests.items():
         key = next(source.key for source in sources if source.asset_id == asset_id)
-        value = worker({
-            "mode": "camera_evidence",
-            "video": str((project.source_dir / assets[asset_id].path).resolve()),
-            "windows": [[low, high] for _p, low, high in windows],
-            "device": "cuda", "active_speaker": True,
-        })
-        for (position, _low, _high), item in zip(windows, value["windows"], strict=True):
-            if item.get("speaking") is None or item.get("faces", 0) != 1:
+        # Bounded requests: one worker call per few minutes of video work, and a
+        # failing part costs only its own votes.
+        for offset in range(0, len(windows), chunk):
+            part = windows[offset:offset + chunk]
+            try:
+                value = worker({
+                    "mode": "camera_evidence",
+                    "video": str((project.source_dir / assets[asset_id].path).resolve()),
+                    "windows": [[low, high] for _p, low, high in part],
+                    "device": "cuda", "active_speaker": True,
+                })
+            except (RuntimeError, ValueError, OSError) as exc:
+                failures.append(f"{asset_id}: {str(exc)[-200:]}")
                 continue
-            vision_vote(segments[position], key, bound[key], float(item["speaking"]), people)
-            votes += 1
+            for (position, _low, _high), item in zip(part, value["windows"], strict=True):
+                if item.get("speaking") is None or item.get("faces", 0) != 1:
+                    continue
+                vision_vote(segments[position], key, bound[key], float(item["speaking"]),
+                            people)
+                votes += 1
+    if failures:
+        errors.extend(failures)
     return votes
 
 
@@ -718,12 +735,13 @@ def run_cascade(
             bound, suggestion = bind_cameras(project, segments, sources, people, options,
                                              worker)
             report["camera_binding"] = {"bound": bound, "contrast": suggestion["contrast"]}
+            errors: list[str] = []
             votes = vision_step(project, segments, open_ids(), sources, bound, people,
-                                worker) if bound else 0
+                                worker, errors) if bound else 0
             for position in open_ids():
                 segments[position].decide("vision")
             report["steps"].append({**_step_report("vision", segments, options.confident),
-                                    "votes": votes})
+                                    "votes": votes, "failed_requests": errors[:50]})
             assets = {asset.id: asset for asset in project.assets}
             for key, person in bound.items():
                 group = key.split(":", 1)[1]
