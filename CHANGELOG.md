@@ -12,6 +12,13 @@ All notable changes to Studio will be documented in this file.
 
 ### Added
 
+- `speakers.method: cascade`: who speaks is decided per phrase from pyannote on
+  every camera clip and the recorder, then Light-ASD on bound close-ups, then
+  the language model, each step only for phrases still below
+  `speakers.cascade_confident`. Confidence weighs every source by its measured
+  reliability (Dawid–Skene with control phrases); diarization and Light-ASD
+  results are cached per file. See USAGE "Speaker cascade".
+- pyannote runs many files in one worker process (one model load per batch).
 - WhisperSync's lip-sync calibration: `sync.camera_av_offset_ms` and
   `sync.camera_av_offset_ms_by_camera` move a camera's picture against all
   sound in the exports, program, whole-edit preview and reels; changing them
@@ -36,6 +43,11 @@ All notable changes to Studio will be documented in this file.
 
 ### Fixed
 
+- The microphone speakers stage held every recorder file decoded at once and
+  framed whole lanes for voice signatures (~9 GB plus ~5 GB per long lane on a
+  30-file, 3-hour shoot); systemd-oomd killed the run and the desktop session
+  with it. Files are now processed one at a time and signatures framed in
+  chunks, with identical results.
 - Reels selection with gemma4 failed on every chunk ("returned no text
   content"): its chat template thinks first and spent the whole token budget
   on reasoning. Requests now ask templates not to think, as Forge's prefill did.

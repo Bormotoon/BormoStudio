@@ -706,6 +706,50 @@ names given by the user are never merged; an unnamed lane can inherit a name.
 (`identities`). This is voice matching, not face identity; check it on real
 recordings before relying on it.
 
+## Speaker cascade
+
+`speakers.method: cascade` decides who says each transcript phrase from several
+kinds of evidence, cheapest first, and stops a phrase as soon as it is sure
+(`speakers.cascade_confident`, default 0.95). A later step only adds votes; it
+never discards what an earlier step found.
+
+1. **Sound.** pyannote diarizes every placed camera clip of at least
+   `cascade_min_source_s` (30 s) and the recorder (one file per microphone set
+   and span: front, rear, mix and processed copies of one recorder would only
+   repeat it). Results are cached per file in `cache/speakers/diarization/`.
+   Local labels become people by talking at the same moments (sources that
+   play together) or by voice embedding compared around the mean of all
+   embeddings (raw pyannote centroids of different people reach a cosine of
+   0.95). Each microphone set votes once per phrase: a camera position is its
+   folder group, all files of one recorder are one set.
+2. **Vision** (`cascade_vision`). Close-up cameras are bound to people on the
+   phrases step 1 is sure of (Light-ASD speaking contrast, as **Suggest from
+   video**); a bound close-up then votes on the open phrases: its face speaking
+   points to its person, a silent face to the others by their share of talk.
+   Light-ASD results are cached per video in `cache/speakers/asd/`.
+3. **Language model** (`cascade_llm`). The still open phrases go to the model
+   with their context, sample lines of each person and the camera folder names
+   of bound close-ups; it sees no sound hints, so its vote is the text alone.
+   Studio starts its own llama session for this step only (`llm.managed`, role
+   `speakers`; otherwise `speakers.base_url`), so the model does not hold the
+   GPU through diarization and Light-ASD.
+
+Confidence is the probability of the winner given every vote. Each evidence key
+(a microphone set, a bound close-up, the model) is right with its own rate,
+estimated from the votes themselves (Dawid–Skene): a key is judged against the
+others' decision, weighted by how sure that decision is, so a step that only
+votes where the rest disagree is not measured against itself. Vision and the
+model also check a spread of already decided control phrases, unmarked, which
+measures their accuracy. One source is only as sure as its record, so a phrase
+heard by one microphone alone rarely reaches 0.95.
+
+People are labels with at least 3 % of the speech (and 20 s); smaller
+diarization fragments still vote but are not offered for camera binding or to
+the model. `speakers/cascade.json` holds every phrase with its votes, weights,
+confidence and the step that decided it; `report.json` the sources and their
+labels, merged identities, camera bindings and per step the confident share
+and each key's reliability. `diarization.json` keeps the usual turn format.
+
 ## Recorder tracks and speaker cameras
 
 Synchronization uses the probed default audio stream by its absolute ffprobe

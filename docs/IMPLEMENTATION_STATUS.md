@@ -16,7 +16,7 @@ that point in development, not today's backlog. Plan phase acceptance remains op
 | 1 — Contracts and pipeline | Versioned project/manifests, four time domains, planner/worker/events, recoverable publication, scan/prepare/transcribe/complex sync, CLI and Qt shell | Complete legacy golden coverage and real end-to-end GUI/CLI parity |
 | 2 — Sync and exports | Camera/simple/auto/complex paths, acoustic fallback, overlapping and explicitly positioned disjoint sessions, reference-camera choice, selected-stream matching/rendering and detached camera PCM for NLE, voice/warp outputs, neutral FCPXML/XMEML, persistent material overrides, RecorderTrack lanes with GUI/CLI, drag-and-drop groups | Full legacy source-selection workflow parity, Premiere import. Final Cut import of the sony_run multicam accepted by the owner (2026-10-12) |
 | 3 — Rough cut | Energy-gated pauses, retakes, manual accept/reject, timeline cut overview, with-cut/original audition with or without master, cached 360p whole-edit preview with synchronized playhead and seeking, markers, placement-aware CFR program/transcript with duration-preserving join crossfades | Real word-integrity/listening acceptance, end-to-end re-export check |
-| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade with per-session sources, cross-file speaker identity matching (pyannote embeddings / MFCC signatures), project speaker-camera choices (GUI/CLI), wide-shot policy, retimed multicam FCPXML | Speaker-driven angle switching on a lavalier recording, Premiere (real pyannote and cross-episode identity accepted 2026-10-19) |
+| 4 — Speakers/multicam | Microphone attribution/smoothing from named lanes, isolated pyannote facade with per-session sources, cross-file speaker identity matching (pyannote embeddings / MFCC signatures), speaker cascade (pyannote on every source → Light-ASD close-ups → LLM, reliability-weighted confidence), project speaker-camera choices (GUI/CLI), wide-shot policy, retimed multicam FCPXML | Cascade acceptance on furry (owner listening), faster Light-ASD windows, speaker-driven angle switching on a lavalier recording, Premiere (real pyannote and cross-episode identity accepted 2026-10-19) |
 | 5 — Forge workflow | Text/term-check, task model routing, Forge-order reels selection with a parity test against the frozen Forge (moments and rejections), Forge's cut stage (speech-fitted edges, filters, QA, exports, descriptions, encoder settings), speaker-aware captions and the Whisper caption check, cached audio probes, native editor, vision options, fetch/channel/batch with notifications and VM memory freeing, owned llama lifecycle, settings migration with a home or a reason for every legacy key, one Whisper model per process, legacy comparison runner (Forge 619 + 1 skipped, WhisperSync 403) | Real-model reels acceptance, overnight channel run, real vision/pyannote runs |
 | 6 — Modules/distribution | Managed modules, pinned verified YuNet/Light-ASD/Whisper/GGUF downloads with resume, LLM rough-cut detectors, native setup/settings/GGUF picker and dirty guards, basic one-folder mode and an advanced form covering every setting, compute probe, Linux frozen/local installer | Real-model LLM edit acceptance, basic-mode run on real material through the GUI, real-GPU tuning acceptance, bundled dependencies, clean-machine/Python 3.12/platform qualification |
 | 7 — Follow-up | Speaker-angle reels, vision auto-assignment, OTIO, LUFS/covers/replay ranking, hook-title and audiogram layouts, per-reel framing with instant crop preview, Forge caption looks, MLX Whisper and VideoToolbox (substituted tests only) | Visual acceptance of layouts/captions, Mac hardware run, NLE/Resolve imports |
@@ -87,7 +87,57 @@ that point in development, not today's backlog. Plan phase acceptance remains op
      same speech, 99.3 % label agreement with 3.1, two tiny voices merged. Not
      adopted: it brings torch 2.14/cu130 and torchcodec (shared ffmpeg libraries
      on Windows/macOS) and identity thresholds would need re-validation.
-8. Installed/frozen real-processing checks, production packaging, private sample
+8. 2026-10-20, the "POS - furry" shoot (196 min timeline; 119 placed clips:
+   62 DJI Pocket, Canon/Sony cameras in folders «ведущий», «ведущий 2»,
+   «гость», «гость 2», «NSFW»; a Zoom H2essential with 30 files: front, rear,
+   mix and processed voice copies). Run as `furry-run`/`furry-cascade*` units
+   with `--skip program program_subtitles reels reel_render`.
+   - Done: transcribe, sync, timeline (12 voices filled from cameras where the
+     recorder heard nothing, 938 camera words), rough cut and export ran; export
+     is `POS - furry/_studio/export/Studio.fcpxml` + `Studio.xml`. Sync review:
+     `DJI_0689` has 40 % of windows over 20 ms (residual 16.6 ms) and
+     `ведущий 2/C0002` (7.7 s) is inconclusive.
+   - Fixed: the microphone speakers stage was killed by systemd-oomd (with the
+     VS Code session) after a 24 h run: all 30 recorder files decoded at once
+     plus whole-lane framing for MFCC signatures. Now one file at a time,
+     chunked framing, identical signatures.
+   - Found: the microphone method is useless on this recorder: front, rear, mix
+     and processed copies of one Zoom are "lanes", every word is equally loud on
+     several of them, 136 min came out as `overlap`. Built the speaker cascade
+     (USAGE "Speaker cascade"); furry now runs `speakers.method: cascade` with a
+     managed gemma4 (`llm` block in its settings.yaml, port 11440).
+   - Measured on furry: 90 sources diarized in ~45 min (cached); two people
+     carry the conversation (≈108 and ≈35 min of speech; "ведущий 2" and
+     "гость 2" are second angles of the same two). Raw pyannote centroids of
+     different people have cosines of 0.95–0.99; centered on the mean, one
+     person's pairs have a median of 0.79 and different people stay below 0.40.
+     Measured reliabilities: camera «гость» 0.92–0.95, «ведущий» 0.89,
+     «ведущий 2» 0.88, recorder 0.78–0.83, DJI Pocket 0.77, «гость 2» 0.66,
+     NSFW 0.53. With reliability weighting the sound alone settles 82–85 % of
+     the speech (44 % with equal weights).
+   - Open (cascade-v2 run, the result currently in the project): vision votes
+     got reliability 0.5 (a silent face spread its vote evenly over four
+     "people", two of them diarization fragments; «гость 2» was bound to a
+     2.5-minute fragment) and the text-only LLM was right on 54 % of control
+     lines (below always naming the main speaker, ~76 %), partly misled by that
+     wrong camera name. Fixed in cascade-v3 (people need ≥ 3 % of speech, a
+     silent face points to the others by share of talk); furry must be rerun
+     (Light-ASD mostly cached, ~10 min of LLM). If the LLM stays near chance on
+     control lines, reconsider what it is shown (it may need the sound's
+     candidates without their scores) or leave it to the reliability weighting.
+   - Open: Light-ASD takes ~2.5 s per window (one ffmpeg seek and 4K decode per
+     window); decoding each clip once for all its windows would cut the
+     vision step (~800 windows ≈ 35–50 min on furry) several times.
+   - Open, sync questions on furry to check with the owner: three DJI Pocket
+     clips overlap each other around 45 min (one camera cannot), recorder
+     session 145845 (placed 31–70 min) is nearly silent at 45 min while the
+     cameras hear speech, and recorder sessions 153740 / _001 / _002 / _003 are
+     placed overlapping (0–93, 29–122, 70–163, 93–186 min).
+   - Open: furry's export uses the rough cut in `cut` mode (36 kept ranges, 35
+     cuts); the owner may want a full uncut sync export.
+   - Note: `speakers.method: auto` still picks microphones or skips; the cascade
+     is opt-in until it is accepted.
+9. Installed/frozen real-processing checks, production packaging, private sample
    acceptance. The frozen Forge suite passes in its locked environment (619 passed,
    1 skipped: `test_torch_yunet_matches_opencv` needs YuNet weights inside the
    snapshot); Studio's reels selection, clip edges and caption check are compared
